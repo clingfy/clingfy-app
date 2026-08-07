@@ -239,7 +239,10 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
     const float b = (style_.border_argb & 0xFF) / 255.0f;
     if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(r, g, b, a),
                                              border_brush_.GetAddressOf()))) {
-      border_width_px_ = static_cast<float>(style_.border_width);
+      // The authored width is in export-canvas px; resolve it onto THIS
+      // surface. See Style::effect_scale.
+      border_width_px_ = static_cast<float>(
+          style_.border_width * std::max(0.0, style_.effect_scale));
     }
   }
 
@@ -287,7 +290,9 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
                                         const std::string& shape,
                                         double corner_radius, double side,
                                         double bubble_x, double bubble_y) {
-  const CameraShadowStyle sh = ResolveCameraShadowStyle(style_.shadow_preset);
+  // Blur radius and offsets are export-canvas lengths, same as border_width.
+  const CameraShadowStyle sh =
+      ResolveCameraShadowStyle(style_.shadow_preset, style_.effect_scale);
   if (!sh.enabled) {
     return;
   }

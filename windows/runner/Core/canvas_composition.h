@@ -100,6 +100,21 @@ struct CanvasComposition {
   // renderer and the cache. `has_preset` false means colour/image background.
   capture::background::CanvasPresetSpec preset;
   bool has_preset = false;
+  // The shorter side of the EXPORT canvas the fractions above were normalized
+  // against, in export-output pixels. 0 = not resolved yet (no decoded frame,
+  // so the source dimensions and therefore `ResolveTargetSize` are unknown).
+  //
+  // The fractions do not need this — that is the point of them. It is carried
+  // for the values that are NOT on the fraction contract and cannot be, because
+  // they are indices or table lookups rather than lengths: the camera shadow
+  // preset and the camera bubble's minimum-side floor. Those resolve through
+  // `PreviewCameraEffectScale(surface_short, export_short_side)` instead.
+  //
+  // It lives HERE, on the struct the frame thread already reads under
+  // `render_mutex`, rather than as a loose field on `PreviewEngine::Impl` — a
+  // second field would have to repeat this struct's publish discipline and
+  // would be written outside the lock at the site that computes it.
+  double export_short_side = 0.0;
 };
 
 // Convert a pixel value measured against a surface whose shorter side is

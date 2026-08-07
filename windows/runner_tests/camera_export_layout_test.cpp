@@ -180,6 +180,65 @@ TEST(CameraShadowStyleTest, StrongerPresetMeansMoreOpacityAndBlur) {
   EXPECT_LT(s2.blur_radius, s3.blur_radius);
 }
 
+TEST(CameraShadowStyleTest, DefaultScaleIsIdentity) {
+  // Pins the export/live no-op: the new parameter must not have moved shipped
+  // output for anyone who does not pass it.
+  for (int preset = 0; preset <= 3; ++preset) {
+    const auto implicit_arg = ResolveCameraShadowStyle(preset);
+    const auto explicit_arg = ResolveCameraShadowStyle(preset, 1.0);
+    EXPECT_EQ(implicit_arg.enabled, explicit_arg.enabled) << "preset " << preset;
+    EXPECT_DOUBLE_EQ(implicit_arg.opacity, explicit_arg.opacity);
+    EXPECT_DOUBLE_EQ(implicit_arg.blur_radius, explicit_arg.blur_radius);
+    EXPECT_DOUBLE_EQ(implicit_arg.offset_x, explicit_arg.offset_x);
+    EXPECT_DOUBLE_EQ(implicit_arg.offset_y, explicit_arg.offset_y);
+  }
+}
+
+TEST(CameraShadowStyleTest, ScaleMultipliesLengthsButNotOpacity) {
+  // blur radius and both offsets are lengths and live on the canvas; opacity is
+  // dimensionless. Scaling opacity would make the preview's shadow fainter as
+  // well as smaller, which is not what the export shows.
+  const auto s = ResolveCameraShadowStyle(2, 1.0 / 3.0);
+  EXPECT_TRUE(s.enabled);
+  EXPECT_NEAR(s.blur_radius, 16.0 / 3.0, 1e-9);
+  EXPECT_NEAR(s.offset_y, 4.0 / 3.0, 1e-9);
+  EXPECT_NEAR(s.offset_x, 0.0, 1e-9);
+  EXPECT_DOUBLE_EQ(s.opacity, 0.24);
+}
+
+TEST(CameraShadowStyleTest, ShadowIsProportionalAcrossCanvasSizes) {
+  // The parity property itself, stated against the bubble the shadow hangs off.
+  // (Local constants: the shared kPreview*/kExport* ones are declared further
+  // down, next to the CameraParityTest block.)
+  constexpr double kPvW = 1280.0;
+  constexpr double kPvH = 720.0;
+  constexpr double kExW = 3840.0;
+  constexpr double kExH = 2160.0;
+  const auto preview_bubble =
+      ComputeCameraBubbleRect(kPvW, kPvH, false, 0, 0, "", 0.25);
+  const auto export_bubble =
+      ComputeCameraBubbleRect(kExW, kExH, false, 0, 0, "", 0.25);
+  const auto preview_sh = ResolveCameraShadowStyle(3, kPvH / kExH);
+  const auto export_sh = ResolveCameraShadowStyle(3);
+  EXPECT_NEAR(preview_sh.blur_radius / preview_bubble.width,
+              export_sh.blur_radius / export_bubble.width, 1e-9);
+  EXPECT_NEAR(preview_sh.offset_y / preview_bubble.height,
+              export_sh.offset_y / export_bubble.height, 1e-9);
+}
+
+TEST(CameraShadowStyleTest, NonPositiveScaleCollapsesGeometryNotOpacity) {
+  // A not-yet-known reference must not produce a negative blur: the painter
+  // sizes its bake bitmap with ceil(stddev*3) + border/2 + 2, which would go
+  // negative and truncate to a zero-dimension bitmap.
+  for (const double scale : {0.0, -2.0}) {
+    const auto s = ResolveCameraShadowStyle(3, scale);
+    EXPECT_DOUBLE_EQ(s.blur_radius, 0.0) << "scale " << scale;
+    EXPECT_DOUBLE_EQ(s.offset_x, 0.0);
+    EXPECT_DOUBLE_EQ(s.offset_y, 0.0);
+    EXPECT_DOUBLE_EQ(s.opacity, 0.32);
+  }
+}
+
 // --- intro/outro animation timeline (Phase 9.7) -----------------------------
 
 namespace {
@@ -250,19 +309,82 @@ TEST(CameraParityTest, ManualPlacementIsProportionalAcrossCanvasSizes) {
               (exported.y + exported.height / 2.0) / kExportH, 0.0001);
 }
 
-TEST(CameraParityTest, TheMinSideFloorIsAKnownNonProportionalDivergence) {
-  // kCameraBubbleMinSidePx is ABSOLUTE, so at a small size factor the preview's
-  // bubble is proportionally larger than the export's. Pinned rather than
-  // hidden: 0.08 * 720 = 57.6px floors to 96 on the preview, while
-  // 0.08 * 2160 = 172.8px is comfortably above it on the export.
+TEST(CameraParityTest, TheDefaultMinSideFloorIsNonProportional) {
+  // kCameraBubbleMinSidePx is ABSOLUTE, so at a small size factor a smaller
+  // surface floors where a bigger one does not: 0.08 * 720 = 57.6px floors to
+  // 96 here, while 0.08 * 2160 = 172.8px is comfortably above it there.
+  //
+  // This is a statement about the DEFAULT argument, and it stays true — the
+  // floor is still absolute. The preview no longer suffers it, because it
+  // passes a floor scaled by its own short-side ratio; see the companion test
+  // below and `PreviewCameraEffectScale`.
   const auto preview =
       ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.08);
   const auto exported =
       ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.08);
   EXPECT_NEAR(preview.width, kCameraBubbleMinSidePx, 0.001);
   EXPECT_NEAR(exported.width, kExportH * 0.08, 0.001);
-  // The divergence is real: the preview bubble is proportionally BIGGER.
+  // Left un-scaled, the smaller surface's bubble is proportionally BIGGER.
   EXPECT_GT(preview.width / kPreviewH, exported.width / kExportH);
+}
+
+TEST(CameraParityTest, ScalingTheMinSideFloorRemovesTheDivergence) {
+  // The fix for the test above: pass the floor in THIS surface's pixels.
+  const double scale = kPreviewH / kExportH;  // 720 / 2160 = 1/3
+  const auto preview =
+      ComputeCameraBubbleRect(kPreviewW, kPreviewH, false, 0, 0, "", 0.08,
+                              kCameraBubbleMinSidePx * scale);
+  const auto exported =
+      ComputeCameraBubbleRect(kExportW, kExportH, false, 0, 0, "", 0.08);
+  EXPECT_NEAR(preview.width / kPreviewH, exported.width / kExportH, 1e-9);
+}
+
+TEST(CameraParityTest, Reel916PortraitFloorIsTheWorstCase) {
+  // The regression that motivated the fix. Portrait export 1080x1920 previews
+  // into a 404x720 texture, so the 96px floor binds for every size factor below
+  // 96/404 = 0.238 — i.e. most of the authored [0.08, 0.45] band. At the 0.18
+  // default the unscaled preview bubble is 96px = 23.8% of its short side
+  // against the export's 18%, a 32% oversize.
+  constexpr double kReelPreviewW = 404.0;
+  constexpr double kReelPreviewH = 720.0;
+  constexpr double kReelExportW = 1080.0;
+  constexpr double kReelExportH = 1920.0;
+  const double scale = kReelPreviewW / kReelExportW;
+
+  const auto unscaled = ComputeCameraBubbleRect(kReelPreviewW, kReelPreviewH,
+                                                false, 0, 0, "", 0.18);
+  EXPECT_NEAR(unscaled.width, kCameraBubbleMinSidePx, 0.001);
+  EXPECT_NEAR(unscaled.width / kReelPreviewW, 0.2376, 0.001);
+
+  const auto scaled =
+      ComputeCameraBubbleRect(kReelPreviewW, kReelPreviewH, false, 0, 0, "",
+                              0.18, kCameraBubbleMinSidePx * scale);
+  const auto exported = ComputeCameraBubbleRect(kReelExportW, kReelExportH,
+                                                false, 0, 0, "", 0.18);
+  EXPECT_NEAR(scaled.width / kReelPreviewW, 0.18, 1e-9);
+  EXPECT_NEAR(scaled.width / kReelPreviewW, exported.width / kReelExportW,
+              1e-9);
+}
+
+TEST(CameraExportLayoutTest, MinSideFloorParameterDefaultsToNinetySix) {
+  // Guards the export/live no-op: omitting the argument must be identical to
+  // passing the constant, or this change would have moved shipped output.
+  const auto implicit_arg =
+      ComputeCameraBubbleRect(1080.0, 1920.0, false, 0, 0, "", 0.08);
+  const auto explicit_arg = ComputeCameraBubbleRect(
+      1080.0, 1920.0, false, 0, 0, "", 0.08, kCameraBubbleMinSidePx);
+  EXPECT_EQ(implicit_arg.x, explicit_arg.x);
+  EXPECT_EQ(implicit_arg.y, explicit_arg.y);
+  EXPECT_EQ(implicit_arg.width, explicit_arg.width);
+  EXPECT_EQ(implicit_arg.height, explicit_arg.height);
+}
+
+TEST(CameraExportLayoutTest, NegativeMinSideFloorIsTreatedAsNoFloor) {
+  // std::max with a negative floor would be a no-op, but only by accident;
+  // pinned so a future signed-arithmetic slip cannot grow the bubble.
+  const auto r =
+      ComputeCameraBubbleRect(1000.0, 1000.0, true, 0.5, 0.5, "", 0.08, -500.0);
+  EXPECT_NEAR(r.width, 80.0, 0.001);
 }
 
 TEST(CameraParityTest, AnimationOutputIsCanvasIndependentExceptTheSlide) {

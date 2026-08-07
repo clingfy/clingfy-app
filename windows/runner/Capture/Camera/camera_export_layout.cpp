@@ -41,7 +41,8 @@ CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
                                          bool has_center, double center_x,
                                          double center_y,
                                          const std::string& layout_preset,
-                                         double size_factor) {
+                                         double size_factor,
+                                         double min_side_px) {
   CameraBubbleRect rect;
   if (canvas_w <= 0.0 || canvas_h <= 0.0) {
     return rect;  // degenerate canvas → empty bubble
@@ -49,7 +50,9 @@ CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
 
   const double factor = Clamp(size_factor, 0.08, 0.45);
   double side = std::min(canvas_w, canvas_h) * factor;
-  side = std::max(side, kCameraBubbleMinSidePx);
+  // A negative floor would grow the bubble via the std::max below; treat it as
+  // "no floor" instead.
+  side = std::max(side, std::max(0.0, min_side_px));
   // A min-side floor can exceed a tiny canvas; never let the bubble be larger
   // than the canvas itself.
   side = std::min(side, std::min(canvas_w, canvas_h));
@@ -78,7 +81,7 @@ CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
   return rect;
 }
 
-CameraShadowStyle ResolveCameraShadowStyle(int preset) {
+CameraShadowStyle ResolveCameraShadowStyle(int preset, double scale) {
   CameraShadowStyle s;
   switch (preset) {
     case 1:
@@ -94,6 +97,14 @@ CameraShadowStyle ResolveCameraShadowStyle(int preset) {
       s = {false, 0.0, 0.0, 0.0, 0.0};
       break;
   }
+  // Lengths scale onto the target surface; opacity is dimensionless and does
+  // not. A non-positive scale means the reference surface is not known yet —
+  // collapse the geometry rather than emitting a negative blur radius, which
+  // would make the painter's `ceil(stddev*3)` bake margin negative.
+  const double k = std::max(0.0, scale);
+  s.blur_radius *= k;
+  s.offset_x *= k;
+  s.offset_y *= k;
   return s;
 }
 
