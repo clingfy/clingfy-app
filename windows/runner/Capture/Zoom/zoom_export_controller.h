@@ -53,6 +53,16 @@ class ZoomExportController {
     double zoom = 1.0;
     double center_x = 0.5;
     double center_y = 0.5;
+    // SEGMENT membership, which is NOT the same thing as `active`.
+    //
+    // `active` is "the smoothed zoom is still above 1", so it stays true
+    // through the whole ease-out tail after a segment ends. `in_segment` goes
+    // false AT end_ms. Anything phase-sensitive must key off these two, not
+    // off `active` — macOS makes the same split (`stableZoomActive` +
+    // `stableZoomStartTime`, both nil'd at the segment boundary while the
+    // smoothed zoom keeps easing), and its camera pulse drops to 1.0 there.
+    bool in_segment = false;
+    std::int64_t segment_local_ms = 0;  // ms since this segment's start_ms
   };
   Frame Advance(std::int64_t frame_ms, double dt_seconds);
 

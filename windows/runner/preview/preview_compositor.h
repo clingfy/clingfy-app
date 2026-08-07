@@ -37,7 +37,9 @@
 #include <string>
 #include <vector>
 
+#include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Export/color_grade.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 #include "preview/zoom_easing_constants.h"
 #include "Capture/Export/export_geometry.h"
 #include "Graphics/color_grade_effect.h"
@@ -53,32 +55,29 @@ inline constexpr std::int64_t kClickLookupWindowUs = 500'000;
 inline constexpr float kHighlightRadiusPx = 60.0f;
 
 // ---------------------------------------------------------------------
-// Cursor event model + hand-authored JSONL loader
+// Cursor data — the SAME sidecar the export reads
 // ---------------------------------------------------------------------
+//
+// This used to be a hand-authored JSONL loader requiring a `ts_us` field, from
+// the frame-server POC. The shipping recorder has never written that field:
+// `CursorSidecarWriter` emits `{"type":"sample","tMs":...}` and
+// `{"type":"click","tMs":...}`. So the loader returned ZERO events for every
+// real project, and the whole preview cursor/zoom path was dead — no zoom, no
+// halo, and a constant screen_zoom of 1.0 handed to the camera (which is why
+// scale-with-zoom could not be seen in the editor either). It also meant
+// `CURSOR_FILE_MISSING` fired on every open, and Dart force-disabled the
+// user's cursor toggle in response.
+//
+// The preview now parses with `capture::ParseCursorSidecar`, the export's own
+// reader, and samples positions with `capture::SampleCursorAt`, its own
+// interpolator. One format, one parser, one interpolation rule — the same
+// collapse #422 made for the camera composition payload. The POC's `ts_us`
+// format lives on only inside `mediaplayer_frame_server_demo.cpp`, which owns
+// its fixtures.
 
-struct CursorEvent {
-  std::int64_t ts_us = 0;     // playback timestamp, microseconds
-  double x = 0.0;             // video pixel x
-  double y = 0.0;             // video pixel y
-  int button_state = 0;       // 0 = up sample, non-zero = mouse-down
-  int monitor_id = 0;         // unused in POC, preserved for symmetry
-};
-
-// Loads + sorts cursor events from a JSONL file. Each line is expected
-// to be `{"ts_us":N,"x":N,"y":N,"button_state":N,"monitor_id":N}`.
-// Bad lines are dropped silently. Empty on IO failure.
-std::vector<CursorEvent> LoadCursorJsonl(const std::wstring& path);
-
-// Nearest cursor sample by absolute distance in ts. nullptr only when
-// `events` is empty.
-const CursorEvent* FindNearestCursor(
-    const std::vector<CursorEvent>& events, std::int64_t ts_us);
-
-// Nearest event with button_state != 0 within ±window_us of ts_us.
-// Returns nullptr when no click qualifies.
-const CursorEvent* FindNearestClick(
-    const std::vector<CursorEvent>& events, std::int64_t ts_us,
-    std::int64_t window_us);
+// Zoom activation is resolved by `capture::ZoomSegmentStateAt` against the
+// segments the EXPORT builds — see zoom_timeline_builder.h. The preview no
+// longer has an activation rule of its own.
 
 // ---------------------------------------------------------------------
 // Zoom state + per-frame exponential smoother
@@ -92,7 +91,12 @@ struct ZoomState {
   double target_x = 0.0;
   double target_y = 0.0;
   double last_update_seconds = -1.0;
-  std::int64_t last_click_ts_us = std::numeric_limits<std::int64_t>::min();
+  // Segment state for the frame just composed, resolved from the shared
+  // segments. `segment_active` is NOT `current_zoom > 1` — it goes false at the
+  // segment's end_ms while the smoother is still easing out. Carried so the
+  // camera can key a zoom-local clock off the same boundary the export uses.
+  bool segment_active = false;
+  std::int64_t segment_local_ms = 0;
 
   // The user's per-recording zoom settings, mirrored from the same
   // `zoomFactor` / `zoomEffectEnabled` args the EXPORT already honours
@@ -177,9 +181,12 @@ class PreviewCompositor {
   //                     smoother's per-frame alpha).
   //   zoom            — input/output. Updated in place by the
   //                     smoother every frame.
+  // `cursor` is the parsed sidecar; empty samples = the video-only path (no
+  // zoom, no halo), which is what a recording with cursor capture off yields.
   void ComposeFrame(ID2D1DeviceContext* d2d_context,
                     const D2D1_RECT_F& dest_rect,
-                    const std::vector<CursorEvent>& cursor_events,
+                    const capture::CursorSidecarData& cursor,
+                    const std::vector<capture::ZoomSegment>& zoom_segments,
                     std::int64_t playback_us, double now_seconds,
                     ZoomState& zoom);
 

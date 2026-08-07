@@ -175,6 +175,12 @@ ZoomExportController::Frame ZoomExportController::Advance(std::int64_t frame_ms,
   frame.center_x = cur_cx_;
   frame.center_y = cur_cy_;
   frame.active = cur_zoom_ > 1.0 + clingfy::preview::kZoomFactorWriteEpsilon;
+  // The segment this frame belongs to, which the loop above already resolved
+  // and used to throw away. Distinct from `active`: see Frame's declaration.
+  if (active != nullptr) {
+    frame.in_segment = true;
+    frame.segment_local_ms = frame_ms - active->start_ms;
+  }
   return frame;
 }
 
