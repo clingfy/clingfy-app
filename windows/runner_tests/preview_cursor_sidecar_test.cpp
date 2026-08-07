@@ -20,9 +20,11 @@
 #include <gtest/gtest.h>
 
 #include <string>
+#include <vector>
 
 #include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Cursor/cursor_sidecar_writer.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 
 namespace clingfy::preview {
 namespace {
@@ -54,47 +56,74 @@ TEST(PreviewCursorSidecarTest, RealRecorderBytesProduceSamplesAndClicks) {
   EXPECT_EQ(parsed->clicks[0].t_ms, 1000);
 }
 
-TEST(PreviewCursorSidecarTest, ClickLookupWindowIsInterpretedInMilliseconds) {
-  // The one unit boundary the preview still owns: the sidecar is keyed in MS,
-  // the preview's playback clock is US, and the ±500 ms lookup constant is
-  // declared in US. A slip either way is silent — divide-by-1000 missing makes
-  // the window 500 SECONDS wide (every click always matches), and an extra
-  // divide makes it 0.5 ms (no click ever matches). Both look like "zoom is
-  // broken" on device and neither shows up in a formula test.
+TEST(PreviewCursorSidecarTest, PreviewAndExportResolveTheSameSegments) {
+  // THE parity property. The preview used to decide "is a zoom wanted" with a
+  // symmetric +/-500 ms window around the nearest click; the export builds
+  // segments with hysteresis, a 120 ms gap-merge, a minimum length and a
+  // visibility gate, and BACKDATES each segment's start to the click. Those two
+  // rules disagree by up to half a second at every onset.
+  //
+  // Both legs now call ZoomSegmentStateAt on segments from the same builder, so
+  // the assertion is that one function is the only source of truth.
   const auto parsed = capture::ParseCursorSidecar(RealRecorderJsonl());
   ASSERT_TRUE(parsed.has_value());
-  constexpr std::int64_t kWindowMs = kClickLookupWindowUs / 1000;
-  EXPECT_EQ(kWindowMs, 500);
+  const auto segments = capture::BuildZoomSegments(
+      parsed->samples, parsed->clicks, /*duration_ms=*/0);
+  ASSERT_FALSE(segments.empty()) << "a click must produce a zoom segment";
 
-  // At the click.
-  EXPECT_NE(FindCursorClickWithin(parsed->clicks, 1000, kWindowMs), nullptr);
-  // Inside the window on both sides (it is symmetric today — the export's
-  // segments are not, which is what slice 1 reconciles).
-  EXPECT_NE(FindCursorClickWithin(parsed->clicks, 1499, kWindowMs), nullptr);
-  EXPECT_NE(FindCursorClickWithin(parsed->clicks, 501, kWindowMs), nullptr);
-  // Outside it.
-  EXPECT_EQ(FindCursorClickWithin(parsed->clicks, 1600, kWindowMs), nullptr);
-  EXPECT_EQ(FindCursorClickWithin(parsed->clicks, 0, kWindowMs), nullptr);
-  // A 500-second window would swallow this; a 0.5 ms one would fail the first
-  // assertion above.
-  EXPECT_EQ(FindCursorClickWithin(parsed->clicks, 400'000, kWindowMs), nullptr);
+  // Before the click there is no segment — the old preview would already have
+  // been zooming here, 500 ms early.
+  EXPECT_FALSE(capture::ZoomSegmentStateAt(segments, 400).in_segment);
+
+  // Inside, local time is measured from the segment START, not from a click
+  // lookup and not from playback position.
+  const auto at_start =
+      capture::ZoomSegmentStateAt(segments, segments[0].start_ms);
+  EXPECT_TRUE(at_start.in_segment);
+  EXPECT_EQ(at_start.local_ms, 0);
+
+  const auto mid =
+      capture::ZoomSegmentStateAt(segments, segments[0].start_ms + 250);
+  EXPECT_TRUE(mid.in_segment);
+  EXPECT_EQ(mid.local_ms, 250);
 }
 
-TEST(PreviewCursorSidecarTest, PicksTheNearestClickNotTheFirst) {
+TEST(PreviewCursorSidecarTest, SegmentMembershipIsHalfOpenAtTheEnd) {
+  // end_ms is NOT in the segment. That boundary is where a zoom-local clock
+  // must stop: the smoothed zoom keeps easing out afterwards, but the segment
+  // is over. Anything keyed off "zoom > 1" instead keeps running through the
+  // tail and then stops at an arbitrary phase.
+  const std::vector<capture::ZoomSegment> segments = {{1000, 2500}};
+  EXPECT_FALSE(capture::ZoomSegmentStateAt(segments, 999).in_segment);
+  EXPECT_TRUE(capture::ZoomSegmentStateAt(segments, 1000).in_segment);
+  EXPECT_TRUE(capture::ZoomSegmentStateAt(segments, 2499).in_segment);
+  EXPECT_FALSE(capture::ZoomSegmentStateAt(segments, 2500).in_segment)
+      << "end_ms must be outside the segment";
+  EXPECT_FALSE(capture::ZoomSegmentStateAt(segments, 3000).in_segment);
+}
+
+TEST(PreviewCursorSidecarTest, MergedClicksShareOnePhaseOrigin) {
+  // Two clicks close together merge into ONE segment, so local time keeps
+  // running from the FIRST click. A per-click clock would restart here, which
+  // is the concrete failure the old last_click_ts_us approach would have had.
   capture::CursorSidecarData data;
-  data.clicks.push_back({600});
-  data.clicks.push_back({1400});
-  const auto* near_first = FindCursorClickWithin(data.clicks, 700, 500);
-  ASSERT_NE(near_first, nullptr);
-  EXPECT_EQ(near_first->t_ms, 600);
-  const auto* near_second = FindCursorClickWithin(data.clicks, 1300, 500);
-  ASSERT_NE(near_second, nullptr);
-  EXPECT_EQ(near_second->t_ms, 1400);
+  data.samples.push_back({0, 100, 100, true});
+  data.samples.push_back({3000, 400, 400, true});
+  data.clicks.push_back({500});
+  data.clicks.push_back({900});
+  const auto segments =
+      capture::BuildZoomSegments(data.samples, data.clicks, /*duration_ms=*/0);
+  ASSERT_EQ(segments.size(), 1u) << "adjacent clicks must gap-merge";
+  const auto later = capture::ZoomSegmentStateAt(segments, 1500);
+  EXPECT_TRUE(later.in_segment);
+  EXPECT_EQ(later.local_ms, 1500 - segments[0].start_ms)
+      << "the second click must not restart the phase origin";
 }
 
-TEST(PreviewCursorSidecarTest, NoClicksIsNotAMatch) {
-  capture::CursorSidecarData empty;
-  EXPECT_EQ(FindCursorClickWithin(empty.clicks, 0, 500), nullptr);
+TEST(PreviewCursorSidecarTest, NoSegmentsMeansNeverActive) {
+  const std::vector<capture::ZoomSegment> none;
+  EXPECT_FALSE(capture::ZoomSegmentStateAt(none, 0).in_segment);
+  EXPECT_FALSE(capture::ZoomSegmentStateAt(none, 5000).in_segment);
 }
 
 TEST(PreviewCursorSidecarTest, PocTsUsFormatIsNoLongerAccepted) {

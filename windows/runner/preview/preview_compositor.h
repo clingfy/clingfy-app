@@ -39,6 +39,7 @@
 
 #include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Export/color_grade.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 #include "preview/zoom_easing_constants.h"
 #include "Capture/Export/export_geometry.h"
 #include "Graphics/color_grade_effect.h"
@@ -74,12 +75,9 @@ inline constexpr float kHighlightRadiusPx = 60.0f;
 // format lives on only inside `mediaplayer_frame_server_demo.cpp`, which owns
 // its fixtures.
 
-// The click nearest `t_ms` within ±`window_ms`, or nullptr when none
-// qualifies. Pure; `clicks` must be sorted ascending (ParseCursorSidecar
-// guarantees it).
-const capture::CursorSidecarClick* FindCursorClickWithin(
-    const std::vector<capture::CursorSidecarClick>& clicks,
-    std::int64_t t_ms, std::int64_t window_ms);
+// Zoom activation is resolved by `capture::ZoomSegmentStateAt` against the
+// segments the EXPORT builds — see zoom_timeline_builder.h. The preview no
+// longer has an activation rule of its own.
 
 // ---------------------------------------------------------------------
 // Zoom state + per-frame exponential smoother
@@ -93,7 +91,12 @@ struct ZoomState {
   double target_x = 0.0;
   double target_y = 0.0;
   double last_update_seconds = -1.0;
-  std::int64_t last_click_ts_us = std::numeric_limits<std::int64_t>::min();
+  // Segment state for the frame just composed, resolved from the shared
+  // segments. `segment_active` is NOT `current_zoom > 1` — it goes false at the
+  // segment's end_ms while the smoother is still easing out. Carried so the
+  // camera can key a zoom-local clock off the same boundary the export uses.
+  bool segment_active = false;
+  std::int64_t segment_local_ms = 0;
 
   // The user's per-recording zoom settings, mirrored from the same
   // `zoomFactor` / `zoomEffectEnabled` args the EXPORT already honours
@@ -183,6 +186,7 @@ class PreviewCompositor {
   void ComposeFrame(ID2D1DeviceContext* d2d_context,
                     const D2D1_RECT_F& dest_rect,
                     const capture::CursorSidecarData& cursor,
+                    const std::vector<capture::ZoomSegment>& zoom_segments,
                     std::int64_t playback_us, double now_seconds,
                     ZoomState& zoom);
 

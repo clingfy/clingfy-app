@@ -22,77 +22,6 @@ using Microsoft::WRL::ComPtr;
 namespace winrt_dxd3d = winrt::Windows::Graphics::DirectX::Direct3D11;
 
 // ---------------------------------------------------------------------
-// JSONL parser
-// ---------------------------------------------------------------------
-
-namespace {
-
-std::size_t SkipWs(const std::string& s, std::size_t pos) {
-  while (pos < s.size() &&
-         (s[pos] == ' ' || s[pos] == '\t' || s[pos] == '\n' ||
-          s[pos] == '\r')) {
-    ++pos;
-  }
-  return pos;
-}
-
-template <typename T>
-bool ReadJsonNumber(const std::string& line, const std::string& key, T& out) {
-  std::string quoted = std::string("\"") + key + "\"";
-  std::size_t pos = line.find(quoted);
-  if (pos == std::string::npos) {
-    pos = line.find(key);
-    if (pos == std::string::npos) return false;
-    if (pos > 0 && (std::isalnum(static_cast<unsigned char>(line[pos - 1])) ||
-                    line[pos - 1] == '_')) {
-      return false;
-    }
-    const std::size_t after = pos + key.size();
-    if (after < line.size() && (std::isalnum(static_cast<unsigned char>(
-                                    line[after])) ||
-                                line[after] == '_')) {
-      return false;
-    }
-    pos = after;
-  } else {
-    pos += quoted.size();
-  }
-  pos = SkipWs(line, pos);
-  if (pos >= line.size() || line[pos] != ':') return false;
-  pos = SkipWs(line, pos + 1);
-
-  const char* start = line.c_str() + pos;
-  char* end = nullptr;
-  if constexpr (std::is_integral_v<T>) {
-    const long long v = std::strtoll(start, &end, 10);
-    if (end == start) return false;
-    out = static_cast<T>(v);
-  } else {
-    const double v = std::strtod(start, &end);
-    if (end == start) return false;
-    out = static_cast<T>(v);
-  }
-  return true;
-}
-
-}  // namespace
-
-const capture::CursorSidecarClick* FindCursorClickWithin(
-    const std::vector<capture::CursorSidecarClick>& clicks,
-    std::int64_t t_ms, std::int64_t window_ms) {
-  const capture::CursorSidecarClick* best = nullptr;
-  std::int64_t best_diff = window_ms + 1;
-  for (const auto& c : clicks) {
-    const std::int64_t diff = std::llabs(c.t_ms - t_ms);
-    if (diff <= window_ms && diff < best_diff) {
-      best = &c;
-      best_diff = diff;
-    }
-  }
-  return best;
-}
-
-// ---------------------------------------------------------------------
 // Zoom smoother
 // ---------------------------------------------------------------------
 
@@ -252,6 +181,7 @@ HRESULT PreviewCompositor::EnsureHighlightBrush(
 void PreviewCompositor::ComposeFrame(
     ID2D1DeviceContext* d2d_context, const D2D1_RECT_F& dest_rect,
     const capture::CursorSidecarData& cursor,
+    const std::vector<capture::ZoomSegment>& zoom_segments,
     std::int64_t playback_us, double now_seconds, ZoomState& zoom) {
   // Canvas background. This Clear runs BEFORE the colour-grade effect chain
   // below, which is precisely what keeps the canvas ungraded — same rule the
@@ -341,26 +271,21 @@ void PreviewCompositor::ComposeFrame(
     // nearest-sample snap the POC used.
     const capture::CursorAtResult at =
         capture::SampleCursorAt(cursor.samples, playback_ms);
-    const capture::CursorSidecarClick* click = FindCursorClickWithin(
-        cursor.clicks, playback_ms, kClickLookupWindowUs / 1000);
     if (at.has) {
       zoom.target_x = at.x;
       zoom.target_y = at.y;
     }
-    const std::int64_t now_us = playback_us;
-    const std::int64_t hold_us = static_cast<std::int64_t>(
-        kZoomMinOnSeconds * 1'000'000.0);
-    bool zoom_wanted = false;
-    if (click != nullptr) {
-      zoom.last_click_ts_us =
-          std::max(zoom.last_click_ts_us, click->t_ms * 1000);
-      zoom_wanted = true;
-    } else if (zoom.last_click_ts_us !=
-                   std::numeric_limits<std::int64_t>::min() &&
-               now_us >= 0 && now_us >= zoom.last_click_ts_us &&
-               (now_us - zoom.last_click_ts_us) < hold_us) {
-      zoom_wanted = true;
-    }
+    // Segment membership — the export's own definition, via the one shared
+    // resolver. Replaces a symmetric ±500 ms click window plus a 0.3 s hold,
+    // which switched the zoom on half a second BEFORE the click the export
+    // starts it at and never turned it off at a segment end because it had no
+    // concept of one. It is also stateless, so scrubbing backwards now
+    // resolves correctly instead of depending on the highest click seen so far.
+    const capture::ZoomSegmentState seg =
+        capture::ZoomSegmentStateAt(zoom_segments, playback_ms);
+    zoom.segment_active = seg.in_segment;
+    zoom.segment_local_ms = seg.local_ms;
+    const bool zoom_wanted = seg.in_segment;
     // The user's zoom magnitude, not the hardcoded default — and no zoom at
     // all when the effect is off, which is what the export has always done.
     const double factor =
