@@ -109,6 +109,18 @@ final class CaptionsService {
     isRunning = false
     cancelRequested = false
     cancelLock.unlock()
+
+    // Give the weights back when the job is over.
+    //
+    // The pipeline used to be cached for the life of the process, so several
+    // hundred megabytes stayed resident through whatever the user did next --
+    // and what they usually do next is export the video they just captioned,
+    // which is the most memory-hungry thing this app does. The cost is that a
+    // second transcription reloads the model; that is seconds, against holding
+    // ~600 MB for an entire session on the chance it is wanted again.
+    Task { [transcriber] in
+      await transcriber.releaseModel()
+    }
   }
 
   // MARK: - Running
