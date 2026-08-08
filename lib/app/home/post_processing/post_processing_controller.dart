@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
@@ -26,6 +27,13 @@ import 'package:clingfy/app/home/post_processing/support/audio_debouncer.dart';
 import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
+import 'package:clingfy/core/captions/captions_capability.dart';
+import 'package:clingfy/core/bridges/job_progress.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'dart:convert';
+import 'package:clingfy/core/captions/caption_rasterizer.dart';
+import 'package:clingfy/core/captions/caption_state_store.dart';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
@@ -39,9 +47,7 @@ class PostProcessingController extends ChangeNotifier {
   }) : _settings = settings,
        _player = player,
        _nativeBridge = channel {
-    _player.addListener(
-      notifyListeners,
-    ); // Propagate player state changes (like error)
+    _player.addListener(_onPlayerChanged);
     _warningSub = _player.warningCodeStream.listen(_onPlayerWarning);
     _cameraManualPositionSub = _player.cameraManualPositionStream.listen(
       _onCameraManualPositionChanged,
@@ -49,9 +55,19 @@ class PostProcessingController extends ChangeNotifier {
     _resetForNewRecording();
   }
 
+  /// Player notifications also carry CLIP edits (the clip editor forwards
+  /// through `PlayerController`), and a clip edit moves every caption's edited
+  /// position. The push de-duplicates on its own signature, so the 60Hz
+  /// notifications a trim drag produces collapse to one real push.
+  void _onPlayerChanged() {
+    notifyListeners();
+    unawaited(pushPreviewCaptions());
+  }
+
   @override
   void dispose() {
-    _player.removeListener(notifyListeners);
+    _isDisposed = true;
+    _player.removeListener(_onPlayerChanged);
     _warningSub?.cancel();
     _cameraManualPositionSub?.cancel();
     _audioPreviewDebouncer.dispose();
@@ -115,6 +131,41 @@ class PostProcessingController extends ChangeNotifier {
   bool _cursorAvailable = true;
   double _audioGainDb = 0.0;
   VoiceCleanup _voiceCleanup = const VoiceCleanup();
+
+  // ---- Subtitles -----------------------------------------------------------
+
+  /// What native says about captioning this machine and this recording.
+  /// `null` until the probe answers; the section shows nothing until then
+  /// rather than flashing controls that may be replaced by a refusal.
+  CaptionsCapabilityInfo? _captionsCapability;
+
+  List<Caption> _captions = const [];
+  bool _captionsUseMic = true;
+  bool _captionsUseSystem = true;
+  bool _isGeneratingCaptions = false;
+
+  /// Set the moment the user asks to stop, and cleared when the engine
+  /// actually finishes unwinding.
+  ///
+  /// Its whole job is to acknowledge the press. A model download is not
+  /// interruptible, so a cancel can take a while to land; with nothing changing
+  /// on screen the button reads as broken, which is exactly what happened —
+  /// eleven presses in four seconds, in the logs.
+  bool _isCancellingCaptions = false;
+
+  /// `null` = indeterminate. The model download and Core ML specialisation take
+  /// tens of seconds before any real fraction exists.
+  double? _captionsProgress;
+  ProgressStage _captionsStage = ProgressStage.preparing;
+
+  /// Separates "not run yet" from "ran and found nothing" — very different
+  /// things to tell someone.
+  bool _hasEverGeneratedCaptions = false;
+
+  /// Set when the last run FAILED, so "ran and found nothing" is not reported
+  /// for a model that would not download or a decode that threw. Cleared at the
+  /// start of every run and by a successful one.
+  String? _captionsErrorCode;
   double _audioVolumePercent = 100.0;
   String? _cameraPath;
   CameraCompositionState? _cameraState;
@@ -178,6 +229,388 @@ class PostProcessingController extends ChangeNotifier {
   bool get cursorAvailable => _cursorAvailable;
   double get audioGainDb => _audioGainDb;
   VoiceCleanup get voiceCleanup => _voiceCleanup;
+
+  CaptionsCapabilityInfo? get captionsCapability => _captionsCapability;
+  List<Caption> get captions => _captions;
+  bool get captionsUseMic => _captionsUseMic;
+  bool get captionsUseSystem => _captionsUseSystem;
+  bool get isGeneratingCaptions => _isGeneratingCaptions;
+  bool get isCancellingCaptions => _isCancellingCaptions;
+  double? get captionsProgress => _captionsProgress;
+  ProgressStage get captionsStage => _captionsStage;
+  bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
+
+  /// True when the last transcription failed rather than finding no speech.
+  bool get captionsFailed => _captionsErrorCode != null;
+
+  /// The caption manifest the preview is currently showing, so an identical
+  /// re-push (a rebuild, a clip nudge that changed nothing) does no work.
+  bool _isDisposed = false;
+  String? _pushedCaptionSignature;
+
+  /// Pushes run one at a time, and everything requested while one is running
+  /// collapses into a SINGLE follow-up run.
+  ///
+  /// One at a time because the signature that suppresses redundant work is only
+  /// assigned after the rasterization await, so two overlapping pushes race on
+  /// it. Concretely: generate captions, then immediately switch subtitles off,
+  /// and the clear reads a still-null signature, decides nothing is installed,
+  /// and returns — while the generate push it overlapped goes on to install
+  /// captions that nothing will ever take down.
+  ///
+  /// Collapsed rather than queued because `_onPlayerChanged` fires on every
+  /// position update during playback. A chain would grow one link per tick and
+  /// each link re-reads live state anyway, so all but the last are wasted work
+  /// on results that are already stale by the time they run.
+  bool _captionPushRunning = false;
+  Completer<void>? _captionPushQueued;
+
+  /// The export canvas, cached per (project, layout, resolution).
+  ///
+  /// Resolving it is a native round trip that loads the project, parses its
+  /// metadata and reads the screen track — far too expensive to repeat per
+  /// player tick, and the answer only moves when one of those three does.
+  Size? _cachedExportSize;
+  String? _cachedExportSizeKey;
+
+  /// Memoized so the sidebar selector, which calls this on every notification,
+  /// does not re-run an O(cues x clips) reflow each time.
+  ReflowedCaptions? _reflowCache;
+  List<Caption>? _reflowCacheCaptions;
+  List<Clip>? _reflowCacheClips;
+
+  /// Rasterizes the reflowed cues and hands them to the live preview.
+  ///
+  /// Gated on [exportSubtitleMode] burning in, because the preview's job is to
+  /// show what the exported FRAMES will contain. With subtitles off there is
+  /// nothing to show; with sidecar-only the captions go in a separate file and
+  /// burning them into the preview would have the user proof-read a look the
+  /// export will not produce.
+  ///
+  /// Best-effort and fire-and-forget everywhere it is called from: a preview
+  /// without captions must never block an edit.
+  Future<void> pushPreviewCaptions() {
+    if (_captionPushRunning) {
+      // Everything that lands mid-flight shares one follow-up run, and the
+      // returned future still completes only once that run has finished, so an
+      // `await` in a test or an export pre-flight remains honest.
+      return (_captionPushQueued ??= Completer<void>()).future;
+    }
+    return _drainCaptionPushes();
+  }
+
+  Future<void> _drainCaptionPushes() async {
+    _captionPushRunning = true;
+    try {
+      await _pushPreviewCaptionsGuarded();
+      while (_captionPushQueued != null && !_isDisposed) {
+        final pending = _captionPushQueued!;
+        _captionPushQueued = null;
+        await _pushPreviewCaptionsGuarded();
+        pending.complete();
+      }
+    } finally {
+      _captionPushRunning = false;
+      // Disposal mid-drain must not strand a waiter on a future that will
+      // never complete.
+      final stranded = _captionPushQueued;
+      _captionPushQueued = null;
+      stranded?.complete();
+    }
+  }
+
+  /// A failed push must not take the queued one down with it.
+  Future<void> _pushPreviewCaptionsGuarded() async {
+    try {
+      await _pushPreviewCaptions();
+    } catch (e, st) {
+      Log.e("Captions", "Preview caption push failed", e, st);
+    }
+  }
+
+  /// The canvas the EXPORT will use, cached per project and preset pair.
+  Future<Size?> _exportCanvasSize(String projectPath) async {
+    final key = [
+      projectPath,
+      _settings.post.layoutPreset.name,
+      _settings.post.resolutionPreset.name,
+    ].join(' ');
+    final cached = _cachedExportSize;
+    if (cached != null && key == _cachedExportSizeKey) return cached;
+
+    final size = await _nativeBridge.resolveExportSize(
+      projectPath: projectPath,
+      layoutPreset: _settings.post.layoutPreset.name,
+      resolutionPreset: _settings.post.resolutionPreset.name,
+    );
+    if (size == null) return null;
+    _cachedExportSizeKey = key;
+    _cachedExportSize = size;
+    return size;
+  }
+
+  Future<void> _pushPreviewCaptions() async {
+    if (_isDisposed) return;
+    final projectPath = _projectPath;
+    final sessionId = _activeSessionId;
+    if (projectPath == null) return;
+
+    final spans = exportSubtitleMode.burnsIn
+        ? reflowedCaptions().sidecar
+        : const <CaptionSpan>[];
+
+    if (spans.isEmpty) {
+      if (_pushedCaptionSignature == null) return;
+      _pushedCaptionSignature = null;
+      Log.i("Captions", "Preview captions cleared", null, null, {
+        'mode': exportSubtitleMode.wireValue,
+        'cues': _captions.length,
+      });
+      await _nativeBridge.previewSetCaptions(
+        sessionId: sessionId,
+        bitmapDirectory: null,
+        cues: const [],
+        canvasWidth: 0,
+        canvasHeight: 0,
+      );
+      return;
+    }
+
+    try {
+      // The canvas the EXPORT will use, not the preview's on-screen size: the
+      // preview canvas is the same pixel space, shrunk by a layer transform, so
+      // one rasterization serves both and the placement math is identical.
+      // Cached: this is a native round trip and the signature check below is
+      // downstream of it, so an uncached call would pay full price per tick.
+      final size = await _exportCanvasSize(projectPath);
+      if (size == null || _isDisposed || _projectPath != projectPath) return;
+
+      final signature = [
+        size.width.round(),
+        size.height.round(),
+        for (final span in spans)
+          '${span.id}|${span.outputStartMs}|${span.outputEndMs}|${span.text}',
+      ].join('\u0000');
+      if (signature == _pushedCaptionSignature) return;
+
+      final manifest = await const CaptionRasterizer().rasterize(
+        captions: [for (final span in spans) span.asOutputCue()],
+        videoSize: size,
+        directory: Directory('$projectPath/post/captions'),
+      );
+      if (_isDisposed || _projectPath != projectPath) return;
+
+      _pushedCaptionSignature = signature;
+      Log.i("Captions", "Preview captions pushed", null, null, {
+        'cues': manifest.entries.length,
+        'canvas': '${size.width.toInt()}x${size.height.toInt()}',
+      });
+      await _nativeBridge.previewSetCaptions(
+        sessionId: sessionId,
+        bitmapDirectory: manifest.directoryPath,
+        cues: [for (final entry in manifest.entries) entry.toExportArgs()],
+        canvasWidth: size.width,
+        canvasHeight: size.height,
+      );
+    } catch (e, st) {
+      Log.e("PostProcessing", "Preview caption push failed", e, st);
+    }
+  }
+
+  /// The transcript mapped onto the edited timeline.
+  ///
+  /// Cues are transcribed against the ORIGINAL audio, so their times are source
+  /// times; cuts, splits and reordering change where each one lands in the
+  /// exported file. Evaluated once per export and shared by both destinations,
+  /// so the burned-in caption and the sidecar entry can never be computed
+  /// against different clip lists.
+  ReflowedCaptions reflowedCaptions() {
+    // `clipEditor.clips` hands back a fresh unmodifiable wrapper every call, so
+    // the cache key compares values. Clips are few and carry `==`; the reflow
+    // it skips is O(cues x clips) and runs on every controller notification.
+    final clips = _player.clipEditor?.clips ?? const <Clip>[];
+    final cached = _reflowCache;
+    if (cached != null &&
+        identical(_reflowCacheCaptions, _captions) &&
+        listEquals(_reflowCacheClips, clips)) {
+      return cached;
+    }
+    final reflowed = CaptionReflow.reflow(captions: _captions, clips: clips);
+    _reflowCacheCaptions = _captions;
+    _reflowCacheClips = clips;
+    _reflowCache = reflowed;
+    return reflowed;
+  }
+
+  /// The destination the next export will actually use.
+  ///
+  /// The stored preference is overridden to [SubtitleMode.none] when there is
+  /// no transcript, so a stored "burn in" never puts native into a caption
+  /// path with an empty track.
+  SubtitleMode get exportSubtitleMode =>
+      _captions.isEmpty ? SubtitleMode.none : _settings.post.postSubtitleMode;
+
+  /// Asks native whether captions are possible here, and seeds the source
+  /// selection from what the recording actually contains.
+  Future<void> refreshCaptionsCapability() async {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    try {
+      final info = await _nativeBridge.captionsCapability(projectPath);
+      if (_projectPath != projectPath) return; // switched project mid-flight
+      _captionsCapability = info;
+      _captionsUseMic = info.defaultUsesMic;
+      _captionsUseSystem = info.defaultUsesSystem;
+      notifyListeners();
+    } catch (e, st) {
+      Log.e("PostProcessing", "Captions capability probe failed", e, st);
+    }
+  }
+
+  void setCaptionsUseMic(bool value) {
+    if (value == _captionsUseMic) return;
+    _captionsUseMic = value;
+    notifyListeners();
+  }
+
+  void setCaptionsUseSystem(bool value) {
+    if (value == _captionsUseSystem) return;
+    _captionsUseSystem = value;
+    notifyListeners();
+  }
+
+  /// Routed here from the shared job-progress callback when the tick is tagged
+  /// `captions`, so a transcription never moves the export bar.
+  void updateCaptionsProgress(JobProgress progress) {
+    // A cancelled job keeps emitting for as long as it takes to unwind. Letting
+    // those ticks through would move a bar the user has already stopped.
+    if (!_isGeneratingCaptions || _isCancellingCaptions) return;
+    _captionsProgress = progress.fraction;
+    _captionsStage = progress.stage;
+    notifyListeners();
+  }
+
+  Future<void> generateCaptions() async {
+    final projectPath = _projectPath;
+    if (projectPath == null || _isGeneratingCaptions) return;
+    if (!_captionsUseMic && !_captionsUseSystem) return;
+
+    _isGeneratingCaptions = true;
+    // Not reset here: the `finally` below always runs once past the guards
+    // above, so a previous run cannot leave this set.
+    _captionsProgress = null;
+    _captionsStage = ProgressStage.preparing;
+    // Reset here, because a retry that succeeds must stop reporting the last
+    // failure and the `finally` cannot tell the two outcomes apart.
+    _captionsErrorCode = null;
+    notifyListeners();
+
+    try {
+      final raw = await _nativeBridge.generateCaptions(
+        projectPath: projectPath,
+        useMic: _captionsUseMic,
+        useSystem: _captionsUseSystem,
+      );
+      if (_projectPath != projectPath) return;
+      _captions = [for (final m in raw) Caption.fromMap(m)];
+      _hasEverGeneratedCaptions = true;
+      _persistCaptions();
+      unawaited(pushPreviewCaptions());
+    } on PlatformException catch (e) {
+      // Cancelling is a normal outcome, not a failure worth surfacing.
+      if (e.code != 'CAPTIONS_CANCELLED') {
+        Log.e(
+          "PostProcessing",
+          "Caption generation failed: ${e.code}",
+          e,
+          null,
+        );
+        // Same guard the success path uses: a job that fails after the user
+        // has moved to another recording must not report its failure against
+        // that one.
+        if (_projectPath != projectPath) return;
+        _hasEverGeneratedCaptions = true;
+        // Without this the section reads "no speech found", because that
+        // notice keys off `hasEverGenerated` plus an empty cue list — which is
+        // exactly the state a failure leaves behind. A model that would not
+        // download and a recording of silence are not the same thing to tell
+        // someone, and only one of them is worth retrying.
+        _captionsErrorCode = e.code;
+      }
+    } catch (e, st) {
+      Log.e("PostProcessing", "Caption generation failed", e, st);
+      if (_projectPath != projectPath) return;
+      _hasEverGeneratedCaptions = true;
+      _captionsErrorCode = 'CAPTIONS_FAILED';
+    } finally {
+      _isGeneratingCaptions = false;
+      _isCancellingCaptions = false;
+      _captionsProgress = null;
+      notifyListeners();
+    }
+  }
+
+  /// Routed through the controller rather than written straight to settings,
+  /// so switching subtitles off — or to sidecar-only — actually clears the
+  /// burned-in captions from the preview. Written directly, the preview would
+  /// keep showing a burn-in the export is not going to produce.
+  void setSubtitleMode(SubtitleMode value) {
+    if (value == _settings.post.postSubtitleMode) return;
+    unawaited(_settings.post.updatePostSubtitleMode(value));
+    notifyListeners();
+    unawaited(pushPreviewCaptions());
+  }
+
+  Future<void> cancelCaptions() async {
+    if (!_isGeneratingCaptions || _isCancellingCaptions) return;
+    // Flip the UI first. The engine may take seconds to unwind — it cannot be
+    // interrupted mid-download — and the press has to be visibly received or
+    // the user just presses again.
+    _isCancellingCaptions = true;
+    _captionsProgress = null;
+    notifyListeners();
+    await _nativeBridge.cancelCaptions();
+  }
+
+  /// Corrects one cue's text.
+  ///
+  /// The edited track is the truth from here on: re-generating replaces it
+  /// wholesale, which is why the button says so once cues exist.
+  void updateCaptionText(String cueId, String text) {
+    final index = _captions.indexWhere((c) => c.id == cueId);
+    if (index < 0) return;
+    final trimmed = text.trim();
+    if (trimmed == _captions[index].text) return;
+    final next = List<Caption>.from(_captions);
+    final existing = next[index];
+    next[index] = Caption(
+      id: existing.id,
+      startMs: existing.startMs,
+      endMs: existing.endMs,
+      text: trimmed,
+      words: existing.words,
+      translatedText: existing.translatedText,
+    );
+    _captions = next;
+    notifyListeners();
+    _persistCaptions();
+    unawaited(pushPreviewCaptions());
+  }
+
+  /// Fire-and-forget, like every other per-project editor write. The store
+  /// serialises overlapping saves itself, so a correction landing while a
+  /// regeneration completes cannot interleave into unparseable JSON.
+  void _persistCaptions() {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    unawaited(
+      CaptionStateStore.save(
+        projectPath,
+        CaptionPersistState(captions: _captions),
+      ),
+    );
+  }
+
   double get audioVolumePercent => _audioVolumePercent;
   ColorGrade get colorGrade => _colorGrade;
 
@@ -231,6 +664,11 @@ class PostProcessingController extends ChangeNotifier {
     // rebuilt (the shared texture is sized to it and cannot be resized).
     _pushCanvas();
     applyProcessing();
+    // The caption bitmaps are sized to the export canvas this preset resolves,
+    // so a preset change makes them the wrong size — and, once the wrap width
+    // changes, sometimes the wrong line count. Native hides them until this
+    // re-rasterization lands.
+    unawaited(pushPreviewCaptions());
   }
 
   void setResolutionPreset(ResolutionPreset v) {
@@ -241,6 +679,7 @@ class PostProcessingController extends ChangeNotifier {
     // budget), so this pushes the value without forcing a rebuild.
     _pushCanvas();
     applyProcessing();
+    unawaited(pushPreviewCaptions());
   }
 
   void setFitMode(FitMode v) {
@@ -910,8 +1349,22 @@ class PostProcessingController extends ChangeNotifier {
     _activeSessionId = sessionId;
     _projectPath = projectPath;
     _previewPath = projectPath;
+    // A new recording has its own audio and its own answer, so nothing from the
+    // last one may survive — a stale capability would offer sources this
+    // project does not have, and stale cues would show another recording's
+    // subtitles.
+    _captionsCapability = null;
+    // Restored, not cleared: a transcript costs minutes of compute and carries
+    // the user's own corrections, so reopening a recording that has one must
+    // not silently present it as never transcribed.
+    final storedCaptions = CaptionStateStore.load(projectPath);
+    _captions = storedCaptions?.captions ?? const [];
+    _hasEverGeneratedCaptions = _captions.isNotEmpty;
+    // Another recording's manifest may still be installed natively.
+    _pushedCaptionSignature = null;
     notifyListeners();
     unawaited(_loadRecordingSceneInfo(projectPath));
+    unawaited(refreshCaptionsCapability());
   }
 
   void detachRecording() {
@@ -949,6 +1402,9 @@ class PostProcessingController extends ChangeNotifier {
     _backgroundImagePath = null;
     _backgroundKind = BackgroundKind.color;
     _backgroundPreset = null;
+    // Per-recording, like everything else here: a failure belongs to the
+    // recording it happened on, not to the next one opened.
+    _captionsErrorCode = null;
     _cursorSize = 1.5;
     _zoomFactor = _settings.post.postZoomFactor;
     _zoomEffectEnabled = _settings.post.postZoomEffectEnabled;
@@ -1220,6 +1676,125 @@ class PostProcessingController extends ChangeNotifier {
     }
   }
 
+  /// Renders each cue to a PNG and returns the `exportVideo` arguments that
+  /// point native at them.
+  ///
+  /// Burn-in composites bitmaps, not strings, because the caption font is
+  /// bundled with the Flutter side and Arabic needs bidi reordering and
+  /// contextual shaping — text handed to native as a string would draw as
+  /// disconnected letters in the wrong order.
+  ///
+  /// Returns null whenever burn-in cannot be done honestly: no cues, or native
+  /// declining to say what size the frames will be. Skipping is the right
+  /// failure — rasterising at a guessed size burns permanently wrong captions
+  /// into the video, which is worse than none.
+  @visibleForTesting
+  Future<Map<String, dynamic>?> rasterizeCaptionsForExport([
+    ReflowedCaptions? reflowed,
+  ]) async {
+    final projectPath = _projectPath;
+    // The burn-in view: source-timed, and guaranteed free of overlapping spans
+    // so native's cue track accepts every one of them.
+    final spans = (reflowed ?? reflowedCaptions()).burnIn;
+    if (projectPath == null || spans.isEmpty) {
+      Log.i("Captions", "No burn-in payload", null, null, {
+        'hasProject': projectPath != null,
+        'cues': _captions.length,
+        'burnInSpans': spans.length,
+        'mode': exportSubtitleMode.wireValue,
+      });
+      return null;
+    }
+
+    try {
+      final size = await _nativeBridge.resolveExportSize(
+        projectPath: projectPath,
+        layoutPreset: _settings.post.layoutPreset.name,
+        resolutionPreset: _settings.post.resolutionPreset.name,
+      );
+      if (size == null) {
+        Log.w(
+          "Captions",
+          "Skipping caption burn-in: native did not report an export size",
+        );
+        return null;
+      }
+
+      // Inside the project bundle, not a temp dir: the export can be cancelled
+      // or fail partway, and a cache the OS may reap mid-render would leave
+      // native reading bitmaps that have vanished.
+      final directory = Directory('$projectPath/post/captions');
+      final manifest = await const CaptionRasterizer().rasterize(
+        captions: [for (final span in spans) span.asSourceCue()],
+        videoSize: size,
+        directory: directory,
+      );
+      final args = manifest.toExportArgs();
+      Log.i("Captions", "Export burn-in payload prepared", null, null, {
+        'cues': manifest.entries.length,
+        'spans': spans.length,
+        'canvas': '${size.width.toInt()}x${size.height.toInt()}',
+        'directory': manifest.directoryPath,
+      });
+      return args.isEmpty ? null : args;
+    } catch (e, st) {
+      Log.e("PostProcessing", "Caption rasterization failed", e, st);
+      return null;
+    }
+  }
+
+  /// Strips a trailing file extension, if there is one.
+  ///
+  /// Only a dot in the last path segment counts: `~/My.Videos/clip` has no
+  /// extension, and naively cutting at the last dot would write the sidecar
+  /// into a sibling of the directory rather than beside the video.
+  static String _withoutExtension(String path) {
+    final lastSeparator = path.lastIndexOf(Platform.pathSeparator);
+    final dot = path.lastIndexOf('.');
+    if (dot <= lastSeparator + 1) return path;
+    return path.substring(0, dot);
+  }
+
+  /// Writes `.srt` and `.vtt` beside the exported video.
+  ///
+  /// Done here rather than natively because the formats are pure text and the
+  /// serializer is already shared, and because native has just told us where
+  /// the file actually landed — after its own name-collision handling, which
+  /// is the only path that knows the final name.
+  ///
+  /// A sidecar failure never fails the export. The video is already on disk
+  /// and re-running the whole render to retry two small text files would be a
+  /// far worse outcome than a missing subtitle track the user can regenerate.
+  @visibleForTesting
+  Future<void> writeSubtitleSidecars(
+    String videoPath,
+    SubtitleMode mode, [
+    ReflowedCaptions? reflowed,
+  ]) async {
+    // The sidecar view: timestamps on the EXPORTED timeline. Writing source
+    // times here would put every subtitle at the wrong moment the instant a
+    // recording has a single cut.
+    final spans = (reflowed ?? reflowedCaptions()).sidecar;
+    if (!mode.writesSidecar || spans.isEmpty) return;
+    final cues = [for (final span in spans) span.asOutputCue()];
+
+    final stem = _withoutExtension(videoPath);
+
+    for (final entry in {
+      '$stem.srt': SubtitleSerializer.toSrt(cues),
+      '$stem.vtt': SubtitleSerializer.toWebVtt(cues),
+    }.entries) {
+      try {
+        // Written as UTF-8 without a BOM: WebVTT requires UTF-8, and SubRip
+        // has no encoding declaration at all, so UTF-8 is what every modern
+        // parser assumes.
+        await File(entry.key).writeAsString(entry.value, encoding: utf8);
+      } catch (e, st) {
+        Log.e("PostProcessing", "Failed to write ${entry.key}", e, st);
+      }
+    }
+  }
+
   Future<String?> exportCurrentRecording(BuildContext context) async {
     _lastExportWasCancelled = false;
 
@@ -1371,6 +1946,14 @@ class PostProcessingController extends ChangeNotifier {
         );
       }
 
+      final subtitleMode = exportSubtitleMode;
+      // Once, before either destination runs: the clip list must not be read
+      // twice across the awaits that follow.
+      final reflowed = reflowedCaptions();
+      final captionArgs = subtitleMode.burnsIn
+          ? await rasterizeCaptionsForExport(reflowed)
+          : null;
+
       Map<String, dynamic> args = {
         'layoutPreset': _settings.post.layoutPreset.name,
         'resolutionPreset': _settings.post.resolutionPreset.name,
@@ -1422,6 +2005,11 @@ class PostProcessingController extends ChangeNotifier {
         'clips':
             _player.clipEditor?.clips.map((c) => c.toMap()).toList() ??
             const <Map<String, dynamic>>[],
+        // Caption bitmaps and their directory, or nothing at all. Native
+        // composites pre-rendered PNGs rather than text: the bundled font and
+        // the bidi/shaping engine live on this side, so a transcript sent as
+        // strings could not be drawn correctly for every script we ship.
+        ...?captionArgs,
       };
 
       _activeExportInvokeSpan = _activeExportTransaction!.startChild(
@@ -1442,6 +2030,7 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
+        await writeSubtitleSidecars(newPath, subtitleMode, reflowed);
         ClingfyAnalytics.capture(
           AnalyticsEvents.exportJobComplete,
           properties: {
@@ -1645,10 +2234,13 @@ class PostProcessingController extends ChangeNotifier {
     }
   }
 
-  void updateProgress(double p) {
-    if (!p.isFinite || p.isNaN || p < 0) return;
-    final normalized = p > 1.0 ? p / 100.0 : p;
-    _exportProgress = normalized.clamp(0.0, 1.0).toDouble();
+  /// `null` means the job cannot report a fraction, which the UI shows as an
+  /// indeterminate spinner. Distinct from 0.0, which means "just started" —
+  /// conflating them is how a determinate bar gets stuck at 0% forever.
+  ///
+  /// Range normalisation already happened in [JobProgress]; this only stores.
+  void updateProgress(double? p) {
+    _exportProgress = p;
     notifyListeners();
   }
 

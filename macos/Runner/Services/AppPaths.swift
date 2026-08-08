@@ -33,6 +33,23 @@ enum AppPaths {
     return logsDir
   }
 
+  /// Returns the root directory for downloaded speech-recognition models.
+  /// Location: `~/Library/Application Support/<app-id>/Models/`
+  ///
+  /// Set explicitly on the transcription engine because its own default is
+  /// `~/Documents/huggingface` — in an unsandboxed Developer-ID app that is the
+  /// user's real Documents folder. Several hundred megabytes of model weights
+  /// appearing there is user-visible clutter in a paid product, and Documents
+  /// may sit inside iCloud Drive sync or behind Full Disk Access.
+  ///
+  /// Excluded from backup: the models are large, and re-downloadable.
+  static func captionModelsDirectory() -> URL {
+    let modelsDir = applicationSupportRoot()
+      .appendingPathComponent("Models", isDirectory: true)
+    ensureDirectory(modelsDir, label: "caption models", excludeFromBackup: true)
+    return modelsDir
+  }
+
   /// Returns the daily log file URL for the provided date.
   static func logFileURL(for date: Date = Date()) -> URL {
     let formatter = DateFormatter()

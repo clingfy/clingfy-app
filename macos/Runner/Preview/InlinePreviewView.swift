@@ -205,6 +205,23 @@ final class InlinePreviewView: NSView {
   private var zoomedContentLayer: CALayer?
   private var maskedContentLayer: CALayer?
   private var cameraContainerLayer: CALayer?
+
+  /// Draws the active caption over the finished canvas.
+  ///
+  /// A plain CALayer above everything, NOT a CIFilter pass in the video
+  /// composition: the colour-grade filter path is a deliberate zero-cost
+  /// passthrough at identity, and taxing every preview frame to draw a static
+  /// bitmap would give that up for nothing.
+  private var captionLayer: CALayer?
+  private var captionTrack: CaptionPreviewTrack?
+  private var captionCueId: String?
+  /// Held until an armed clip rebuild lands. The manifest's times are on the
+  /// EDITED timeline, so applying it while the player item is still on the old
+  /// one shows the wrong line for the length of the debounce — and for a whole
+  /// trim drag, which re-arms it continuously.
+  private var pendingCaptionTrack: CaptionPreviewTrack??
+  /// Last canvas a mismatch was logged for, so the warning is not per-frame.
+  private var lastCaptionCanvasMismatch: CGSize?
   private var cameraBorderLayer: CAShapeLayer?
 
   // Zoom state
@@ -376,6 +393,22 @@ final class InlinePreviewView: NSView {
     cameraBorder.isHidden = true
     cameraContainer.addSublayer(cameraBorder)
     container.addSublayer(cameraContainer)
+
+    // Added last, so it is above the video, the camera bubble and the
+    // background — matching the export, where the caption is the final
+    // composite before the transfer encode in both render branches.
+    //
+    // A SIBLING of `zoomed`, not a child: captions must not scale when zoom is
+    // applied, exactly as in the export where they are composited after the
+    // zoom is already baked into the frame.
+    let captions = CALayer()
+    captions.anchorPoint = .zero
+    captions.isHidden = true
+    captions.contentsGravity = .resize
+    captions.actions = ["contents": NSNull(), "hidden": NSNull(), "bounds": NSNull(), "position": NSNull()]
+    container.addSublayer(captions)
+    self.captionLayer = captions
+
     self.layer?.addSublayer(container)
 
     self.canvasContainer = container
@@ -435,6 +468,11 @@ final class InlinePreviewView: NSView {
     applyCanvasGeometry(metrics: metrics)
     updatePreviewMaskLayout(params: params, pixelScale: metrics.pixelScale)
     updateCameraPreviewLayout()
+    // The canvas may have just changed size (layout or resolution preset), and
+    // the caption's placement is a fraction of it. Bitmaps built for the old
+    // canvas are refused by the match check inside, which hides the caption
+    // until Flutter re-rasterizes at the new size.
+    relayoutCaptionOverlay()
   }  // updateContainerLayout
 
   private func canvasPoint(from event: NSEvent) -> CGPoint? {
@@ -2168,6 +2206,20 @@ final class InlinePreviewView: NSView {
     updateCursorLayer(tick: tickState)
     let screenZoom = updateZoom(tick: tickState)
     updateCameraPreviewGeometry(time: t, screenZoom: screenZoom)
+    // Captions take `posSeconds` — the PLAYER's time — not `t`. Every other
+    // overlay here is keyed to SOURCE time and maps edited→source above; the
+    // caption track is already on the edited timeline, because that is what a
+    // .srt beside the exported file has to match. Passing `t` would put every
+    // caption at the wrong moment the instant a recording has a cut.
+    //
+    // It belongs in THIS function and not in `applyPreviewOverlayState`, which
+    // is where it was: that runs only on a cursor load, a settings change, a
+    // composition apply and a zoom push — never on playback and never on a
+    // scrub. So the caption resolved once, when the track was installed, and
+    // then never changed for the rest of the session. `sendTick` is reached
+    // from both the periodic observer and `seekTo`, so one call covers playing
+    // and scrubbing while paused.
+    refreshCaptionOverlay(atEditedSeconds: posSeconds)
     CATransaction.commit()
 
     // Only EMIT the transport tick once the duration is real: a not-yet-loaded
@@ -2330,6 +2382,18 @@ final class InlinePreviewView: NSView {
     // clip edits happen while paused, so the periodic observer may not fire soon
     // enough to un-hide the camera after the rebuild's seek.
     syncCameraPlayback(to: restoreTime, force: true)
+    // The manifest held back in updateCaptionsOnly was timed against exactly
+    // this timeline. Swapping it in here — not when it arrived — is what keeps
+    // the caption and the frames on the same clock through a trim drag.
+    if let held = pendingCaptionTrack {
+      pendingCaptionTrack = nil
+      applyCaptionTrack(held)
+    } else {
+      // Same reason the camera is re-synced above: clip edits happen while
+      // paused, so no tick will arrive to correct a caption left on a stale
+      // edited position.
+      refreshCaptionOverlay(atEditedSeconds: Double(restoreEditedMs) / 1000.0)
+    }
 
     NativeLogger.i(
       "Player", "Rebuilt clip composition preview",
@@ -3644,6 +3708,141 @@ final class InlinePreviewView: NSView {
       ])
   }
 
+  // MARK: - Captions
+
+  /// Installs (or clears) the preview caption track.
+  ///
+  /// Flutter rasterizes the bitmaps because the caption face is bundled on that
+  /// side and Arabic needs bidi reordering plus contextual shaping that cannot
+  /// be done here from a string. The same rasterizer feeds the export, so the
+  /// preview and the exported file draw identical glyphs.
+  func updateCaptionsOnly(_ track: CaptionPreviewTrack?) {
+    // A clip rebuild is armed: this manifest is timed against the timeline that
+    // rebuild will produce, not the one currently playing. Hold it.
+    if clipRebuildWorkItem != nil {
+      pendingCaptionTrack = .some(track)
+      NativeLogger.i(
+        "Captions", "Preview caption track held for pending clip rebuild",
+        context: ["cues": track?.count ?? 0])
+      return
+    }
+    applyCaptionTrack(track)
+  }
+
+  private func applyCaptionTrack(_ track: CaptionPreviewTrack?) {
+    captionTrack = track
+    captionCueId = nil
+    captionLayer?.contents = nil
+    if track == nil {
+      captionLayer?.isHidden = true
+    }
+    refreshCaptionOverlay(atEditedSeconds: player?.currentTime().seconds ?? 0)
+    needsDisplay = true
+    NativeLogger.i(
+      "Captions", "Preview caption track applied",
+      context: [
+        "cues": track?.count ?? 0,
+        "canvas": "\(Int(track?.canvasSize.width ?? 0))x\(Int(track?.canvasSize.height ?? 0))",
+      ])
+  }
+
+  /// Shows the cue covering `playerSeconds`, or hides the layer.
+  ///
+  /// `playerSeconds` is EDITED time, which is exactly the timebase the track is
+  /// in — no source conversion, unlike every other overlay here.
+  private func refreshCaptionOverlay(atEditedSeconds playerSeconds: Double) {
+    guard let layer = captionLayer else { return }
+    guard let track = captionTrack, let container = canvasContainer else {
+      layer.isHidden = true
+      return
+    }
+
+    // Bitmaps are sized to a specific canvas: the font scales with its height
+    // and the wrap width is a fraction of its width. Drawn against a different
+    // one they are the wrong size and possibly the wrong line count, so the
+    // honest move while a preset change is in flight is to show nothing rather
+    // than something the export will not reproduce.
+    guard track.matches(targetSize: container.bounds.size) else {
+      // Logged once per canvas, not per frame: this fires on every tick while a
+      // preset change is in flight, and the whole point is that it is otherwise
+      // invisible — the captions simply do not appear.
+      if lastCaptionCanvasMismatch != container.bounds.size {
+        lastCaptionCanvasMismatch = container.bounds.size
+        NativeLogger.w(
+          "Captions", "Preview captions hidden: bitmaps built for another canvas",
+          context: [
+            "bitmapCanvas":
+              "\(Int(track.canvasSize.width))x\(Int(track.canvasSize.height))",
+            "previewCanvas":
+              "\(Int(container.bounds.width))x\(Int(container.bounds.height))",
+          ])
+      }
+      layer.isHidden = true
+      captionCueId = nil
+      return
+    }
+    lastCaptionCanvasMismatch = nil
+
+    let editedMs = playerSeconds.isFinite ? Int(playerSeconds * 1000.0) : 0
+    guard let cue = track.activeCue(atEditedMs: editedMs) else {
+      layer.isHidden = true
+      captionCueId = nil
+      return
+    }
+
+    if cue.id != captionCueId {
+      guard let image = NSImage(contentsOf: track.bitmapURL(for: cue)),
+        let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+      else {
+        NativeLogger.w(
+          "Captions", "Preview caption bitmap missing or undecodable",
+          context: ["cue": cue.id, "path": track.bitmapURL(for: cue).path])
+        layer.isHidden = true
+        captionCueId = nil
+        return
+      }
+      layer.contents = cgImage
+      captionCueId = cue.id
+      layoutCaptionOverlay(bitmapSize: CGSize(width: cgImage.width, height: cgImage.height))
+    }
+    layer.isHidden = false
+  }
+
+  /// Places the bitmap using the EXPORT's own placement function, against the
+  /// same rect the export uses.
+  ///
+  /// `canvasContainer.bounds` is the export canvas in export pixels — the
+  /// preview and the exporter both size it from `resolveTargetSize`, and the
+  /// on-screen shrink is a transform on top. So the geometry here is the
+  /// exported geometry, not an approximation of it.
+  ///
+  /// It must be the CANVAS and not the video rect: the export centres captions
+  /// in the whole frame and lifts them off ITS bottom edge, so on a 9:16 canvas
+  /// from a 16:9 recording the caption sits in the letterbox bar below the
+  /// picture. Anchoring to the video rect instead would put it hundreds of
+  /// pixels too high.
+  private func layoutCaptionOverlay(bitmapSize: CGSize) {
+    guard let layer = captionLayer, let container = canvasContainer else { return }
+    let frame = CaptionOverlayRenderer.placement(
+      bitmapExtent: CGRect(origin: .zero, size: bitmapSize),
+      in: container.bounds,
+      bottomMarginFraction: CaptionOverlayRenderer.defaultBottomMarginFraction)
+    layer.bounds = CGRect(origin: .zero, size: frame.size)
+    layer.position = frame.origin
+  }
+
+  /// Re-places the caption after the canvas changes size (layout or resolution
+  /// preset), alongside the camera overlay's own relayout.
+  private func relayoutCaptionOverlay() {
+    guard let layer = captionLayer, layer.contents != nil,
+      let cgImage = layer.contents
+    else { return }
+    let image = cgImage as! CGImage
+    layoutCaptionOverlay(
+      bitmapSize: CGSize(width: image.width, height: image.height))
+    refreshCaptionOverlay(atEditedSeconds: player?.currentTime().seconds ?? 0)
+  }
+
   func updateZoomSegmentsOnly(segments: [ZoomTimelineSegment]) {
     guard var params = currentCompositionParams, currentLayout != nil else {
       pendingZoomSegments = segments
@@ -3669,6 +3868,11 @@ final class InlinePreviewView: NSView {
   /// `time` is the player's current time (EDITED time when a kept-range
   /// composition is playing). The overlays sample SOURCE time, so map it back.
   private func applyPreviewOverlayState(at time: Double, snap: Bool) {
+    // Captions take the raw player time, NOT the source mapping the overlays
+    // below use: the track is in edited time already. Placed here so every
+    // path that moves the playhead — the periodic tick, a scrub while paused,
+    // the post-rebuild restore seek — refreshes the caption too.
+    refreshCaptionOverlay(atEditedSeconds: time)
     let sourceTime = sourceSeconds(forPlayerSeconds: time)
     let normalizedTime = sourceTime.isFinite ? sourceTime : 0
     let tick = PreviewTickState(

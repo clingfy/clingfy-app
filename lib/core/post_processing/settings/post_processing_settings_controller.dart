@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:clingfy/core/logging/logger_service.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 
@@ -10,6 +11,7 @@ class PostProcessingSettingsController extends ChangeNotifier {
   static const String _prefPostAudioVolumePercent = 'postAudioVolumePercent';
   static const String _prefPostAutoNormalizeEnabled =
       'postAutoNormalizeEnabled';
+  static const String _prefPostSubtitleMode = 'postSubtitleMode';
   static const String _prefPostTargetLoudnessDbfs = 'postTargetLoudnessDbfs';
   static const String _prefPostVoiceCleanupEnabled = 'postVoiceCleanupEnabled';
   static const String _prefPostVoiceCleanupMode = 'postVoiceCleanupMode';
@@ -23,6 +25,11 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double _postAudioVolumePercent = 100.0;
   bool _postAutoNormalizeEnabled = false;
   double _postTargetLoudnessDbfs = -16.0;
+  // Burn-in by default because it is the destination that cannot be lost: a
+  // sidecar is stripped by most upload paths, and a user who generated
+  // subtitles and saw nothing in the exported file would reasonably call that
+  // broken. It only ever applies when a transcript exists.
+  SubtitleMode _postSubtitleMode = SubtitleMode.burnIn;
   // Voice cleanup ships opt-in and OFF by default: it is a lossy DSP pass on
   // the user's voice, so it only ever runs when explicitly asked for.
   VoiceCleanup _postVoiceCleanup = const VoiceCleanup();
@@ -36,6 +43,7 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double get postAudioVolumePercent => _postAudioVolumePercent;
   bool get postAutoNormalizeEnabled => _postAutoNormalizeEnabled;
   double get postTargetLoudnessDbfs => _postTargetLoudnessDbfs;
+  SubtitleMode get postSubtitleMode => _postSubtitleMode;
   VoiceCleanup get postVoiceCleanup => _postVoiceCleanup;
   bool get postZoomEffectEnabled => _postZoomEffectEnabled;
   double get postZoomFactor => _postZoomFactor;
@@ -87,6 +95,11 @@ class PostProcessingSettingsController extends ChangeNotifier {
       mode: CleanupMode.fromWire(
         prefs.getString(_prefPostVoiceCleanupMode) ?? CleanupMode.balanced.wire,
       ),
+    );
+    // fromWire falls back to burn-in, so a preference written by a newer build
+    // degrades to the safe destination instead of silently exporting nothing.
+    _postSubtitleMode = SubtitleMode.fromWire(
+      prefs.getString(_prefPostSubtitleMode),
     );
     _postZoomEffectEnabled = prefs.getBool(_prefPostZoomEffectEnabled) ?? true;
     _postZoomFactor = _clampPostZoomFactor(
@@ -154,6 +167,18 @@ class PostProcessingSettingsController extends ChangeNotifier {
       await prefs.setDouble(_prefPostAudioVolumePercent, clamped);
     } catch (e, st) {
       Log.e('Settings', 'Failed to persist post audio volume', e, st);
+    }
+  }
+
+  Future<void> updatePostSubtitleMode(SubtitleMode value) async {
+    if (value == _postSubtitleMode) return;
+    _postSubtitleMode = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setString(_prefPostSubtitleMode, value.wireValue);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist post subtitle mode', e, st);
     }
   }
 

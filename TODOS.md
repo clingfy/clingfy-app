@@ -23,20 +23,64 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (`onHoverSeek`/`previewPeekTo` wiring), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart`.
 - **Depends on:** Scissors-split cut layer (shares the cut-hover state).
 
+## Editor — captions
+
+### Word-level caption editing (click a word to edit, drag to retime)
+
+- **What:** Click an individual word in a caption to edit just that word, and drag
+  a word's boundary to retime it, rather than editing the whole cue as one string.
+- **Why:** `CaptionWord` (`lib/core/timeline/model/edit_track.dart:201-222`) exists
+  and its own doc comment says it "powers click-to-edit and reflow-on-split."
+  Half of that shipped: reflow-on-split uses the timings when a cue's audio is cut
+  in half. The click-to-edit half did not. Without this entry, the next person
+  reads that comment and assumes the feature exists.
+- **Context:** Deferred in the 2026-08-04 eng review (scope reduction R2). v1 ships
+  cue-level text editing, which satisfies the actual need — fixing a
+  mis-transcribed product name — at a fraction of the UI. Per-word timings are
+  stored by ASR regardless, so this is additive later, not a rewrite. The reason to
+  wait is that nobody has seen real transcription quality on real Clingfy
+  recordings yet; if Whisper turns out to be accurate enough that people rarely
+  edit, this is UI nobody wanted.
+- **Pros:** Precise corrections without retyping a sentence; retiming without
+  touching text.
+- **Cons:** Substantially more interaction surface (per-word hit targets, drag
+  handles inside a text run, RTL word order), and it fights the cue-level editor
+  you would already have shipped.
+- **Start at:** `lib/app/home/post_processing/widgets/post_captions_section.dart`
+  (once it exists), `CaptionWord` in `edit_track.dart:201`.
+- **Depends on:** the cue-level caption editing UI shipping first.
+- **Gate:** Only build on real user demand, same rule as the persistent-scissors
+  item above.
+- **Effort:** human ~2d / CC ~2h.
+
 ## Export — colour
 
-### Exported video does not match the inline preview's colour
+### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 
-- **What:** The same frame is visibly different between the inline preview and the exported file. Reported 2026-07-28 with a matched pair of screenshots one second apart.
-- **Measured, not eyeballed.** Sampling matching wallpaper patches (decoded to sRGB so both are compared in one space) gives export-minus-preview deltas of roughly `+9 +7 +9`, `+5 +11 +9`, `+16 +17 +14` (R G B, 0-255). Two things follow: the export is lifted overall, and **midtones lift most** — in one patch green went `68 -> 79` while red in the same patch went `29 -> 34`. That is a transfer-function signature. A wrong YCbCr matrix would shift hue roughly uniformly instead, so the matrix is probably not the culprit.
-- **Two concrete inconsistencies exist in the export path, either of which could contribute:**
-  1. `VideoColorPipeline.tag(pixelBuffer:)` attaches `kCVImageBufferCGColorSpaceKey = sRGB` **and** `kCVImageBufferTransferFunctionKey = ITU_R_709_2` to the same buffer. Those are different curves, and consumers disagree about which wins: Core Image reads the CGColorSpace attachment, AVFoundation/VideoToolbox read the discrete transfer tag. The preview and the export therefore need not agree even from identical pixels.
-  2. The written file reports `FullRangeVideo: 0` (limited range, 16-235) while Core Image renders full-range 0-255. If the data really is full-range, a decoder honouring the tag shifts everything.
-- **Do NOT guess at the fix.** Both "tag sRGB transfer instead of 709" and "convert the data to 709" are one-line changes that alter every export, and only one is right. `docs/windows-port.md` already records a colour-parity divergence, so this area punishes confident guesses.
-- **Decide it by measurement:** render one known test frame (a greyscale ramp plus primary patches) through the preview path and the export path, sample both, and fit the transform. The ramp separates the two candidates immediately — range shows as a straight-line offset with clipped ends, gamma as a curve.
-- **Start at:** `macos/Runner/Capture/Export/CompositionBuilder.swift:16` (`workingColorSpace`), `:118` (`tag(pixelBuffer:)`), and the export render loop at `macos/Runner/Capture/Export/LetterboxExporter.swift:2383-2393` where the buffer is tagged before it is appended.
-- **Evidence:** the reported screenshot pair, and the exported file's own extensions dump (`CVImageBufferColorPrimaries: ITU_R_709_2`, `FullRangeVideo: 0`).
-- **Effort:** human ~4h / CC ~45min once the ramp measurement exists.
+Filed 2026-07-28 (#369), closed by the 1.0.7 cycle. Kept for the measurements,
+which are the only recorded numbers for this defect.
+
+- **The symptom, measured:** sampling matching wallpaper patches (decoded to sRGB
+  so both are compared in one space) gave export-minus-preview deltas of roughly
+  `+9 +7 +9`, `+5 +11 +9`, `+16 +17 +14` (R G B, 0-255). The export was lifted
+  overall and **midtones lifted most** — one patch went green `68 -> 79` while red
+  in the same patch went `29 -> 34`. That is a transfer-function signature, not a
+  matrix error, which is what pointed at the right fix.
+- **Fixed by:** #380 and #383 (encode into the transfer the file declares), #391
+  (use the gamma Apple's decoder actually applies), #395 (route every export
+  through the path that encodes colour), #396 (GIF undoes the export transfer),
+  #402 (camera overlay was encoded twice), #404 (record in sRGB so the BT.709 tag
+  on `screen.mov` is honest). CHANGELOG 1.0.7: "Exported colour matches the
+  preview... Fixed on every export path, including GIF."
+- **Do not re-open on the dual tagging.** `VideoColorPipeline.tag(pixelBuffer:)`
+  (`CompositionBuilder.swift:118-140`) still attaches
+  `kCVImageBufferCGColorSpaceKey = sRGB` alongside a 709 transfer tag. That is now
+  **intentional**: sRGB is the working space, and
+  `ColorTransferFunctions.encodeForExport` puts the data into the 709 transfer the
+  file declares. The original TODO listed this as suspicious; it is the design.
+- **Caveat that is still true:** recordings made before 2026-08-02 hold P3 data
+  under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
+  and recorded in the CHANGELOG.
 
 ## Windows — capture exclusion
 

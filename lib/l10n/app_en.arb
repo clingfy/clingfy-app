@@ -907,5 +907,66 @@
   "crashReportingNoticeTitle": "About crash reports",
   "crashReportingNoticeBody": "Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.",
   "crashReportingNoticeAccept": "Got it",
-  "crashReportingNoticeOptOut": "Turn off"
+  "crashReportingNoticeOptOut": "Turn off",
+  "captions": "Subtitles",
+  "captionsGenerate": "Generate subtitles",
+  "captionsRegenerate": "Generate again",
+  "captionsCancel": "Stop",
+  "captionsPreparing": "Preparing…",
+  "captionsTranscribing": "Transcribing…",
+  "captionsSourceMic": "Microphone",
+  "captionsSourceSystem": "Screen audio",
+  "captionsNoneYet": "No subtitles yet.",
+  "captionsNoSpeechFound": "No speech found in this recording.",
+  "captionsUnavailableOs": "Subtitles need a newer version of macOS.",
+  "captionsUnavailableIntel": "Subtitles run slowly on Intel Macs, which have no Neural Engine.",
+  "captionsUnavailableNoAudio": "This recording has no audio to transcribe.",
+  "captionsUnavailablePlatform": "Subtitles are only available on macOS.",
+  "captionsMicOnlyRecording": "This recording predates separate audio capture, so only your microphone was recorded.",
+  "captionsFirstRunDownload": "The first run downloads a speech model. This happens once.",
+  "captionsFailed": "Couldn’t generate subtitles.",
+  "captionsCueCount": "{count} subtitles",
+  "@captionsCueCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "captionsDestination": "Subtitles in export",
+  "@captionsDestination": {
+    "description": "Header for choosing where subtitles go when the project is exported."
+  },
+  "captionsDestinationOff": "Off",
+  "@captionsDestinationOff": {
+    "description": "Subtitle export destination: no subtitles in the output."
+  },
+  "captionsDestinationBurnIn": "Burn in",
+  "@captionsDestinationBurnIn": {
+    "description": "Subtitle export destination: composited into the video frames."
+  },
+  "captionsDestinationSidecar": "File",
+  "@captionsDestinationSidecar": {
+    "description": "Subtitle export destination: written as separate .srt and .vtt files."
+  },
+  "captionsDestinationBoth": "Both",
+  "@captionsDestinationBoth": {
+    "description": "Subtitle export destination: burned into the video and written as files."
+  },
+  "captionsDestinationHint": "Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.",
+  "@captionsDestinationHint": {
+    "description": "Explains the trade-off between burned-in subtitles and a sidecar file."
+  },
+  "captionsNotInExport": "Cut",
+  "@captionsNotInExport": {
+    "description": "Marker on a caption whose footage was removed by an edit, so it will not appear in the export."
+  },
+  "captionsDownloadingModel": "Downloading speech model",
+  "@captionsDownloadingModel": {
+    "description": "Progress label while the one-time speech-recognition model download runs."
+  },
+  "captionsStopping": "Stopping…",
+  "@captionsStopping": {
+    "description": "Shown after the user cancels a transcription, while the engine finishes unwinding."
+  }
 }

@@ -96,12 +96,59 @@ void HandlePickImage(
   }
 }
 
+// captionsCapability — Windows answers with a REASON, it does not leave the
+// method unhandled.
+//
+// An unhandled method makes the Dart side throw MissingPluginException, which
+// reaches the user as a crash-shaped error rather than an explanation. The
+// transcription engine (WhisperKit) is Apple-only and is not ported, so the
+// honest answer is "not on this platform" — and the Flutter side localises
+// `platformNotSupported` into a sentence the user can read.
+//
+// Keys mirror CaptionsCapability.toFlutter() on macOS and
+// CaptionsCapabilityInfo.fromMap() in Dart; the trio is pinned by tests on
+// both sides because renaming one silently disables captions rather than
+// failing loudly.
+void HandleCaptionsCapability(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  flutter::EncodableMap out;
+  out[flutter::EncodableValue("available")] = flutter::EncodableValue(false);
+  out[flutter::EncodableValue("reason")] =
+      flutter::EncodableValue("platformNotSupported");
+  out[flutter::EncodableValue("hasMicAudio")] = flutter::EncodableValue(false);
+  out[flutter::EncodableValue("hasSystemAudio")] =
+      flutter::EncodableValue(false);
+  out[flutter::EncodableValue("usesEmbeddedAudioOnly")] =
+      flutter::EncodableValue(false);
+  result->Success(flutter::EncodableValue(out));
+}
+
+// generateCaptions / cancelCaptions — the engine is Apple-only and not ported.
+//
+// Fails with a coded error rather than going unhandled, for the same reason
+// captionsCapability answers instead of 404ing: an unhandled method throws
+// MissingPluginException in Dart, which reaches the user as a crash-shaped
+// error rather than an explanation. In practice the UI never calls this on
+// Windows because captionsCapability already reported platformNotSupported, so
+// this is the belt to that braces.
+void HandleGenerateCaptions(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  result->Error("CAPTIONS_UNSUPPORTED",
+                "Caption generation is not available on Windows.");
+}
+
 void RegisterHandlers(HandlerTable& table) {
   table["pickImage"] = &HandlePickImage;
   table["cacheLocalizedStrings"] = &HandleNull;
   // checkForUpdates moved to updater_router.cpp in Phase 10.6 (real D2
   // implementation; was a hardcoded-false stub here).
   table["debugForceNativeCrash"] = &HandleDebugForceNativeCrash;
+  table["captionsCapability"] = &HandleCaptionsCapability;
+  table["generateCaptions"] = &HandleGenerateCaptions;
+  // Cancelling a job that can never start is a no-op, not an error.
+  table["cancelCaptions"] = &HandleNull;
 }
 
 }  // namespace clingfy::bridge::routers::misc

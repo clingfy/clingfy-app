@@ -2685,4 +2685,92 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get crashReportingNoticeOptOut => 'إيقاف';
+
+  @override
+  String get captions => 'الترجمة';
+
+  @override
+  String get captionsGenerate => 'إنشاء الترجمة';
+
+  @override
+  String get captionsRegenerate => 'إعادة الإنشاء';
+
+  @override
+  String get captionsCancel => 'إيقاف';
+
+  @override
+  String get captionsPreparing => 'جارٍ التحضير…';
+
+  @override
+  String get captionsTranscribing => 'جارٍ التفريغ…';
+
+  @override
+  String get captionsSourceMic => 'الميكروفون';
+
+  @override
+  String get captionsSourceSystem => 'صوت الشاشة';
+
+  @override
+  String get captionsNoneYet => 'لا توجد ترجمة بعد.';
+
+  @override
+  String get captionsNoSpeechFound => 'لم يتم العثور على كلام في هذا التسجيل.';
+
+  @override
+  String get captionsUnavailableOs => 'تتطلب الترجمة إصدارًا أحدث من macOS.';
+
+  @override
+  String get captionsUnavailableIntel =>
+      'تعمل الترجمة ببطء على أجهزة Mac بمعالج Intel لعدم توفر Neural Engine.';
+
+  @override
+  String get captionsUnavailableNoAudio =>
+      'لا يحتوي هذا التسجيل على صوت لتفريغه.';
+
+  @override
+  String get captionsUnavailablePlatform => 'الترجمة متاحة على macOS فقط.';
+
+  @override
+  String get captionsMicOnlyRecording =>
+      'هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.';
+
+  @override
+  String get captionsFirstRunDownload =>
+      'يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.';
+
+  @override
+  String get captionsFailed => 'تعذّر إنشاء الترجمة.';
+
+  @override
+  String captionsCueCount(int count) {
+    return '$count ترجمة';
+  }
+
+  @override
+  String get captionsDestination => 'الترجمة في التصدير';
+
+  @override
+  String get captionsDestinationOff => 'إيقاف';
+
+  @override
+  String get captionsDestinationBurnIn => 'مدمجة';
+
+  @override
+  String get captionsDestinationSidecar => 'ملف';
+
+  @override
+  String get captionsDestinationBoth => 'كلاهما';
+
+  @override
+  String get captionsDestinationHint =>
+      'الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.';
+
+  @override
+  String get captionsNotInExport => 'محذوف';
+
+  @override
+  String get captionsDownloadingModel => 'جارٍ تنزيل نموذج الكلام';
+
+  @override
+  String get captionsStopping => 'جارٍ الإيقاف…';
 }

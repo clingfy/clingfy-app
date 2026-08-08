@@ -108,6 +108,12 @@ final class ScreenRecorderFacade: NSObject {
   // moved into `PreviewEngine`. Facade keeps the public method
   // signatures unchanged and delegates.
   private let previewEngine = PreviewEngine()
+
+  /// Owns the one in-flight transcription: its own serial queue, its engine
+  /// instance, its cancel flag. Deliberately not on `AudioComputeQueue` — see
+  /// CaptionsService for why a minutes-long job cannot share the queue that an
+  /// export preamble blocks on.
+  let captionsService = CaptionsService()
   var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
@@ -1506,6 +1512,19 @@ final class ScreenRecorderFacade: NSObject {
     cameraParams: CameraCompositionParams?,
     colorGrade: ColorGrade = .identity,
     clips: [ClipKeptRange] = [],
+    /// Pre-rasterized caption bitmaps and the cues that index them, in SOURCE
+    /// time. `nil` / `[]` means no burn-in.
+    ///
+    /// Deliberately NOT defaulted, unlike every other optional here. Burn-in
+    /// shipped doing nothing precisely because these were absent from this
+    /// signature: `ExportVideoRequest` parsed both fields, the engine declared
+    /// and forwarded both, and the values died in between with no error and no
+    /// log. A default would have let the same omission compile again.
+    ///
+    /// No test can cover a Swift call site that simply does not pass an
+    /// argument — the compiler can, and this is it. There is one caller.
+    captionBitmapDirectory: String?,
+    captions: [CaptionCueTrack.Cue],
     onProgress: ((Double) -> Void)? = nil,
     result: @escaping FlutterResult
   ) {
@@ -1542,7 +1561,9 @@ final class ScreenRecorderFacade: NSObject {
         cameraPath: cameraPath,
         cameraParams: cameraParams,
         colorGrade: colorGrade,
-        clips: clips
+        clips: clips,
+        captionBitmapDirectory: captionBitmapDirectory,
+        captions: captions
       ),
       dependencies: .init(
         loadRecordingProject: { [unowned self] path in

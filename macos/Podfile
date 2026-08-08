@@ -1,4 +1,4 @@
-platform :osx, '10.15'
+platform :osx, '13.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -40,8 +40,17 @@ post_install do |installer|
     flutter_additional_macos_build_settings(target)
     
     target.build_configurations.each do |config|
-      # Force 10.15 for compatibility
-      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '10.15'
+      # Pinned to match the app target. Raised 10.15 -> 13.0 when WhisperKit was
+      # added: SPM refuses to resolve a dependency whose platform minimum is
+      # above the consuming target, and WhisperKit declares macOS 13.
+      #
+      # 13.0, not 14.0, deliberately. WhisperKit's ANE audio-encoder path is
+      # gated at 14.0 and below that it falls back to CPU+GPU — so a macOS 13
+      # user transcribes more slowly. That is the same trade the approved design
+      # already took for Intel: a slow path, not a blocked one. Raising the floor
+      # to 14 to buy speed would freeze every macOS 13 install on its last build,
+      # which is a much larger harm than a slower transcription.
+      config.build_settings['MACOSX_DEPLOYMENT_TARGET'] = '13.0'
       
       # 🚨 CRITICAL: Prevent Xcode from trying to apply the app's provisioning profile to frameworks
       config.build_settings['PROVISIONING_PROFILE_SPECIFIER'] = ''

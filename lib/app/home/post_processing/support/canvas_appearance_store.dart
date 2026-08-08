@@ -94,8 +94,26 @@ class CanvasAppearanceState {
 abstract final class CanvasAppearanceStore {
   static const String _fileName = 'editor_state.json';
 
-  static File _file(String projectPath) =>
-      File('$projectPath${Platform.pathSeparator}$_fileName');
+  static File _file(String projectPath) => File(
+    '${_normalizeBundlePath(projectPath)}'
+    '${Platform.pathSeparator}$_fileName',
+  );
+
+  /// Trims trailing separators.
+  ///
+  /// The write-queue comment below claims two spellings of a bundle share one
+  /// queue. Without this they do not: `absolute.path` leaves a doubled
+  /// separator in place and `Uri.normalizePath` does not collapse it, so
+  /// `<bundle>` and `<bundle>/` key two chains that race on one file.
+  static String _normalizeBundlePath(String projectPath) {
+    var end = projectPath.length;
+    while (end > 1 &&
+        (projectPath[end - 1] == Platform.pathSeparator ||
+            projectPath[end - 1] == '/')) {
+      end--;
+    }
+    return projectPath.substring(0, end);
+  }
 
   // Callers fire-and-forget these writes (`unawaited`), and a single user
   // action can produce two in the same turn — e.g. committing a color edit and

@@ -91,6 +91,12 @@ final class ExportEngine {
     /// Kept source ranges (enabled clips, timeline order) to bake in. Empty =
     /// no cuts, so the export keeps the whole source (a passthrough).
     var clips: [ClipKeptRange] = []
+    /// Directory of pre-rasterized caption bitmaps (one PNG per cue), or `nil`
+    /// when captions are off. Defaults to `nil` so every existing caller and
+    /// every older Flutter payload exports byte-for-byte as before.
+    var captionBitmapDirectory: String? = nil
+    /// Caption cues in source time. Empty = no burn-in.
+    var captions: [CaptionCueTrack.Cue] = []
   }
 
   /// Facade-owned collaborators + ExportPrep helpers, injected per-call.
@@ -301,6 +307,8 @@ final class ExportEngine {
       cameraParams: exportCameraParams,
       colorGrade: input.colorGrade,
       clips: input.clips,
+      captionBitmapDirectory: input.captionBitmapDirectory,
+      captions: input.captions,
       onProgress: renderProgress
     ) { res in
       switch res {

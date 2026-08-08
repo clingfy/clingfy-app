@@ -9,6 +9,11 @@ import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:clingfy/core/captions/captions_capability.dart';
+import 'package:clingfy/core/bridges/job_progress.dart';
+import 'package:clingfy/l10n/app_localizations.dart';
+import 'dart:async';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 class PostProcessingSidebarContainer extends StatelessWidget {
   const PostProcessingSidebarContainer({
@@ -69,6 +74,17 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         CameraExportCapabilities cameraExportCapabilities,
         bool? sceneHasAudio,
         bool? sceneMicGainApplies,
+        CaptionsCapabilityInfo? captionsCapability,
+        List<Caption> captions,
+        bool captionsUseMic,
+        bool captionsUseSystem,
+        bool isGeneratingCaptions,
+        bool isCancellingCaptions,
+        double? captionsProgress,
+        ProgressStage captionsStage,
+        bool hasEverGeneratedCaptions,
+        bool captionsFailed,
+        ReflowedCaptions reflowedCaptions,
       })
     >(
       selector: (_, p) => (
@@ -96,6 +112,22 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         cameraExportCapabilities: p.cameraExportCapabilities,
         sceneHasAudio: p.sceneHasAudio,
         sceneMicGainApplies: p.sceneMicGainApplies,
+        captionsCapability: p.captionsCapability,
+        // The controller replaces this list wholesale rather than mutating it,
+        // so a plain identity comparison is enough to notice an edit — an
+        // in-place mutation would not rebuild and the cue would appear stuck.
+        captions: p.captions,
+        captionsUseMic: p.captionsUseMic,
+        captionsUseSystem: p.captionsUseSystem,
+        isGeneratingCaptions: p.isGeneratingCaptions,
+        isCancellingCaptions: p.isCancellingCaptions,
+        captionsProgress: p.captionsProgress,
+        captionsStage: p.captionsStage,
+        hasEverGeneratedCaptions: p.hasEverGeneratedCaptions,
+        captionsFailed: p.captionsFailed,
+        // Recomputed on every rebuild the record triggers, so a cut made in the
+        // clips panel immediately restamps the caption timestamps.
+        reflowedCaptions: p.reflowedCaptions(),
       ),
       builder: (context, vm, _) {
         final post = context.read<PostProcessingController>();
@@ -146,6 +178,21 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               audioGainDb: vm.gain,
               audioVolume: vm.volume,
               voiceCleanup: vm.voiceCleanup,
+              captionsCapability: vm.captionsCapability,
+              captions: vm.captions,
+              captionsUseMic: vm.captionsUseMic,
+              captionsUseSystem: vm.captionsUseSystem,
+              isGeneratingCaptions: vm.isGeneratingCaptions,
+              isCancellingCaptions: vm.isCancellingCaptions,
+              captionsProgress: vm.captionsProgress,
+              captionsStageLabel: _captionsStageLabel(
+                context,
+                vm.captionsStage,
+              ),
+              hasEverGeneratedCaptions: vm.hasEverGeneratedCaptions,
+              captionsFailed: vm.captionsFailed,
+              subtitleMode: settingsController.post.postSubtitleMode,
+              reflowedCaptions: vm.reflowedCaptions,
               autoNormalizeOnExport:
                   settingsController.post.postAutoNormalizeEnabled,
               autoNormalizeTargetDbfs:
@@ -169,6 +216,12 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onAudioGainChanged: post.setAudioGainDb,
               onAudioGainChangeEnd: post.setAudioGainDbEnd,
               onVoiceCleanupChanged: post.setVoiceCleanup,
+              onCaptionsUseMicChanged: post.setCaptionsUseMic,
+              onCaptionsUseSystemChanged: post.setCaptionsUseSystem,
+              onGenerateCaptions: () => unawaited(post.generateCaptions()),
+              onCancelCaptions: () => unawaited(post.cancelCaptions()),
+              onCaptionTextChanged: post.updateCaptionText,
+              onSubtitleModeChanged: post.setSubtitleMode,
               colorGrade: vm.colorGrade,
               onColorAutoEnhanceChanged: post.setColorGradeAutoEnhance,
               onColorExposureChanged: post.setColorGradeExposure,
@@ -223,5 +276,17 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         );
       },
     );
+  }
+
+  /// Only the stages a transcription actually reports. Rendering/finalizing
+  /// belong to export and never reach this bar, so they fall back to the
+  /// neutral preparing text rather than showing an export word here.
+  static String _captionsStageLabel(BuildContext context, ProgressStage stage) {
+    final l10n = AppLocalizations.of(context)!;
+    return switch (stage) {
+      ProgressStage.downloadingModel => l10n.captionsDownloadingModel,
+      ProgressStage.transcribing => l10n.captionsTranscribing,
+      _ => l10n.captionsPreparing,
+    };
   }
 }

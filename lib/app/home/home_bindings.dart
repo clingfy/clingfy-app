@@ -12,6 +12,7 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:flutter/services.dart';
+import 'package:clingfy/core/bridges/job_progress.dart';
 
 class HomeBindings {
   HomeBindings({
@@ -20,7 +21,7 @@ class HomeBindings {
     required this.onOpenExternalProject,
     required this.onRecordingFinalized,
     required this.onExternalProjectOpenFailed,
-    required this.onExportProgress,
+    required this.onJobProgress,
     required this.onHandleNativeBarAction,
     required this.onHandleNativeSelectionChanged,
     required this.onUpdateNativeBarState,
@@ -31,7 +32,7 @@ class HomeBindings {
   final Future<void> Function(String projectPath) onOpenExternalProject;
   final Future<void> Function(String path) onRecordingFinalized;
   final void Function(String projectPath) onExternalProjectOpenFailed;
-  final void Function(double progress) onExportProgress;
+  final void Function(JobProgress progress) onJobProgress;
   final void Function(String type, Map<String, dynamic>? payload)
   onHandleNativeBarAction;
   final void Function(String type, dynamic id) onHandleNativeSelectionChanged;
@@ -136,7 +137,7 @@ class HomeBindings {
     nativeBridge.setOnProjectOpenRequested((projectPath) {
       unawaited(onOpenExternalProject(projectPath));
     });
-    nativeBridge.setOnExportProgress(onExportProgress);
+    nativeBridge.setOnJobProgress(onJobProgress);
     nativeBridge.setOnPreRecordingBarAction(onHandleNativeBarAction);
     nativeBridge.setOnNativeSelectionChanged(onHandleNativeSelectionChanged);
 
@@ -176,7 +177,7 @@ class HomeBindings {
     nativeBridge.setOnIndicatorResumeTapped(null);
     nativeBridge.setOnMenuBarToggleRequest(null);
     nativeBridge.setOnProjectOpenRequested(null);
-    nativeBridge.setOnExportProgress(null);
+    nativeBridge.setOnJobProgress(null);
     nativeBridge.setOnPreRecordingBarAction(null);
     nativeBridge.setOnNativeSelectionChanged(null);
   }

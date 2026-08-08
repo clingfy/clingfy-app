@@ -156,7 +156,7 @@ void main() {
       onExternalProjectOpenFailed: (projectPath) {
         onExternalProjectOpenFailed?.call(projectPath);
       },
-      onExportProgress: (_) {},
+      onJobProgress: (_) {},
       onHandleNativeBarAction: (_, __) {},
       onHandleNativeSelectionChanged: (_, __) {},
       onUpdateNativeBarState: () {},

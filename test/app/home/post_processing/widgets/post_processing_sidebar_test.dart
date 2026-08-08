@@ -20,6 +20,8 @@ import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'package:clingfy/core/captions/caption_reflow.dart';
 
 void main() {
   // Phase 10.3 forked this surface's widget tree by platform (no-op
@@ -156,6 +158,24 @@ void main() {
       onAudioGainChanged: (_) {},
       onAudioGainChangeEnd: (_) {},
       onVoiceCleanupChanged: (_) {},
+      captionsCapability: null,
+      captions: const [],
+      captionsUseMic: true,
+      captionsUseSystem: true,
+      isGeneratingCaptions: false,
+      isCancellingCaptions: false,
+      captionsProgress: null,
+      captionsStageLabel: null,
+      hasEverGeneratedCaptions: false,
+      captionsFailed: false,
+      onCaptionsUseMicChanged: (_) {},
+      onCaptionsUseSystemChanged: (_) {},
+      onGenerateCaptions: () {},
+      onCancelCaptions: () {},
+      onCaptionTextChanged: (_, _) {},
+      subtitleMode: SubtitleMode.burnIn,
+      reflowedCaptions: ReflowedCaptions.empty,
+      onSubtitleModeChanged: (_) {},
       onAudioVolumeChanged: (_) {},
       onAudioVolumeChangeEnd: (_) {},
       onAutoNormalizeOnExportChanged: (_) {},

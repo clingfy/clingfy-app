@@ -171,6 +171,12 @@ const std::vector<std::string>& BridgeContractMethods() {
       "pickImage",
       "cacheLocalizedStrings",
 
+      // Captions (macOS-only feature; Windows answers "unavailable" with a
+      // reason rather than letting the Flutter side see a missing handler).
+      "captionsCapability",
+      "generateCaptions",
+      "cancelCaptions",
+
       // Updater (Phase 10.6 — updater_router.cpp).
       "checkForUpdates",
 

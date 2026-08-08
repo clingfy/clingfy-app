@@ -37,6 +37,7 @@ import 'package:clingfy/commercial/licensing/widgets/paywall_dialog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:clingfy/core/bridges/job_progress.dart';
 
 class HomeActions {
   HomeActions({required this.scope});
@@ -251,8 +252,24 @@ class HomeActions {
     return message;
   }
 
-  void handleExportProgress(double progress) {
-    postProcessingController.updateProgress(progress);
+  /// Routes a native job tick to whoever owns that job's UI.
+  ///
+  /// One channel now carries both export and transcription, so the job has to
+  /// be dispatched on rather than assumed. An unrecognised job is dropped
+  /// rather than shown as export progress — a transcription tick moving the
+  /// export bar would be worse than no bar at all.
+  void handleJobProgress(JobProgress progress) {
+    switch (progress.job) {
+      case ProgressJob.export:
+        postProcessingController.updateProgress(progress.fraction);
+      case ProgressJob.captions:
+        postProcessingController.updateCaptionsProgress(progress);
+      case ProgressJob.unknown:
+        // Dropped rather than shown as export progress — a tick from a job this
+        // build does not know about moving the export bar would be worse than
+        // no bar at all.
+        break;
+    }
   }
 
   Future<void> handleRecordingFinalized(

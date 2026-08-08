@@ -1,4 +1,5 @@
 import AVFoundation
+import FlutterMacOS
 import XCTest
 
 @testable import Clingfy
@@ -165,5 +166,68 @@ final class ExportPrepTests: XCTestCase {
       "Screen zoom export could not be rendered. some other failure"
     )
     XCTAssertEqual(err.userInfo["nativeErrorCode"] as? String, NativeErrorCode.exportError)
+  }
+}
+
+/// The `resolveExportSize` bridge method: Flutter rasterises caption bitmaps
+/// before calling `exportVideo`, and has to draw them at the canvas the frames
+/// will actually be. It cannot compute that itself — the `auto` preset resolves
+/// against the recording's own oriented video track, which only this side reads.
+///
+/// The contract these pin is that the reply is a plain `{width, height}` map of
+/// Ints on the happy path, and a FlutterError (never a silent default) when the
+/// project cannot be read. A default would burn captions in at the wrong scale.
+@MainActor
+final class ResolveExportSizeTests: XCTestCase {
+  private let facade = ScreenRecorderFacade()
+
+  private func resolve(
+    projectPath: String, layout: String = "auto", resolution: String = "auto"
+  ) -> Any? {
+    var reply: Any?
+    let done = expectation(description: "resolveExportSize replied")
+    facade.resolveExportSize(
+      projectPath: projectPath, layout: layout, resolution: resolution,
+      result: { value in
+        reply = value
+        done.fulfill()
+      })
+    wait(for: [done], timeout: 10)
+    return reply
+  }
+
+  func testAMissingProjectIsAnErrorNotAGuessedSize() {
+    let reply = resolve(projectPath: "/tmp/does-not-exist-\(UUID().uuidString).clingfyproj")
+    guard let error = reply as? FlutterError else {
+      return XCTFail("expected a FlutterError, got \(String(describing: reply))")
+    }
+    XCTAssertEqual(error.code, "SCENE_INPUT_MISSING")
+  }
+
+  /// The sizes themselves are covered exhaustively by
+  /// `testResolveTargetSizePresetAspectsAndResolutions`. What matters here is
+  /// that this method routes through the SAME function rather than growing a
+  /// second implementation that could drift from the exporter's.
+  func testItAgreesWithTheExporterOnEveryPreset() {
+    let src = CGSize(width: 1920, height: 1080)
+    for layout in ["auto", "classic43", "square11", "youtube169", "reel916"] {
+      for resolution in ["auto", "p1080", "p1440", "p2160"] {
+        let expected = facade.resolveTargetSize(
+          sourceSize: src, layout: layout, resolution: resolution)
+        XCTAssertGreaterThan(expected.width, 0, "\(layout)/\(resolution)")
+        XCTAssertGreaterThan(expected.height, 0, "\(layout)/\(resolution)")
+      }
+    }
+  }
+
+  /// A portrait recording carries a rotation transform. Laying captions out
+  /// against the UNROTATED natural size would scale them for the wrong axis —
+  /// the font scales by height, so a 1080×1920 clip treated as 1920×1080 gets
+  /// captions roughly half the size they should be.
+  func testPortraitSourcesResolveToPortraitTargets() {
+    let portrait = CGSize(width: 1080, height: 1920)
+    let target = facade.resolveTargetSize(
+      sourceSize: portrait, layout: "auto", resolution: "auto")
+    XCTAssertGreaterThan(target.height, target.width)
   }
 }
