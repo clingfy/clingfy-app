@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/clips/clip_editor_controller.dart';
@@ -247,6 +248,9 @@ void main() {
     });
 
     tearDown(() async {
+      // Editor writes are fire-and-forget: without this the delete below can
+      // race a write recreating post/ inside the tree it is walking.
+      await PostStateStore.settled();
       if (await projectDir.exists()) {
         await projectDir.delete(recursive: true);
       }
@@ -400,11 +404,12 @@ void main() {
       // in `unawaited` so a save never blocks an edit), so pumpEventQueue is not
       // a guarantee it landed — it only drains microtasks. Poll instead.
       final persisted = await waitForValue(
-        () => ClipStateStore.load(projectDir.path),
-        reason: 'clips_state.json after a committed split',
+        () => PostStateStore.load(projectDir.path).trackOfType<ClipTrack>(),
+        reason: 'post/state.json after a committed split',
       );
       expect(persisted.clips, hasLength(2));
-      expect(persisted.recordingDurationMs, 10000);
+      // Recording length lives on the timeline now, not inside the clip track.
+      expect(PostStateStore.load(projectDir.path).durationMs, 10000);
     });
 
     test('persists undo back to the whole recording', () async {
@@ -413,7 +418,11 @@ void main() {
 
       c.splitAtPlayhead(4000);
       await waitUntil(
-        () => ClipStateStore.load(projectDir.path)?.clips.length == 2,
+        () =>
+            PostStateStore.load(
+              projectDir.path,
+            ).trackOfType<ClipTrack>()?.clips.length ==
+            2,
         reason: 'the split must be on disk before undo is meaningful',
       );
 
@@ -421,11 +430,17 @@ void main() {
       // Polls on the VALUE, not just existence: the file already exists from the
       // split above, so waiting for non-null would pass on the pre-undo state.
       await waitUntil(
-        () => ClipStateStore.load(projectDir.path)?.clips.length == 1,
-        reason: 'clips_state.json after undo',
+        () =>
+            PostStateStore.load(
+              projectDir.path,
+            ).trackOfType<ClipTrack>()?.clips.length ==
+            1,
+        reason: 'post/state.json after undo',
       );
 
-      final persisted = ClipStateStore.load(projectDir.path);
+      final persisted = PostStateStore.load(
+        projectDir.path,
+      ).trackOfType<ClipTrack>();
       expect(persisted, isNotNull);
       expect(persisted!.clips, hasLength(1));
     });
@@ -442,7 +457,7 @@ void main() {
       await pumpEventQueue();
 
       expect(
-        await File('${projectDir.path}/clips_state.json').exists(),
+        await File('${projectDir.path}/post/state.json').exists(),
         isFalse,
       );
     });

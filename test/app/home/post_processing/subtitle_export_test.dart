@@ -6,6 +6,7 @@ import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:flutter/services.dart';
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -46,6 +47,7 @@ void main() {
 
   tearDown(() async {
     await clearCommonNativeMocks();
+    await PostStateStore.settled();
     if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
   });
 

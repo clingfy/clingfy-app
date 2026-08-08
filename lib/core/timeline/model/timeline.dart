@@ -1,9 +1,13 @@
 import 'package:flutter/foundation.dart';
+import 'package:clingfy/core/timeline/model/canvas_state.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 /// Version of the `post/state.json` schema this build reads and writes.
-const int kTimelineSchemaVersion = 2;
+/// v3 added [Timeline.canvas], folding what used to be `editor_state.json`
+/// into this envelope. A v2 file has no `canvas` block and decodes to the
+/// defaults, which is exactly what a project with no canvas edits looked like.
+const int kTimelineSchemaVersion = 3;
 
 /// The whole editing state for one recording: an immutable tree of tracks plus
 /// the canvas-wide color grade.
@@ -17,6 +21,7 @@ class Timeline {
     this.durationMs = 0,
     this.tracks = const <EditTrack>[],
     this.grade = const ColorGrade(),
+    this.canvas = const CanvasState(),
     this.schemaVersion = kTimelineSchemaVersion,
   });
 
@@ -24,6 +29,9 @@ class Timeline {
   final int durationMs;
   final List<EditTrack> tracks;
   final ColorGrade grade;
+
+  /// Padding, corner radius and background. Previously `editor_state.json`.
+  final CanvasState canvas;
   final int schemaVersion;
 
   /// The first track of type [T], or `null`. Convenience for callers that
@@ -56,11 +64,13 @@ class Timeline {
     int? durationMs,
     List<EditTrack>? tracks,
     ColorGrade? grade,
+    CanvasState? canvas,
     int? schemaVersion,
   }) => Timeline(
     durationMs: durationMs ?? this.durationMs,
     tracks: tracks ?? this.tracks,
     grade: grade ?? this.grade,
+    canvas: canvas ?? this.canvas,
     schemaVersion: schemaVersion ?? this.schemaVersion,
   );
 }

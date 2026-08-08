@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
-import 'package:clingfy/core/clips/clip_state_store.dart';
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/timeline/clip_operations.dart';
 import 'package:clingfy/core/timeline/clip_timeline.dart';
@@ -289,7 +289,7 @@ class ClipEditorController extends ChangeNotifier {
     final path = _projectPath;
     if (path == null || _durationMs <= 0) return seed;
 
-    final persisted = ClipStateStore.load(path);
+    final persisted = PostStateStore.load(path).trackOfType<ClipTrack>();
     if (persisted == null) return seed;
 
     final restored = _sanitizePersistedClips(persisted.clips);
@@ -341,9 +341,14 @@ class ClipEditorController extends ChangeNotifier {
     final path = _projectPath;
     if (path == null) return;
     unawaited(
-      ClipStateStore.save(
+      PostStateStore.update(
         path,
-        ClipPersistState(recordingDurationMs: _durationMs, clips: _clips),
+        // Read-modify-write inside the store's queue: this file also holds the
+        // transcript and the canvas, and a plain save would drop whichever of
+        // those was written in the same moment.
+        (state) => state
+            .copyWith(durationMs: _durationMs)
+            .withTrack(ClipTrack(clips: _clips)),
       ),
     );
   }
