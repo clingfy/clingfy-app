@@ -16,7 +16,9 @@ import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/commands/set_color_grade_command.dart';
 import 'package:clingfy/core/timeline/edit_command.dart';
 import 'package:clingfy/core/timeline/edit_session.dart';
+import 'package:clingfy/core/timeline/model/canvas_state.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/color/auto_grade_heuristic.dart';
 import 'package:clingfy/core/models/background_preset_catalog.dart';
@@ -24,7 +26,6 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
 import 'package:clingfy/app/home/post_processing/support/audio_debouncer.dart';
-import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
@@ -32,7 +33,6 @@ import 'package:clingfy/core/bridges/job_progress.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'dart:convert';
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
-import 'package:clingfy/core/captions/caption_state_store.dart';
 import 'package:clingfy/core/captions/caption_reflow.dart';
 
 class PostProcessingController extends ChangeNotifier {
@@ -604,9 +604,9 @@ class PostProcessingController extends ChangeNotifier {
     final projectPath = _projectPath;
     if (projectPath == null) return;
     unawaited(
-      CaptionStateStore.save(
+      PostStateStore.update(
         projectPath,
-        CaptionPersistState(captions: _captions),
+        (state) => state.withTrack(CaptionTrack(captions: _captions)),
       ),
     );
   }
@@ -1357,7 +1357,9 @@ class PostProcessingController extends ChangeNotifier {
     // Restored, not cleared: a transcript costs minutes of compute and carries
     // the user's own corrections, so reopening a recording that has one must
     // not silently present it as never transcribed.
-    final storedCaptions = CaptionStateStore.load(projectPath);
+    final storedCaptions = PostStateStore.load(
+      projectPath,
+    ).trackOfType<CaptionTrack>();
     _captions = storedCaptions?.captions ?? const [];
     _hasEverGeneratedCaptions = _captions.isNotEmpty;
     // Another recording's manifest may still be installed natively.
@@ -1467,15 +1469,20 @@ class PostProcessingController extends ChangeNotifier {
   /// the canvas fields. Best-effort: a missing/old file leaves the
   /// defaults in place (back-compatible with pre-persistence recordings).
   void _loadCanvasAppearance(String projectPath) {
-    final state = CanvasAppearanceStore.load(projectPath);
-    if (state == null || _projectPath != projectPath) return;
-    _videoPadding = state.padding;
-    _videoRadius = state.cornerRadius;
-    _backgroundKind = state.backgroundKind;
-    _backgroundColor = state.backgroundColorArgb;
-    _backgroundImagePath = state.backgroundImagePath;
-    _backgroundPreset = state.backgroundPreset;
-    _colorGrade = state.colorGrade;
+    if (_projectPath != projectPath) return;
+    // Nothing persisted means nothing to restore. Falling through would clear
+    // the colour history and overwrite an edit the user made while the scene
+    // was still loading.
+    if (!PostStateStore.hasStoredCanvas(projectPath)) return;
+    final stored = PostStateStore.load(projectPath);
+    final canvas = stored.canvas;
+    _videoPadding = canvas.padding;
+    _videoRadius = canvas.cornerRadius;
+    _backgroundKind = canvas.backgroundKind;
+    _backgroundColor = canvas.backgroundColorArgb;
+    _backgroundImagePath = canvas.backgroundImagePath;
+    _backgroundPreset = canvas.backgroundPreset;
+    _colorGrade = stored.grade;
     // Restoring saved state is not an edit: nothing here is undoable, and this
     // lands asynchronously (scene load) after [attachToRecording], so any entry
     // recorded in that window would now point at a stale pre-restore grade.
@@ -1488,16 +1495,18 @@ class PostProcessingController extends ChangeNotifier {
   /// committed canvas edit and from the color-grade commit points.
   void _persistCanvasAppearance(String projectPath) {
     unawaited(
-      CanvasAppearanceStore.save(
+      PostStateStore.update(
         projectPath,
-        CanvasAppearanceState(
-          padding: _videoPadding,
-          cornerRadius: _videoRadius,
-          backgroundKind: _backgroundKind,
-          backgroundColorArgb: _backgroundColor,
-          backgroundImagePath: _backgroundImagePath,
-          backgroundPreset: _backgroundPreset,
-          colorGrade: _colorGrade,
+        (state) => state.copyWith(
+          grade: _colorGrade,
+          canvas: CanvasState(
+            padding: _videoPadding,
+            cornerRadius: _videoRadius,
+            backgroundKind: _backgroundKind,
+            backgroundColorArgb: _backgroundColor,
+            backgroundImagePath: _backgroundImagePath,
+            backgroundPreset: _backgroundPreset,
+          ),
         ),
       ),
     );

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/job_progress.dart';
@@ -35,6 +36,10 @@ void main() {
 
   /// Held open so a transcription can be observed mid-flight.
   Completer<List<Map<String, Object?>>>? generateGate;
+
+  /// The bundle [createController] attached to, for tests that assert the
+  /// project path reaches native.
+  late String attachedProjectPath;
 
   Future<PostProcessingController> createController({
     bool attach = true,
@@ -75,9 +80,19 @@ void main() {
     });
 
     if (attach) {
+      // A temp bundle per controller, not a shared '/tmp/original.clingfyproj'.
+      // Editor state is real file I/O, so a fixed path lets one test's saved
+      // transcript reappear in the next one — and it persisted between whole
+      // runs of the suite, which made failures depend on what ran last.
+      final bundle = await Directory.systemTemp.createTemp('clingfy_caps_ctl');
+      addTearDown(() async {
+        await PostStateStore.settled();
+        if (bundle.existsSync()) bundle.deleteSync(recursive: true);
+      });
+      attachedProjectPath = bundle.path;
       post.attachToRecording(
         sessionId: 'rec_captions',
-        projectPath: '/tmp/original.clingfyproj',
+        projectPath: bundle.path,
       );
       await pumpEventQueue();
     }
@@ -109,7 +124,7 @@ void main() {
     expect(callsNamed('captionsCapability'), hasLength(1));
     expect(
       callsNamed('captionsCapability').single.arguments,
-      containsPair('projectPath', '/tmp/original.clingfyproj'),
+      containsPair('projectPath', attachedProjectPath),
     );
     expect(post.captionsCapability?.available, isTrue);
   });
@@ -151,10 +166,11 @@ void main() {
       return null;
     });
 
-    post.attachToRecording(
-      sessionId: 's',
-      projectPath: '/tmp/original.clingfyproj',
-    );
+    final bundle = await Directory.systemTemp.createTemp('clingfy_caps_probe');
+    addTearDown(() {
+      if (bundle.existsSync()) bundle.deleteSync(recursive: true);
+    });
+    post.attachToRecording(sessionId: 's', projectPath: bundle.path);
     await pumpEventQueue();
 
     expect(post.captionsCapability, isNull);
@@ -172,10 +188,7 @@ void main() {
     final call = callsNamed('generateCaptions').single;
     expect(call.arguments, containsPair('useMic', true));
     expect(call.arguments, containsPair('useSystem', false));
-    expect(
-      call.arguments,
-      containsPair('projectPath', '/tmp/original.clingfyproj'),
-    );
+    expect(call.arguments, containsPair('projectPath', attachedProjectPath));
     expect(post.captions.map((c) => c.text), ['hello there', 'second line']);
     expect(post.captions.first.endMs, 1500);
     expect(post.isGeneratingCaptions, isFalse);
@@ -500,7 +513,8 @@ void main() {
 
   test('a generated transcript is written into the project bundle', () async {
     final project = await Directory.systemTemp.createTemp('clingfy_persist');
-    addTearDown(() {
+    addTearDown(() async {
+      await PostStateStore.settled();
       if (project.existsSync()) project.deleteSync(recursive: true);
     });
     final post = await createController(attach: false);
@@ -513,7 +527,7 @@ void main() {
     // of event-loop pumps when the suite is contending for the disk. Poll for
     // the file instead of guessing how long it takes.
     final stored = await waitForValue(
-      () => CaptionStateStore.load(project.path),
+      () => PostStateStore.load(project.path).trackOfType<CaptionTrack>(),
       reason: 'the transcript should have been written',
     );
     expect(stored.captions.map((c) => c.text), ['hello there', 'second line']);
@@ -521,7 +535,8 @@ void main() {
 
   test('a correction is persisted, not just held in memory', () async {
     final project = await Directory.systemTemp.createTemp('clingfy_persist');
-    addTearDown(() {
+    addTearDown(() async {
+      await PostStateStore.settled();
       if (project.existsSync()) project.deleteSync(recursive: true);
     });
     final post = await createController(attach: false);
@@ -533,7 +548,9 @@ void main() {
 
     await waitUntil(
       () =>
-          CaptionStateStore.load(project.path)?.captions.first.text ==
+          PostStateStore.load(
+            project.path,
+          ).trackOfType<CaptionTrack>()?.captions.first.text ==
           'Clingfy',
       reason: 'the correction should have been written',
     );
@@ -543,7 +560,8 @@ void main() {
     // The whole point of persisting: minutes of compute plus the user\'s own
     // corrections must not die with the window.
     final project = await Directory.systemTemp.createTemp('clingfy_persist');
-    addTearDown(() {
+    addTearDown(() async {
+      await PostStateStore.settled();
       if (project.existsSync()) project.deleteSync(recursive: true);
     });
     await CaptionStateStore.save(
@@ -568,7 +586,8 @@ void main() {
 
   test('a recording with no stored transcript opens empty', () async {
     final project = await Directory.systemTemp.createTemp('clingfy_persist');
-    addTearDown(() {
+    addTearDown(() async {
+      await PostStateStore.settled();
       if (project.existsSync()) project.deleteSync(recursive: true);
     });
     final post = await createController(attach: false);

@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
-import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
@@ -64,6 +64,9 @@ void main() {
 
   tearDown(() async {
     await clearCommonNativeMocks();
+    // Editor writes are fire-and-forget; deleting the tree while one recreates
+    // post/ inside it fails with ENOTEMPTY.
+    await PostStateStore.settled();
     if (await projectDir.exists()) {
       await projectDir.delete(recursive: true);
     }
@@ -154,17 +157,14 @@ void main() {
     // the CI runner can lose. Poll on the VALUE, not just the file's existence:
     // the bundle may already hold an earlier grade.
     await waitUntil(
-      () =>
-          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
-          0.5,
-      reason: 'editor_state.json after a color commit',
+      () => PostStateStore.load(projectDir.path).grade.exposure == 0.5,
+      reason: 'post/state.json after a color commit',
     );
 
-    final loaded = CanvasAppearanceStore.load(projectDir.path);
-    expect(loaded, isNotNull);
-    expect(loaded!.colorGrade.exposure, 0.5);
-    expect(loaded.colorGrade.contrast, -0.2);
-    expect(loaded.colorGrade.saturation, 0.1);
+    final loaded = PostStateStore.load(projectDir.path);
+    expect(loaded.grade.exposure, 0.5);
+    expect(loaded.grade.contrast, -0.2);
+    expect(loaded.grade.saturation, 0.1);
   });
 
   test(
@@ -179,9 +179,7 @@ void main() {
       // confirmed on disk before the first controller is torn down — otherwise
       // the "restart" reads whatever happened to be there.
       await waitUntil(
-        () =>
-            CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
-            0.35,
+        () => PostStateStore.load(projectDir.path).grade.exposure == 0.35,
         reason: 'session 1 must be on disk before the restart',
       );
       first.detachRecording();
