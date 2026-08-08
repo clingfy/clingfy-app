@@ -1,8 +1,25 @@
 # dev-channel.yml (alpha)
-trigger:
-  branches:
-    include:
-      - develop
+#
+# MANUAL ONLY (2026-08-08). This lane used to build, sign, notarize and publish a
+# dev DMG on every push to develop. A signed+notarized macOS build is 30-45
+# minutes of hosted-agent time, and with several merges a day it was the single
+# largest consumer of the organization's build minutes -- which matters now that
+# purchased parallel jobs are set to 0 and the lane runs on the free grant
+# (1,800 minutes/month for a private project, if granted at all).
+#
+# Consequence, deliberately accepted: testers no longer receive a dev build per
+# merge. Run this pipeline by hand when there is something worth shipping to them.
+#
+# To restore automatic dev builds, delete `trigger: none` and uncomment the block
+# below. Note that once the GitHub Actions lane takes over
+# (.github/workflows/release-macos-dev.yml), minutes stop being a constraint at
+# all: clingfy-app is a public repository, where GitHub's standard runners are
+# free and unmetered.
+trigger: none
+# trigger:
+#   branches:
+#     include:
+#       - develop
 
 # beta-channel.yml (mirror)
 # trigger:
