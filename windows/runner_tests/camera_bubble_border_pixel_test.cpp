@@ -634,5 +634,73 @@ TEST(CameraBubbleBorderPixelTest, MaskLayerThenStrokeSameGeometryObject) {
       << DumpBorderZone(px);
 }
 
+// --- effect scale (preview vs export border thickness) ----------------------
+
+// How many pixels of stroke the straight left edge shows at mid-height.
+// DrawGeometry centres the stroke on the path, so a width-w border at x=0 puts
+// w/2 inside the target: 8px -> ~4, 4px -> ~2.
+int StrokeRunOnLeftEdge(const std::vector<std::uint32_t>& px) {
+  int run = 0;
+  for (int x = 0; x < 14; ++x) {
+    if (!LooksRed(At(px, x, kSide / 2))) break;
+    ++run;
+  }
+  return run;
+}
+
+bool PreparePainterScaled(HeadlessRig& rig, CameraBubblePainter& painter,
+                          double effect_scale) {
+  CameraBubbleRect bubble;
+  bubble.x = 0.0;
+  bubble.y = 0.0;
+  bubble.width = static_cast<double>(kSide);
+  bubble.height = static_cast<double>(kSide);
+  CameraBubblePainter::Style style = ProbeStyle();  // 8px opaque red border
+  style.effect_scale = effect_scale;
+  const bool ok = painter.Prepare(rig.factory.Get(), rig.ctx.Get(), bubble,
+                                  "square", /*corner_radius=*/0.0, "fill",
+                                  style, kCamSize, kCamSize);
+  rig.ctx->SetTarget(rig.target_bitmap.Get());
+  return ok;
+}
+
+// The one test that fails if `Style::effect_scale` stops reaching the stroke.
+// Every other guard in this change is on a pure function, and those keep
+// passing if the scale is simply never wired into the painter.
+TEST(CameraBubbleBorderPixelTest, EffectScaleThinsTheStroke) {
+  HeadlessRig rig;
+  const std::string err = rig.Create(/*use_swapchain_target=*/false);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  int full_run = 0;
+  {
+    CameraBubblePainter painter;
+    ASSERT_TRUE(PreparePainterScaled(rig, painter, 1.0));
+    ASSERT_TRUE(RenderOneFrame(rig, painter, nullptr));
+    std::vector<std::uint32_t> px;
+    ASSERT_TRUE(rig.ReadTarget(&px));
+    full_run = StrokeRunOnLeftEdge(px);
+    EXPECT_GE(full_run, 3) << "8px border should show ~4px inside the target\n"
+                           << DumpBorderZone(px);
+  }
+
+  int half_run = 0;
+  {
+    CameraBubblePainter painter;
+    ASSERT_TRUE(PreparePainterScaled(rig, painter, 0.5));
+    ASSERT_TRUE(RenderOneFrame(rig, painter, nullptr));
+    std::vector<std::uint32_t> px;
+    ASSERT_TRUE(rig.ReadTarget(&px));
+    half_run = StrokeRunOnLeftEdge(px);
+    EXPECT_GE(half_run, 1) << "scaled border vanished entirely\n"
+                           << DumpBorderZone(px);
+  }
+
+  // If effect_scale is ignored the two runs are identical, which is exactly the
+  // half-reverted state the pure-function tests cannot see.
+  EXPECT_LT(half_run, full_run)
+      << "border did not thin: full=" << full_run << " half=" << half_run;
+}
+
 }  // namespace
 }  // namespace clingfy::capture

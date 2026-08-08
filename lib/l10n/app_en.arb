@@ -844,6 +844,7 @@
   "warnCameraUnavailable": "Your camera isn't available right now. Recording continues without the camera overlay.",
   "warnCameraOpenFailed": "Your camera couldn't be started — check camera access in Windows privacy settings. Recording continues without the overlay.",
   "warnCameraDisconnected": "Your camera was disconnected. Recording continues without it.",
+  "warnCameraPreviewHidden": "Your live camera preview can't be shown while recording on this PC. Recording continues — your camera is still captured and appears in the finished video.",
   "warnEncoderVideoError": "Recording hit an encoder problem — the video may be incomplete.",
   "warnEncoderAudioError": "Recording hit an audio encoding problem — the audio may be incomplete.",
   "errMicrophonePermissionRequiredWindows": "Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.",

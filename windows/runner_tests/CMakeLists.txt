@@ -113,6 +113,7 @@ add_executable(runner_tests
   "platform_thread_dispatcher_test.cpp"
   "player_event_publisher_test.cpp"
   "preview_camera_renderer_test.cpp"
+  "preview_cursor_sidecar_test.cpp"
   "preview_router_test.cpp"
   "preview_source_reader_test.cpp"
   "project_open_coordinator_test.cpp"

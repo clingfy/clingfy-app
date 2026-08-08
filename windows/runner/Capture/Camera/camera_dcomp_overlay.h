@@ -11,6 +11,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <thread>
@@ -112,6 +113,18 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // lock-free read is sampled by the owner on the frame-publish thread.
   bool needs_fallback() const override { return device_loss_gave_up_.load(); }
 
+  // Fired once, on the OVERLAY THREAD, the instant the rebuild budget is spent
+  // — see ICameraOverlayPresenter::SetParkObserver for the threading contract.
+  // Safe to call before Start(); the observer is stored under park_mutex_ and
+  // read on the overlay thread.
+  void SetParkObserver(std::function<void()> observer) override;
+
+  // Test introspection: has the park notification been delivered?
+  bool park_notified_for_test() const {
+    std::lock_guard<std::mutex> lock(park_mutex_);
+    return park_notified_;
+  }
+
   // POC-gate introspection: true once the full GPU stack is up.
   bool gpu_ready() const { return gpu_ready_.load(); }
 
@@ -199,6 +212,16 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // once at initial creation (the render-only rebuild leaves WDA untouched).
   // Overlay thread.
   void ApplyCaptureExclusion(HWND hwnd);
+  // Re-check WDA_EXCLUDEFROMCAPTURE after a window mutation and repair it if it
+  // was dropped; if it cannot be repaired, latch wda_excluded_ false and HIDE —
+  // an unexcluded bubble must never stay on screen, because it would burn into
+  // the recording. `where` names the mutation for the field log.
+  //
+  // The ADR requires this after ANY unavoidable window mutation (the Electron
+  // #47834 lesson). Returns false only in the unrepairable case; callers
+  // deliberately do not branch on it — the tick carries on against a hidden
+  // window exactly as it already did on the click-through path. Overlay thread.
+  bool ReverifyCaptureExclusion(HWND hwnd, const char* where);
   // Renderer P4d default-flip guard: after the GPU stack builds and capture
   // exclusion is applied, prove THIS adapter actually rasterizes into the
   // composition swapchain before the flip makes DComp everyone's default. Draws
@@ -219,6 +242,8 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // the draw path when a device-lost HRESULT is seen, and from the tick top
   // while a retry is armed. Overlay thread only.
   void AttemptDeviceLossRecovery(HWND hwnd, const char* where);
+  // Deliver the park notification at most once, with park_mutex_ released.
+  void NotifyParkOnce();
 
   Options options_{};
 
@@ -297,6 +322,13 @@ class CameraDcompOverlay : public ICameraOverlayPresenter {
   // Written on the overlay thread; read cross-thread by needs_fallback() on the
   // frame-publish thread, so it is atomic.
   std::atomic<bool> device_loss_gave_up_{false};
+  // Park notification. Set from the owner's thread (before or after Start),
+  // invoked on the overlay thread, so the handle itself needs a lock; it is
+  // copied out and called with the lock released. park_notified_ keeps it
+  // one-shot independently of the observer being cleared.
+  mutable std::mutex park_mutex_;
+  std::function<void()> park_observer_;
+  bool park_notified_ = false;
   bool device_loss_fallback_logged_ = false;
   int simulated_device_losses_remaining_ = 0;
   std::atomic<bool> simulate_one_loss_{false};  // test one-shot injection

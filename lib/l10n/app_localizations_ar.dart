@@ -2511,6 +2511,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get warnCameraDisconnected => 'تم فصل الكاميرا. يستمر التسجيل بدونها.';
 
   @override
+  String get warnCameraPreviewHidden =>
+      'لا يمكن عرض معاينة الكاميرا المباشرة أثناء التسجيل على هذا الجهاز. يستمر التسجيل — وما زالت الكاميرا تُسجَّل وتظهر في الفيديو النهائي.';
+
+  @override
   String get warnEncoderVideoError =>
       'واجه التسجيل مشكلة في الترميز — قد يكون الفيديو غير مكتمل.';
 

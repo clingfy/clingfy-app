@@ -84,6 +84,45 @@ struct PreviewCameraComposition {
   double zoom_scale_multiplier = 0.0;
 };
 
+// Ratio that converts an EXPORT-canvas length into a length on the preview
+// surface: short_side(surface) / short_side(export).
+//
+// Soft-fails to 1.0 — NOT to 0.0 like `core::NormalizeToShortSide`. The
+// difference is deliberate. A zero fraction means "no padding", which is a
+// sane-looking canvas; a zero SCALE would erase the border and collapse the
+// shadow, so an export size that is not yet resolved (no decoded frame, so
+// `ResolveTargetSize` cannot run) would silently draw an unstyled bubble.
+// Falling back to identity reproduces the pre-fix appearance for those first
+// frames instead, and the rebuild predicate corrects it once the size lands.
+double PreviewCameraEffectScale(double surface_short_side,
+                                double export_short_side);
+
+// Whether the painter must be rebuilt. Pure so the effect-scale term is
+// testable: a scale that arrives LATE (the export size is unknown until the
+// first decoded frame) must force a rebuild on its own, or the bubble keeps the
+// identity-scaled border and shadow for the rest of the session even though the
+// canvas never changed.
+bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
+                               double effect_scale, UINT prepared_canvas_w,
+                               UINT prepared_canvas_h,
+                               double prepared_effect_scale);
+
+// The surface-resolved geometry + style for one preview frame.
+struct PreviewCameraPlan {
+  clingfy::capture::CameraBubbleRect bubble;
+  clingfy::capture::CameraBubblePainter::Style style;
+};
+
+// Pure: resolve `comp` onto a `canvas_w` x `canvas_h` preview surface whose
+// export-relative scale is `effect_scale`.
+//
+// This exists as a free function so the scaling can be asserted without a D2D
+// device — `PrepareAndAdvance` needs a real camera file and a GPU, so wiring
+// bugs there would otherwise only be catchable by the pixel test.
+PreviewCameraPlan ResolvePreviewCameraPlan(const PreviewCameraComposition& comp,
+                                           double canvas_w, double canvas_h,
+                                           double effect_scale);
+
 class PreviewCameraRenderer {
  public:
   // Open `camera_path` (BGRA decode) for seeking. `start_offset_ms` is the
@@ -99,8 +138,14 @@ class PreviewCameraRenderer {
   // OUTSIDE BeginDraw: (re)build the painter if the composition or canvas
   // changed, then seek/advance + upload the camera frame for `playback_us`.
   // No-op when not visible. `canvas_w`/`canvas_h` are the preview output size.
+  //
+  // `effect_scale` is short_side(this surface) / short_side(export canvas) —
+  // see `PreviewCameraEffectScale`. It resolves the authored border width,
+  // shadow table and bubble min-side floor, all of which are expressed in
+  // export-output pixels, onto this smaller texture. Pass 1.0 to render at
+  // export scale.
   void PrepareAndAdvance(ID2D1DeviceContext* ctx, UINT canvas_w, UINT canvas_h,
-                         std::int64_t playback_us);
+                         std::int64_t playback_us, double effect_scale);
 
   // INSIDE BeginDraw: draw the styled bubble for the frame advanced to above.
   //
@@ -144,6 +189,7 @@ class PreviewCameraRenderer {
   bool painter_ready_ = false;
   UINT prepared_canvas_w_ = 0;
   UINT prepared_canvas_h_ = 0;
+  double prepared_effect_scale_ = 1.0;
   bool composition_visible_ = false;  // snapshot used by Draw
 
   // Animation context, resolved alongside the painter rebuild and consumed by

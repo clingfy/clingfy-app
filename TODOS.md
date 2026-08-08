@@ -82,15 +82,55 @@ which are the only recorded numbers for this defect.
   under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
   and recorded in the CHANGELOG.
 
+## Windows — capture exclusion
+
+### The other four capture-excluded windows never re-verify WDA after a mutation
+
+- **What:** the ADR (`docs/decisions/windows-camera-bubble-renderer-architecture.md:123-126`) says to re-verify `GetWindowDisplayAffinity` after any unavoidable window mutation — the Electron #47834 lesson. The DComp camera overlay now does, at all three of its mutation sites. Four other capture-excluded windows still call `SetWindowDisplayAffinity` exactly once at creation and then mutate freely:
+  - `camera_floating_overlay.cpp` — `SetWindowPos` (:425), `SetWindowRgn` (:393), `WM_EXITSIZEMOVE` drag path (:125)
+  - `recording_indicator_controller.cpp` — `SetWindowPos` (:336, :358), `SetWindowRgn` (:199), drag path (:103)
+  - `pre_recording_bar_controller.cpp` — :341, :212
+  - `pre_recording_bar_popover.cpp` — :203, :262
+- **Why not folded into the camera fix:** none of these has the DComp overlay's `wda_excluded_` one-way latch or its hide-on-loss policy, so there is nothing to re-verify *into*. Giving them one is a design decision about what a bar/indicator should do when exclusion is lost mid-recording — hide (and lose the recording UI) or keep showing (and burn into the capture). That is a product call, not a few lines.
+- **Severity:** the same class as the camera bug, and the indicator/bar are on screen for the whole recording. Worth deciding rather than leaving implicit.
+- **Effort:** human ~1 day / CC ~2h once the hide-vs-show policy is chosen.
+
 ## Windows — preview/export parity
 
-### Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)
+### ~~Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)~~ — DONE
 
-- **What:** `CameraBubblePainter` uses `border_width` and the shadow blur/offset as ABSOLUTE pixels, unscaled by canvas. The inline preview composites into a texture capped near 1280x720 while the export renders at the user's resolution, so a 4px border reads roughly 3x thicker relative to the preview than to a 4K export, and the shadow likewise.
-- **Why it is not a parity-test failure:** it is a genuine, known non-proportional term, so `CameraParityTest` deliberately excludes it rather than absorbing it in an epsilon. Recording it here so the exclusion is a decision rather than a blind spot.
-- **Same class as the canvas ~3x bug already fixed** by expressing canvas padding/radius as fractions of the short side (`Core/canvas_composition.h`). The camera never got that treatment.
-- **Start at:** `windows/runner/Capture/Camera/camera_bubble_painter.cpp` (`border_width_px_`, and `ResolveCameraShadowStyle`'s 10/16/22px blur constants). Decide whether the wire value stays absolute px and the painter scales it by `canvas_short_edge / reference`, or the wire value becomes a fraction (a wire change, so check macOS first).
-- **Effort:** human ~3h / CC ~30min plus an on-device look, since "does the border read right" is not unit-testable.
+Fixed. The wire value stays absolute export-canvas px (no wire change, so macOS is
+untouched) and the painter resolves it onto whatever surface it is drawing, via
+`CameraBubblePainter::Style::effect_scale` =
+`short_side(surface) / short_side(export)`. The bubble's 96px min-side floor —
+the other non-proportional term, which bound for most of the size-factor band in
+portrait/reel916 — takes the same scale through a defaulted
+`ComputeCameraBubbleRect(..., min_side_px)` parameter.
+
+Residual, deliberately not fixed here: the LIVE overlay has the same class of
+defect internally (`ComputeFloatingRect` scales the bubble by `dpi_scale` while
+`ResolveOverlayBubbleStyle` passes `border_width` through unscaled), so at 150%
+display scaling the live bubble's border is proportionally thinner than at 100%.
+Separate surface, separate fix, and macOS shares the absolute constants — raise
+it with macOS in scope rather than diverging one platform at a time.
+
+### Should the live camera bubble hide while a recording is paused? (product call)
+
+- **What:** `RecordingEngine::Pause` pauses the camera recorder and `CameraRecorder` drops every preview frame while paused, but nothing hides or stops the floating bubble. It stays on screen showing its last frame for an unbounded, user-controlled time.
+- **Why it is on this list and not already fixed:** it surfaced while closing the frameless-park gap, which needed to know every way frames stop. The park fix makes the stale-pixels case safe (a parked presenter now hides its own window), but a PAUSE is not a fault — the bubble is deliberately still up, showing a frozen frame. Whether that is correct is a product decision, not a bug fix, so it was left alone rather than changed unasked.
+- **The argument for hiding:** a paused recording showing a live-looking camera bubble misrepresents state, and it is the widest window in which a mid-session presenter swap would surface an empty bubble.
+- **The argument against:** the bubble is also the user's placement handle; hiding it mid-session moves it out of reach and makes resume feel like a restart.
+- **Start at:** `RecordingEngine::Pause` / `Resume`, mirroring the `wda_excluded()` gate `SetCameraPreviewFloating` already uses. macOS parity should be checked first — it may already have an answer.
+- **Effort:** human ~2h / CC ~20min once the product call is made.
+
+### Should the live camera bubble hide while a recording is paused? (product call)
+
+- **What:** `RecordingEngine::Pause` pauses the camera recorder and `CameraRecorder` drops every preview frame while paused, but nothing hides or stops the floating bubble. It stays on screen showing its last frame for an unbounded, user-controlled time.
+- **Why it is on this list and not already fixed:** it surfaced while closing the frameless-park gap, which needed to know every way frames stop. The park fix makes the stale-pixels case safe (a parked presenter now hides its own window), but a PAUSE is not a fault — the bubble is deliberately still up, showing a frozen frame. Whether that is correct is a product decision, not a bug fix, so it was left alone rather than changed unasked.
+- **The argument for hiding:** a paused recording showing a live-looking camera bubble misrepresents state, and it is the widest window in which a mid-session presenter swap would surface an empty bubble.
+- **The argument against:** the bubble is also the user's placement handle; hiding it mid-session moves it out of reach and makes resume feel like a restart.
+- **Start at:** `RecordingEngine::Pause` / `Resume`, mirroring the `wda_excluded()` gate `SetCameraPreviewFloating` already uses. macOS parity should be checked first — it may already have an answer.
+- **Effort:** human ~2h / CC ~20min once the product call is made.
 
 ### Camera render-plan extraction (make derivation parity structural, not just tested)
 

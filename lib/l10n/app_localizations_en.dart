@@ -2525,6 +2525,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your camera was disconnected. Recording continues without it.';
 
   @override
+  String get warnCameraPreviewHidden =>
+      'Your live camera preview can\'t be shown while recording on this PC. Recording continues — your camera is still captured and appears in the finished video.';
+
+  @override
   String get warnEncoderVideoError =>
       'Recording hit an encoder problem — the video may be incomplete.';
 
