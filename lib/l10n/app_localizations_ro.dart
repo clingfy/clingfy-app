@@ -2824,4 +2824,40 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get captionsStopping => 'Se oprește…';
+
+  @override
+  String get storageCaptionModelTitle => 'Model de vorbire';
+
+  @override
+  String get storageCaptionModelDescription =>
+      'Modelul care transformă vorbirea în subtitrări, pe dispozitivul tău. Se descarcă o singură dată, prima dată când generezi subtitrări, și poate fi descărcat din nou oricând.';
+
+  @override
+  String get storageCaptionModelWeights => 'Model';
+
+  @override
+  String get storageCaptionModelCompiledCache => 'Cache compilat';
+
+  @override
+  String get storageCaptionModelNotDownloaded =>
+      'Încă nedescărcat. Prima dată când generezi subtitrări, Clingfy descarcă modelul de vorbire.';
+
+  @override
+  String get storageDeleteCaptionModel => 'Șterge modelul de vorbire';
+
+  @override
+  String get storageDeleteCaptionModelConfirmTitle =>
+      'Ștergi modelul de vorbire?';
+
+  @override
+  String get storageDeleteCaptionModelConfirmMessage =>
+      'Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ 600 MB.';
+
+  @override
+  String get storageDeleteCaptionModelConfirmAction => 'Șterge';
+
+  @override
+  String storageDeleteCaptionModelSuccess(String value) {
+    return 'S-au eliberat $value.';
+  }
 }

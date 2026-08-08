@@ -968,5 +968,22 @@
   "captionsStopping": "Stopping…",
   "@captionsStopping": {
     "description": "Shown after the user cancels a transcription, while the engine finishes unwinding."
+  },
+  "storageCaptionModelTitle": "Speech model",
+  "storageCaptionModelDescription": "The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.",
+  "storageCaptionModelWeights": "Model",
+  "storageCaptionModelCompiledCache": "Compiled cache",
+  "storageCaptionModelNotDownloaded": "Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.",
+  "storageDeleteCaptionModel": "Delete speech model",
+  "storageDeleteCaptionModelConfirmTitle": "Delete the speech model?",
+  "storageDeleteCaptionModelConfirmMessage": "Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.",
+  "storageDeleteCaptionModelConfirmAction": "Delete",
+  "storageDeleteCaptionModelSuccess": "Freed {value}.",
+  "@storageDeleteCaptionModelSuccess": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
   }
 }

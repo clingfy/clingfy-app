@@ -49,6 +49,30 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// touching a `WhisperKit` instance it is still using.
   private var draining: Task<Void, Never>?
 
+  /// Guards `engineBusy`, which is read from the main thread by the delete path
+  /// while the ASR queue writes it.
+  private let busyLock = NSLock()
+  private var engineBusy = false
+
+  var isEngineBusy: Bool {
+    busyLock.lock()
+    defer { busyLock.unlock() }
+    return engineBusy || draining != nil
+  }
+
+  private func setEngineBusy(_ value: Bool) {
+    busyLock.lock()
+    engineBusy = value
+    busyLock.unlock()
+  }
+
+  /// Unloads the pipeline so the weights on disk can actually be removed.
+  func releaseModel() async {
+    await pipe?.unloadModels()
+    pipe = nil
+    NativeLogger.i("Captions", "Released the speech model from memory")
+  }
+
   init(model: String = WhisperKitTranscriber.defaultModel, modelDirectory: URL) {
     self.model = model
     self.modelDirectory = modelDirectory
@@ -75,6 +99,10 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [TranscribedSegment] {
+    // Held across the whole run, including the model load, so a delete cannot
+    // land between loading the weights and reading them.
+    setEngineBusy(true)
+    defer { setEngineBusy(false) }
     // Decode first, and report it as the first slice of progress. On a long
     // recording this is seconds of real work and a bar that sits at zero
     // through it reads as a hang.
@@ -89,27 +117,38 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       // encoder pass on the shared WhisperKit instance, which is not Sendable
       // and has open data races. Starting a second one on top of it would be a
       // crash, so wait it out first.
-      awaitDrain(isCancelled: isCancelled)
+      try awaitDrain(isCancelled: isCancelled)
       if isCancelled() { throw TranscriptionError.cancelled }
       return try runTranscription(
         samples: samples, options: options, progress: progress, isCancelled: isCancelled)
     }
   }
 
-  /// Blocks until an abandoned engine task has finished.
+  /// Waits out an abandoned engine task, or throws if the user gives up.
   ///
   /// Runs on the transcriber's serial queue, so nothing else can reach the
-  /// pipeline meanwhile. The wait is bounded only by how long the abandoned
-  /// download takes; the caller is showing an indeterminate "preparing" state
-  /// through it, which is the honest thing to show.
-  private func awaitDrain(isCancelled: @escaping () -> Bool) {
+  /// pipeline meanwhile. The wait itself is unbounded -- an abandoned model
+  /// download can run for minutes -- so it is polled rather than blocked on,
+  /// and a cancel during it throws instead of being ignored.
+  private func awaitDrain(isCancelled: @escaping () -> Bool) throws {
     guard let draining else { return }
     let done = DispatchSemaphore(value: 0)
     Task {
       await draining.value
       done.signal()
     }
-    done.wait()
+    // Polled, not a bare `wait()`. The abandoned task is a model download that
+    // cannot be interrupted, so this can sit for minutes; the parameter was
+    // already here and simply never read, which meant a user who pressed Cancel
+    // got nothing at all -- the panel stayed on an indeterminate "preparing"
+    // for the rest of a download they had already given up on.
+    while done.wait(timeout: .now() + 0.1) == .timedOut {
+      if isCancelled() {
+        // Leave `draining` in place: the old task still owns the engine, and
+        // the next job must wait for it rather than race it.
+        throw TranscriptionError.cancelled
+      }
+    }
     self.draining = nil
   }
 

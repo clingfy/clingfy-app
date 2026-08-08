@@ -988,12 +988,60 @@ final class LetterboxExporter {
     referenceAsset: AVAsset,
     referenceComposition: AVVideoComposition,
     validationInfo: CompositionBuilder.ExportValidationInfo,
-    finalExportAsset: AVAsset
+    finalExportAsset: AVAsset,
+    captions: [CaptionCueTrack.Cue] = [],
+    keptRanges: [ClipKeptRange] = []
   ) -> NSError? {
-    let referenceSampleTime = validationSampleTime(for: referenceAsset)
-    let finalSampleTime = validationSampleTime(for: finalExportAsset)
-    let sampleTimeSeconds = min(referenceSampleTime.seconds, finalSampleTime.seconds)
-    let sampleTime = CMTime(seconds: sampleTimeSeconds, preferredTimescale: 600)
+    // The same two corrections `validateFinalExportReferenceRender` already
+    // carries, and for the same reasons -- this validator crops to the camera
+    // bubble, but a wide caption over a bottom-corner bubble lands inside that
+    // crop, and it deletes the export when the numbers disagree.
+    let referenceDurationSeconds = referenceAsset.duration.seconds
+    let captionFreeSample =
+      referenceDurationSeconds.isFinite && referenceDurationSeconds > 0
+      ? CaptionCueTrack.captionFreeSample(
+        cues: captions,
+        keptRanges: keptRanges,
+        sourceDurationMs: Int(referenceDurationSeconds * 1000.0),
+        frameDurationMs: max(
+          Int(referenceComposition.frameDuration.seconds * 1000.0), 1)
+      )
+      : nil
+    if !captions.isEmpty, captionFreeSample == nil {
+      NativeLogger.w(
+        "Export",
+        "Skipped final camera validation: every frame carries a caption the reference render does not",
+        context: ["cues": captions.count]
+      )
+      return nil
+    }
+
+    // Two timebases, because the reference composition stays in source time
+    // while the written file is compacted onto the edited timeline. Taking the
+    // `min` of the two used to paper over that by sampling whichever asset was
+    // shorter, which on any cut export compares two different moments.
+    let referenceSampleTime: CMTime
+    let finalSampleTime: CMTime
+    if let captionFreeSample {
+      referenceSampleTime = CMTime(
+        seconds: min(
+          Double(captionFreeSample.referenceMs) / 1000.0,
+          max(referenceDurationSeconds - 0.001, 0.0)),
+        preferredTimescale: 600)
+      finalSampleTime = CMTime(
+        seconds: min(
+          Double(captionFreeSample.finalMs) / 1000.0,
+          max(finalExportAsset.duration.seconds - 0.001, 0.0)),
+        preferredTimescale: 600)
+    } else {
+      let reference = validationSampleTime(for: referenceAsset)
+      let final = validationSampleTime(for: finalExportAsset)
+      let shared = min(reference.seconds, final.seconds)
+      referenceSampleTime = CMTime(seconds: shared, preferredTimescale: 600)
+      finalSampleTime = referenceSampleTime
+    }
+    let sampleTimeSeconds = referenceSampleTime.seconds
+    let sampleTime = referenceSampleTime
     guard let resolvedSample = validationInfo.resolvedCameraSample(at: sampleTimeSeconds) else {
       NativeLogger.w(
         "Export",
@@ -1028,7 +1076,8 @@ final class LetterboxExporter {
         videoComposition: referenceComposition,
         at: sampleTime
       )
-      let finalImage = try sampleFrameImage(asset: finalExportAsset, at: sampleTime)
+      let finalImage = try sampleFrameImage(
+        asset: finalExportAsset, at: finalSampleTime)
       let finalEncodedSize = orientedSize(for: finalExportAsset)
         ?? CGSize(width: finalImage.width, height: finalImage.height)
 
@@ -3461,6 +3510,8 @@ final class LetterboxExporter {
               referenceComposition: comp.videoComposition,
               validationInfo: validationInfo,
               finalExportAsset: AVAsset(url: finalURL),
+              captions: captions,
+              keptRanges: keptRanges
             )
           {
             NativeLogger.e(
@@ -4005,6 +4056,7 @@ final class LetterboxExporter {
     colorGrade: ColorGrade = .identity,
     captionBitmapDirectory: String? = nil,
     captions: [CaptionCueTrack.Cue] = [],
+    keptRanges: [ClipKeptRange] = [],
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     // Unconditional, exactly like production. This helper used to carry its own
@@ -4025,6 +4077,7 @@ final class LetterboxExporter {
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
       colorGrade: colorGrade,
+      keptRanges: keptRanges,
       captionBitmapDirectory: captionBitmapDirectory,
       captions: captions,
       completion: completion

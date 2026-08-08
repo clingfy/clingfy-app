@@ -50,6 +50,27 @@ enum AppPaths {
     return modelsDir
   }
 
+  /// Where the speech models live, WITHOUT creating anything.
+  ///
+  /// Read-only callers must use this. `captionModelsDirectory()` creates the
+  /// folder as a side effect, so asking it "how big is the model?" would
+  /// materialise an empty `Models/` for every user who has never transcribed —
+  /// and directory existence would stop meaning "a model is installed".
+  static func captionModelsDirectoryURLIfPresent() -> URL {
+    applicationSupportRootURL().appendingPathComponent("Models", isDirectory: true)
+  }
+
+  /// The ANE-specialised model bundle Core ML compiles next to the weights.
+  ///
+  /// A second, larger-than-you-expect cost of transcription that nothing in the
+  /// app has ever counted: on this developer's machine it is 259 MB against the
+  /// 600 MB of weights. Deleting the weights without this leaves most of the
+  /// footprint behind, so "freed 600 MB" would be a lie by a third.
+  static func compiledModelCacheDirectoryURLIfPresent() -> URL {
+    cachesRootURL().appendingPathComponent(
+      "com.apple.e5rt.e5bundlecache", isDirectory: true)
+  }
+
   /// Returns the daily log file URL for the provided date.
   static func logFileURL(for date: Date = Date()) -> URL {
     let formatter = DateFormatter()
@@ -88,18 +109,28 @@ enum AppPaths {
     return fallbackAppFolder
   }
 
-  private static func applicationSupportRoot() -> URL {
-    let root = systemRoot(
+  /// The same location as [applicationSupportRoot], minus the side effect.
+  private static func applicationSupportRootURL() -> URL {
+    systemRoot(
       for: .applicationSupportDirectory,
       fallbackSubpath: "Library/Application Support"
     ).appendingPathComponent(appFolderName(), isDirectory: true)
+  }
+
+  private static func applicationSupportRoot() -> URL {
+    let root = applicationSupportRootURL()
     ensureDirectory(root, label: "application support root")
     return root
   }
 
-  private static func cachesRoot() -> URL {
-    let root = systemRoot(for: .cachesDirectory, fallbackSubpath: "Library/Caches")
+  /// The same location as [cachesRoot], minus the side effect.
+  private static func cachesRootURL() -> URL {
+    systemRoot(for: .cachesDirectory, fallbackSubpath: "Library/Caches")
       .appendingPathComponent(appFolderName(), isDirectory: true)
+  }
+
+  private static func cachesRoot() -> URL {
+    let root = cachesRootURL()
     ensureDirectory(root, label: "caches root")
     return root
   }

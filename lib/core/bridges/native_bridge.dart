@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/models/caption_model_info.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/recording/models/audio_output_route.dart';
@@ -966,6 +967,37 @@ class NativeBridge {
     } on MissingPluginException {
       return CaptionsCapabilityInfo.unsupported;
     }
+  }
+
+  /// What the on-device speech model costs on disk right now.
+  ///
+  /// Degrades to "nothing installed" on a missing implementation or a
+  /// malformed reply, like [captionsCapability] and unlike
+  /// [getStorageSnapshot]: a settings card that cannot render is not worth
+  /// throwing over, and Windows genuinely has no model.
+  Future<CaptionModelInfo> getCaptionModelInfo() async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        NativeMethod.getCaptionModelInfo,
+      );
+      return CaptionModelInfo.fromMap(raw);
+    } on MissingPluginException {
+      return CaptionModelInfo.notInstalled;
+    } on PlatformException {
+      return CaptionModelInfo.notInstalled;
+    }
+  }
+
+  /// Unloads and removes the speech model. Returns the bytes freed.
+  ///
+  /// Deliberately lets [PlatformException] escape: `MODEL_IN_USE` carries a
+  /// message the user needs to see, and swallowing it would leave a Delete
+  /// button that silently does nothing.
+  Future<int> deleteCaptionModel() async {
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      NativeMethod.deleteCaptionModel,
+    );
+    return (raw?['freedBytes'] as num?)?.toInt() ?? 0;
   }
 
   /// The pixel size the exported frames will be, for the current layout and

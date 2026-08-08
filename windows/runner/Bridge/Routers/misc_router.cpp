@@ -139,6 +139,38 @@ void HandleGenerateCaptions(
                 "Caption generation is not available on Windows.");
 }
 
+// getCaptionModelInfo — there is no model here, and saying so is the point.
+//
+// Answers with the full key set rather than Null or nothing: an unhandled
+// method throws MissingPluginException, and a Null reply falls into the Dart
+// map parse. Both would reach the storage page as an error where the honest
+// answer is simply "nothing downloaded". The Flutter side additionally hides
+// the card on non-macOS, so this is the belt to that braces.
+void HandleCaptionModelInfo(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  flutter::EncodableMap out;
+  out[flutter::EncodableValue("installed")] = flutter::EncodableValue(false);
+  out[flutter::EncodableValue("modelBytes")] =
+      flutter::EncodableValue(static_cast<int64_t>(0));
+  out[flutter::EncodableValue("compiledCacheBytes")] =
+      flutter::EncodableValue(static_cast<int64_t>(0));
+  out[flutter::EncodableValue("modelPath")] = flutter::EncodableValue("");
+  out[flutter::EncodableValue("variant")] = flutter::EncodableValue("");
+  out[flutter::EncodableValue("busy")] = flutter::EncodableValue(false);
+  out[flutter::EncodableValue("loaded")] = flutter::EncodableValue(false);
+  result->Success(flutter::EncodableValue(out));
+}
+
+// deleteCaptionModel — nothing to delete, so this is an error rather than a
+// cheerful "freed 0 bytes" that would imply something happened.
+void HandleDeleteCaptionModel(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  result->Error("CAPTIONS_UNSUPPORTED",
+                "There is no speech model on Windows.");
+}
+
 void RegisterHandlers(HandlerTable& table) {
   table["pickImage"] = &HandlePickImage;
   table["cacheLocalizedStrings"] = &HandleNull;
@@ -149,6 +181,8 @@ void RegisterHandlers(HandlerTable& table) {
   table["generateCaptions"] = &HandleGenerateCaptions;
   // Cancelling a job that can never start is a no-op, not an error.
   table["cancelCaptions"] = &HandleNull;
+  table["getCaptionModelInfo"] = &HandleCaptionModelInfo;
+  table["deleteCaptionModel"] = &HandleDeleteCaptionModel;
 }
 
 }  // namespace clingfy::bridge::routers::misc

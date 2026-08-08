@@ -51,6 +51,35 @@ final class CaptionsService {
     }
   }
 
+  // MARK: - Model lifetime
+
+  /// True while anything is touching the model, so a delete can be refused.
+  ///
+  /// Wider than `isRunning` deliberately: the engine stays busy through the
+  /// unwinding of a cancelled first-run download, which is precisely when a
+  /// user who just hit Cancel is most likely to reach for Delete.
+  var isBusy: Bool {
+    cancelLock.lock()
+    let running = isRunning
+    cancelLock.unlock()
+    return running || transcriber.isEngineBusy
+  }
+
+  /// Whether a model is currently held in memory. Reported to the UI so
+  /// "Delete" can explain that it also unloads.
+  var isModelLoaded: Bool { transcriber.isEngineBusy }
+
+  /// Drops the in-memory model, then hands back to the caller.
+  func releaseModel(completion: @escaping () -> Void) {
+    Task {
+      await transcriber.releaseModel()
+      completion()
+    }
+  }
+
+  /// The variant the engine would download, for display.
+  static var modelVariant: String { WhisperKitTranscriber.defaultModel }
+
   // MARK: - Cancellation
 
   func cancel() {
@@ -80,6 +109,18 @@ final class CaptionsService {
     isRunning = false
     cancelRequested = false
     cancelLock.unlock()
+
+    // Give the weights back when the job is over.
+    //
+    // The pipeline used to be cached for the life of the process, so several
+    // hundred megabytes stayed resident through whatever the user did next --
+    // and what they usually do next is export the video they just captioned,
+    // which is the most memory-hungry thing this app does. The cost is that a
+    // second transcription reloads the model; that is seconds, against holding
+    // ~600 MB for an entire session on the chance it is wanted again.
+    Task { [transcriber] in
+      await transcriber.releaseModel()
+    }
   }
 
   // MARK: - Running

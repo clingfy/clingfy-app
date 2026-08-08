@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/core/models/caption_model_info.dart';
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/app/home/recording/recording_controller.dart';
 import 'package:clingfy/app/settings/sections/section_helpers.dart';
@@ -153,6 +155,41 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
 
     setState(() {
       _actionSuccess = l10n.storageClearCachedRecordingsSuccess(deletedCount);
+    });
+    _successDismissTimer?.cancel();
+    _successDismissTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      setState(() {
+        _actionSuccess = null;
+      });
+    });
+  }
+
+  Future<void> _confirmAndDeleteCaptionModel(BuildContext context) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await AppDialog.confirm(
+      context,
+      title: l10n.storageDeleteCaptionModelConfirmTitle,
+      message: l10n.storageDeleteCaptionModelConfirmMessage,
+      confirmLabel: l10n.storageDeleteCaptionModelConfirmAction,
+      cancelLabel: l10n.cancel,
+    );
+    if (!confirmed || !mounted) {
+      return;
+    }
+
+    final freedBytes = await _runAction<int>(
+      widget.controller.storage.deleteCaptionModel,
+      fallbackError: l10n.storageActionFailed,
+    );
+    if (!mounted || freedBytes == null || freedBytes <= 0) {
+      return;
+    }
+
+    setState(() {
+      _actionSuccess = l10n.storageDeleteCaptionModelSuccess(
+        _formatBytes(freedBytes),
+      );
     });
     _successDismissTimer?.cancel();
     _successDismissTimer = Timer(const Duration(seconds: 5), () {
@@ -349,6 +386,23 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
                   ),
                 ),
               ],
+            ],
+            // macOS only: the engine is Apple-only, so a "0 B" model card on
+            // Windows would be reporting on something that cannot exist there.
+            if (isMac()) ...[
+              const SizedBox(height: 16),
+              SettingsCard(
+                key: const Key('storage_caption_model_card'),
+                title: l10n.storageCaptionModelTitle,
+                infoTooltip: l10n.storageCaptionModelDescription,
+                child: _CaptionModelCard(
+                  info: storage.captionModel,
+                  busyWithAnotherAction: _isRunningAction,
+                  onDelete: () {
+                    unawaited(_confirmAndDeleteCaptionModel(context));
+                  },
+                ),
+              ),
             ],
             const SizedBox(height: 16),
             Wrap(
@@ -1032,4 +1086,72 @@ String _formatBytes(int bytes) {
 
   final precision = value >= 100 || unitIndex == 0 ? 0 : 1;
   return '${value.toStringAsFixed(precision)} ${units[unitIndex]}';
+}
+
+/// What the speech model costs, and how to get it back.
+///
+/// Deliberately its own card rather than a slice of the usage doughnut: the
+/// model is a re-downloadable dependency, not the user's recordings, and
+/// folding several hundred megabytes into "Total Clingfy usage" would make that
+/// number jump the first time somebody captions anything.
+class _CaptionModelCard extends StatelessWidget {
+  const _CaptionModelCard({
+    required this.info,
+    required this.onDelete,
+    required this.busyWithAnotherAction,
+  });
+
+  final CaptionModelInfo info;
+  final VoidCallback onDelete;
+  final bool busyWithAnotherAction;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final theme = Theme.of(context);
+    final muted = theme.textTheme.bodyMedium?.color?.withValues(alpha: 0.72);
+
+    if (!info.installed) {
+      return Text(
+        l10n.storageCaptionModelNotDownloaded,
+        style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _formatBytes(info.totalBytes),
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _StorageStatRow(
+          label: l10n.storageCaptionModelWeights,
+          value: _formatBytes(info.modelBytes),
+        ),
+        const SizedBox(height: 8),
+        // Shown separately because it is the surprising half: Core ML compiles
+        // its own bundle beside the weights, and on a real machine that was a
+        // third of the total. A single number would look wrong to anyone who
+        // checked in Finder.
+        _StorageStatRow(
+          label: l10n.storageCaptionModelCompiledCache,
+          value: _formatBytes(info.compiledCacheBytes),
+        ),
+        const SizedBox(height: 16),
+        AppButton(
+          key: const Key('storage_delete_caption_model_button'),
+          label: l10n.storageDeleteCaptionModel,
+          icon: CupertinoIcons.delete,
+          variant: AppButtonVariant.secondary,
+          // `info.busy` can be up to a refresh stale; native re-checks and
+          // answers MODEL_IN_USE, which the error row renders verbatim.
+          onPressed: info.canDelete && !busyWithAnotherAction ? onDelete : null,
+        ),
+      ],
+    );
+  }
 }

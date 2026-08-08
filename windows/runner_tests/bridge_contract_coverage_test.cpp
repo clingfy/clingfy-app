@@ -176,6 +176,8 @@ const std::vector<std::string>& BridgeContractMethods() {
       "captionsCapability",
       "generateCaptions",
       "cancelCaptions",
+      "getCaptionModelInfo",
+      "deleteCaptionModel",
 
       // Updater (Phase 10.6 — updater_router.cpp).
       "checkForUpdates",

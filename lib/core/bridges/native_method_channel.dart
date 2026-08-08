@@ -50,6 +50,15 @@ abstract class NativeMethod {
   /// audible in the room. macOS only; other platforms reply with a
   /// `MissingPluginException`, which the bridge maps to `unknown`.
   static const String getAudioOutputRoute = 'getAudioOutputRoute';
+
+  /// What the on-device speech model costs on disk, and whether it can be
+  /// deleted right now. Deliberately not part of `getStorageSnapshot`: that
+  /// payload is a fixed shape on a timer, this is asked for by one page.
+  static const String getCaptionModelInfo = 'getCaptionModelInfo';
+
+  /// Unloads and removes the speech model. Returns `{freedBytes}`; fails with
+  /// `MODEL_IN_USE` while a transcription is running.
+  static const String deleteCaptionModel = 'deleteCaptionModel';
 }
 
 /// Method names for native → Flutter calls.
