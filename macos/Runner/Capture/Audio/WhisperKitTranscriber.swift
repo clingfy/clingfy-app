@@ -117,27 +117,38 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       // encoder pass on the shared WhisperKit instance, which is not Sendable
       // and has open data races. Starting a second one on top of it would be a
       // crash, so wait it out first.
-      awaitDrain(isCancelled: isCancelled)
+      try awaitDrain(isCancelled: isCancelled)
       if isCancelled() { throw TranscriptionError.cancelled }
       return try runTranscription(
         samples: samples, options: options, progress: progress, isCancelled: isCancelled)
     }
   }
 
-  /// Blocks until an abandoned engine task has finished.
+  /// Waits out an abandoned engine task, or throws if the user gives up.
   ///
   /// Runs on the transcriber's serial queue, so nothing else can reach the
-  /// pipeline meanwhile. The wait is bounded only by how long the abandoned
-  /// download takes; the caller is showing an indeterminate "preparing" state
-  /// through it, which is the honest thing to show.
-  private func awaitDrain(isCancelled: @escaping () -> Bool) {
+  /// pipeline meanwhile. The wait itself is unbounded -- an abandoned model
+  /// download can run for minutes -- so it is polled rather than blocked on,
+  /// and a cancel during it throws instead of being ignored.
+  private func awaitDrain(isCancelled: @escaping () -> Bool) throws {
     guard let draining else { return }
     let done = DispatchSemaphore(value: 0)
     Task {
       await draining.value
       done.signal()
     }
-    done.wait()
+    // Polled, not a bare `wait()`. The abandoned task is a model download that
+    // cannot be interrupted, so this can sit for minutes; the parameter was
+    // already here and simply never read, which meant a user who pressed Cancel
+    // got nothing at all -- the panel stayed on an indeterminate "preparing"
+    // for the rest of a download they had already given up on.
+    while done.wait(timeout: .now() + 0.1) == .timedOut {
+      if isCancelled() {
+        // Leave `draining` in place: the old task still owns the engine, and
+        // the next job must wait for it rather than race it.
+        throw TranscriptionError.cancelled
+      }
+    }
     self.draining = nil
   }
 
