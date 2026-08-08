@@ -919,5 +919,15 @@
   "captionsDestinationHint": "الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.",
   "captionsNotInExport": "محذوف",
   "captionsDownloadingModel": "جارٍ تنزيل نموذج الكلام",
-  "captionsStopping": "جارٍ الإيقاف…"
+  "captionsStopping": "جارٍ الإيقاف…",
+  "storageCaptionModelTitle": "نموذج الكلام",
+  "storageCaptionModelDescription": "النموذج الذي يحوّل الكلام إلى ترجمات على جهازك. يُنزَّل مرة واحدة عند أول إنشاء للترجمات، ويمكن تنزيله مجددًا في أي وقت.",
+  "storageCaptionModelWeights": "النموذج",
+  "storageCaptionModelCompiledCache": "الذاكرة المؤقتة المُجمَّعة",
+  "storageCaptionModelNotDownloaded": "لم يُنزَّل بعد. عند أول إنشاء للترجمات، ينزّل Clingfy نموذج الكلام.",
+  "storageDeleteCaptionModel": "حذف نموذج الكلام",
+  "storageDeleteCaptionModelConfirmTitle": "حذف نموذج الكلام؟",
+  "storageDeleteCaptionModelConfirmMessage": "تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو 600 ميجابايت.",
+  "storageDeleteCaptionModelConfirmAction": "حذف",
+  "storageDeleteCaptionModelSuccess": "تم تحرير {value}."
 }

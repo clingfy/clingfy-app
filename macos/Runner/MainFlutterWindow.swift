@@ -322,6 +322,24 @@ class MainFlutterWindow: NSWindow {
       case "getStorageSnapshot":
         self.screenRecorder.getStorageSnapshot(result: result)
 
+      case FlutterToNativeMethod.getCaptionModelInfo:
+        self.screenRecorder.getCaptionModelInfo(result: result)
+
+      case FlutterToNativeMethod.deleteCaptionModel:
+        // Refused here rather than inside the delete: the UI's copy of `busy`
+        // comes from a snapshot that can be half a minute old, so this is the
+        // check that actually decides.
+        guard self.screenRecorder.canDeleteCaptionModel() else {
+          result(
+            FlutterError(
+              code: "MODEL_IN_USE",
+              message:
+                "The speech model is in use. Wait for the transcription to finish, then try again.",
+              details: nil))
+          return
+        }
+        self.screenRecorder.deleteCaptionModel(result: result)
+
       case "getDisplays":
         self.screenRecorder.getDisplays(result: result)
       case "getAppWindows":

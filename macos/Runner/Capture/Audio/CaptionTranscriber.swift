@@ -37,6 +37,29 @@ protocol CaptionTranscriber {
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [TranscribedSegment]
+
+  /// Whether the engine is touching its model files right now.
+  ///
+  /// Separate from "a job is running" because the dangerous window is wider
+  /// than a job: a cancelled first-run download keeps writing into the model
+  /// directory after the user has moved on, and deleting the model underneath
+  /// that leaves a half-written tree the next run will happily load.
+  var isEngineBusy: Bool { get }
+
+  /// Drops the loaded model so its files can be removed.
+  ///
+  /// Core ML holds the weights mmapped, so removing the directory while a
+  /// pipeline is alive frees no space and leaves the engine able to keep
+  /// transcribing from an inode with no name — the disk stays full and the UI
+  /// reports it empty.
+  func releaseModel() async
+}
+
+extension CaptionTranscriber {
+  // Defaulted so the existing test doubles keep compiling: only the real engine
+  // owns a model on disk.
+  var isEngineBusy: Bool { false }
+  func releaseModel() async {}
 }
 
 /// What a transcriber is doing, and how far in.

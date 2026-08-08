@@ -51,6 +51,35 @@ final class CaptionsService {
     }
   }
 
+  // MARK: - Model lifetime
+
+  /// True while anything is touching the model, so a delete can be refused.
+  ///
+  /// Wider than `isRunning` deliberately: the engine stays busy through the
+  /// unwinding of a cancelled first-run download, which is precisely when a
+  /// user who just hit Cancel is most likely to reach for Delete.
+  var isBusy: Bool {
+    cancelLock.lock()
+    let running = isRunning
+    cancelLock.unlock()
+    return running || transcriber.isEngineBusy
+  }
+
+  /// Whether a model is currently held in memory. Reported to the UI so
+  /// "Delete" can explain that it also unloads.
+  var isModelLoaded: Bool { transcriber.isEngineBusy }
+
+  /// Drops the in-memory model, then hands back to the caller.
+  func releaseModel(completion: @escaping () -> Void) {
+    Task {
+      await transcriber.releaseModel()
+      completion()
+    }
+  }
+
+  /// The variant the engine would download, for display.
+  static var modelVariant: String { WhisperKitTranscriber.defaultModel }
+
   // MARK: - Cancellation
 
   func cancel() {

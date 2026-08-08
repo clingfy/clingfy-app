@@ -28,6 +28,44 @@ extension ScreenRecorderFacade {
     result(payload)
   }
 
+  /// What the speech model costs, and whether it can be removed right now.
+  ///
+  /// Kept off `getStorageSnapshot` on purpose. That payload is a fixed ten keys
+  /// pinned on three platforms, it is fetched on the record-start preflight and
+  /// on a timer, and it has nowhere to express installed / busy / loaded or a
+  /// second byte bucket. This is asked for lazily, by the one page that shows
+  /// it.
+  func getCaptionModelInfo(result: @escaping FlutterResult) {
+    let info = CaptionModelStore.info(variant: CaptionsService.modelVariant)
+    result(
+      info.toFlutter(
+        busy: captionsService.isBusy,
+        loaded: captionsService.isModelLoaded
+      ))
+  }
+
+  /// True when nothing is touching the model. The UI mirrors this to grey the
+  /// button, but this side is the authority — the UI's copy is up to 30s stale.
+  func canDeleteCaptionModel() -> Bool { !captionsService.isBusy }
+
+  /// Unload, then remove. In that order, always.
+  ///
+  /// Core ML keeps the weights mmapped, so deleting the directory under a live
+  /// pipeline frees nothing, leaves the engine transcribing from an unlinked
+  /// inode, and reports success — three lies at once.
+  func deleteCaptionModel(result: @escaping FlutterResult) {
+    captionsService.releaseModel { [weak self] in
+      let freed = CaptionModelStore.delete()
+      NativeLogger.i(
+        "Captions", "Removed the speech model",
+        context: ["freedBytes": Int(freed)])
+      _ = self
+      DispatchQueue.main.async {
+        result(["freedBytes": Int(freed)])
+      }
+    }
+  }
+
   func getStorageSnapshot(result: @escaping FlutterResult) {
     let snapshot = StorageInfoProvider.buildSnapshot(
       captureDestinationURL: currentCaptureDestinationURL(),

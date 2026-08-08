@@ -49,6 +49,30 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// touching a `WhisperKit` instance it is still using.
   private var draining: Task<Void, Never>?
 
+  /// Guards `engineBusy`, which is read from the main thread by the delete path
+  /// while the ASR queue writes it.
+  private let busyLock = NSLock()
+  private var engineBusy = false
+
+  var isEngineBusy: Bool {
+    busyLock.lock()
+    defer { busyLock.unlock() }
+    return engineBusy || draining != nil
+  }
+
+  private func setEngineBusy(_ value: Bool) {
+    busyLock.lock()
+    engineBusy = value
+    busyLock.unlock()
+  }
+
+  /// Unloads the pipeline so the weights on disk can actually be removed.
+  func releaseModel() async {
+    await pipe?.unloadModels()
+    pipe = nil
+    NativeLogger.i("Captions", "Released the speech model from memory")
+  }
+
   init(model: String = WhisperKitTranscriber.defaultModel, modelDirectory: URL) {
     self.model = model
     self.modelDirectory = modelDirectory
@@ -75,6 +99,10 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
   ) throws -> [TranscribedSegment] {
+    // Held across the whole run, including the model load, so a delete cannot
+    // land between loading the weights and reading them.
+    setEngineBusy(true)
+    defer { setEngineBusy(false) }
     // Decode first, and report it as the first slice of progress. On a long
     // recording this is seconds of real work and a bar that sits at zero
     // through it reads as a hang.

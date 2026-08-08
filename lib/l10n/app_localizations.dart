@@ -5091,6 +5091,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Stopping…'**
   String get captionsStopping;
+
+  /// No description provided for @storageCaptionModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech model'**
+  String get storageCaptionModelTitle;
+
+  /// No description provided for @storageCaptionModelDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.'**
+  String get storageCaptionModelDescription;
+
+  /// No description provided for @storageCaptionModelWeights.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get storageCaptionModelWeights;
+
+  /// No description provided for @storageCaptionModelCompiledCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Compiled cache'**
+  String get storageCaptionModelCompiledCache;
+
+  /// No description provided for @storageCaptionModelNotDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.'**
+  String get storageCaptionModelNotDownloaded;
+
+  /// No description provided for @storageDeleteCaptionModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete speech model'**
+  String get storageDeleteCaptionModel;
+
+  /// No description provided for @storageDeleteCaptionModelConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete the speech model?'**
+  String get storageDeleteCaptionModelConfirmTitle;
+
+  /// No description provided for @storageDeleteCaptionModelConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.'**
+  String get storageDeleteCaptionModelConfirmMessage;
+
+  /// No description provided for @storageDeleteCaptionModelConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get storageDeleteCaptionModelConfirmAction;
+
+  /// No description provided for @storageDeleteCaptionModelSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Freed {value}.'**
+  String storageDeleteCaptionModelSuccess(String value);
 }
 
 class _AppLocalizationsDelegate

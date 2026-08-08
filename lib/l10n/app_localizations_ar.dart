@@ -2773,4 +2773,39 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get captionsStopping => 'جارٍ الإيقاف…';
+
+  @override
+  String get storageCaptionModelTitle => 'نموذج الكلام';
+
+  @override
+  String get storageCaptionModelDescription =>
+      'النموذج الذي يحوّل الكلام إلى ترجمات على جهازك. يُنزَّل مرة واحدة عند أول إنشاء للترجمات، ويمكن تنزيله مجددًا في أي وقت.';
+
+  @override
+  String get storageCaptionModelWeights => 'النموذج';
+
+  @override
+  String get storageCaptionModelCompiledCache => 'الذاكرة المؤقتة المُجمَّعة';
+
+  @override
+  String get storageCaptionModelNotDownloaded =>
+      'لم يُنزَّل بعد. عند أول إنشاء للترجمات، ينزّل Clingfy نموذج الكلام.';
+
+  @override
+  String get storageDeleteCaptionModel => 'حذف نموذج الكلام';
+
+  @override
+  String get storageDeleteCaptionModelConfirmTitle => 'حذف نموذج الكلام؟';
+
+  @override
+  String get storageDeleteCaptionModelConfirmMessage =>
+      'تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو 600 ميجابايت.';
+
+  @override
+  String get storageDeleteCaptionModelConfirmAction => 'حذف';
+
+  @override
+  String storageDeleteCaptionModelSuccess(String value) {
+    return 'تم تحرير $value.';
+  }
 }

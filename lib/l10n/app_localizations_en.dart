@@ -2788,4 +2788,40 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get captionsStopping => 'Stopping…';
+
+  @override
+  String get storageCaptionModelTitle => 'Speech model';
+
+  @override
+  String get storageCaptionModelDescription =>
+      'The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.';
+
+  @override
+  String get storageCaptionModelWeights => 'Model';
+
+  @override
+  String get storageCaptionModelCompiledCache => 'Compiled cache';
+
+  @override
+  String get storageCaptionModelNotDownloaded =>
+      'Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.';
+
+  @override
+  String get storageDeleteCaptionModel => 'Delete speech model';
+
+  @override
+  String get storageDeleteCaptionModelConfirmTitle =>
+      'Delete the speech model?';
+
+  @override
+  String get storageDeleteCaptionModelConfirmMessage =>
+      'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.';
+
+  @override
+  String get storageDeleteCaptionModelConfirmAction => 'Delete';
+
+  @override
+  String storageDeleteCaptionModelSuccess(String value) {
+    return 'Freed $value.';
+  }
 }

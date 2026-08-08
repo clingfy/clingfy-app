@@ -28,6 +28,14 @@ enum FlutterToNativeMethod {
   /// default audio-output device, so the recording UI can warn about
   /// speaker -> mic bleed before a take.
   static let getAudioOutputRoute = "getAudioOutputRoute"
+
+  /// Returns what the speech model costs on disk plus whether it can be
+  /// removed right now. Asked for lazily by the storage page, never on a timer.
+  static let getCaptionModelInfo = "getCaptionModelInfo"
+
+  /// Unloads and removes the speech model. Replies `{freedBytes: Int}`, or
+  /// fails with `MODEL_IN_USE` when a transcription is touching it.
+  static let deleteCaptionModel = "deleteCaptionModel"
 }
 
 /// Method names for native → Flutter calls.
