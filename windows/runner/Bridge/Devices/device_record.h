@@ -25,6 +25,17 @@ struct DisplayRecord {
   double width = 0.0;
   double height = 0.0;
   double scale = 1.0;
+  // 1-based position in the geometry-derived desk ordering. This is the number
+  // the identify overlay paints, and the prefix of `name`.
+  std::int64_t ordinal = 0;
+  // The real monitor name after placeholder normalisation. Empty means absent
+  // on the wire, so Dart reads null and substitutes its own localized word.
+  std::string os_name;
+  bool is_primary = false;
+  // Always false on Windows in v1: a null selection resolves to the primary
+  // monitor here, not to the app window's display, so the marker would be
+  // informative rather than semantic. On the wire so enabling it is additive.
+  bool is_app_window_host = false;
 };
 
 struct AppWindowRecord {

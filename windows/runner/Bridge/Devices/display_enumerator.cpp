@@ -5,6 +5,10 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
+#include <utility>
+
+#include "Bridge/Devices/display_label.h"
 
 namespace clingfy::bridge::devices {
 
@@ -77,6 +81,79 @@ std::int64_t ComputeIdForMonitor(HMONITOR monitor) {
   return HashDevicePath(id_source);
 }
 
+// Maps a GDI device name ("\\\\.\\DISPLAY1") to the EDID monitor friendly name
+// ("DELL U2720Q") via the CCD API.
+//
+// `EnumDisplayDevicesW(...).DeviceString` is the *driver* name and is
+// "Generic PnP Monitor" for most monitors, which identifies nothing. The CCD
+// tables carry the real model. Built once per enumeration so the source and
+// target tables are one consistent snapshot.
+//
+// No CMake change: GetDisplayConfigBufferSizes / QueryDisplayConfig /
+// DisplayConfigGetDeviceInfo are declared in winuser.h and export from
+// user32.dll, which MSVC links implicitly.
+std::unordered_map<std::wstring, std::wstring> BuildCcdFriendlyNames() {
+  UINT32 path_count = 0;
+  UINT32 mode_count = 0;
+  if (::GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count,
+                                    &mode_count) != ERROR_SUCCESS) {
+    return {};
+  }
+  std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+  std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+  if (::QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, paths.data(),
+                           &mode_count, modes.data(),
+                           nullptr) != ERROR_SUCCESS) {
+    return {};
+  }
+  paths.resize(path_count);
+
+  std::unordered_map<std::wstring, std::pair<UINT32, std::wstring>> best;
+  for (const auto& path : paths) {
+    DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+    source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+    source.header.size = sizeof(source);
+    source.header.adapterId = path.sourceInfo.adapterId;
+    source.header.id = path.sourceInfo.id;
+    if (::DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS) {
+      continue;
+    }
+
+    DISPLAYCONFIG_TARGET_DEVICE_NAME target{};
+    target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+    target.header.size = sizeof(target);
+    target.header.adapterId = path.targetInfo.adapterId;
+    target.header.id = path.targetInfo.id;
+    if (::DisplayConfigGetDeviceInfo(&target.header) != ERROR_SUCCESS) {
+      continue;
+    }
+    if (target.monitorFriendlyDeviceName[0] == L'\0') {
+      continue;  // Virtual / remote displays legitimately have none.
+    }
+
+    const std::wstring key(source.viewGdiDeviceName);
+    // A CLONE set puts several targets on one source. Lowest targetInfo.id
+    // wins — a stable identity, so the name cannot flicker between
+    // enumerations.
+    auto it = best.find(key);
+    if (it == best.end() || path.targetInfo.id < it->second.first) {
+      best[key] = {path.targetInfo.id,
+                   std::wstring(target.monitorFriendlyDeviceName)};
+    }
+  }
+
+  std::unordered_map<std::wstring, std::wstring> out;
+  for (auto& entry : best) {
+    out.emplace(entry.first, entry.second.second);
+  }
+  return out;
+}
+
+struct EnumCtx {
+  std::vector<DisplayRecord>* out = nullptr;
+  const std::unordered_map<std::wstring, std::wstring>* ccd = nullptr;
+};
+
 struct MatchContext {
   std::int64_t target_id = 0;
   HMONITOR match = nullptr;
@@ -98,7 +175,7 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR monitor,
                               HDC /*hdc*/,
                               LPRECT /*clip*/,
                               LPARAM user_data) {
-  auto* out = reinterpret_cast<std::vector<DisplayRecord>*>(user_data);
+  auto* ctx = reinterpret_cast<EnumCtx*>(user_data);
 
   MONITORINFOEXW info{};
   info.cbSize = sizeof(info);
@@ -114,40 +191,80 @@ BOOL CALLBACK MonitorEnumProc(HMONITOR monitor,
   record.height =
       static_cast<double>(info.rcMonitor.bottom - info.rcMonitor.top);
   record.scale = ScaleForMonitor(monitor);
+  record.is_primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+  record.is_app_window_host = false;  // v1: Windows has no host marker.
 
-  // Friendly name: prefer the registry-display name resolved via
-  // `EnumDisplayDevicesW`. `MONITORINFOEXW::szDevice` is the GDI device path
-  // (e.g. "\\\\.\\DISPLAY1"), which is not user-friendly.
-  DISPLAY_DEVICEW device{};
-  device.cb = sizeof(device);
-  std::wstring friendly;
-  if (::EnumDisplayDevicesW(info.szDevice, 0, &device,
-                            EDD_GET_DEVICE_INTERFACE_NAME)) {
-    friendly = device.DeviceString;
+  // Name ladder: CCD friendly name -> driver DeviceString -> empty. Each rung
+  // is rejected if it is a known placeholder, so an unusable name becomes an
+  // absent one rather than a misleading one.
+  std::string candidate;
+  if (ctx->ccd != nullptr) {
+    const auto it = ctx->ccd->find(info.szDevice);
+    if (it != ctx->ccd->end()) {
+      candidate = Utf8FromWide(it->second);
+    }
   }
-  if (friendly.empty()) {
-    friendly = info.szDevice;
+  if (candidate.empty() || IsGenericMonitorName(candidate)) {
+    DISPLAY_DEVICEW name_device{};
+    name_device.cb = sizeof(name_device);
+    candidate.clear();
+    if (::EnumDisplayDevicesW(info.szDevice, 0, &name_device,
+                              EDD_GET_DEVICE_INTERFACE_NAME)) {
+      const std::string driver_name = Utf8FromWide(name_device.DeviceString);
+      if (!IsGenericMonitorName(driver_name)) {
+        candidate = driver_name;
+      }
+    }
   }
-  record.name = Utf8FromWide(friendly);
+  record.os_name = NormalizeMonitorName(candidate);
 
-  // Stable-ish id derived from the device interface path. Falls back to the
-  // GDI device path if no interface name is available.
-  const std::wstring id_source = device.DeviceID[0] != L'\0'
-                                     ? std::wstring(device.DeviceID)
+  // ID: UNCHANGED SEMANTICS, and deliberately NOT sharing a DISPLAY_DEVICEW
+  // with the name ladder above — that ladder may short-circuit, which would
+  // silently switch the hash source from DeviceID to szDevice, diverge from
+  // ComputeIdForMonitor, and invalidate every user's persisted
+  // 'selectedDisplayId'.
+  DISPLAY_DEVICEW id_device{};
+  id_device.cb = sizeof(id_device);
+  ::EnumDisplayDevicesW(info.szDevice, 0, &id_device,
+                        EDD_GET_DEVICE_INTERFACE_NAME);
+  const std::wstring id_source = id_device.DeviceID[0] != L'\0'
+                                     ? std::wstring(id_device.DeviceID)
                                      : std::wstring(info.szDevice);
   record.id = HashDevicePath(id_source);
 
-  out->push_back(std::move(record));
+  ctx->out->push_back(std::move(record));
   return TRUE;
 }
 
 }  // namespace
 
 std::vector<DisplayRecord> EnumerateDisplays() {
-  std::vector<DisplayRecord> displays;
+  const auto ccd = BuildCcdFriendlyNames();
+  std::vector<DisplayRecord> raw;
+  EnumCtx ctx{&raw, &ccd};
   ::EnumDisplayMonitors(nullptr, nullptr, &MonitorEnumProc,
-                        reinterpret_cast<LPARAM>(&displays));
-  return displays;
+                        reinterpret_cast<LPARAM>(&ctx));
+
+  std::vector<OrderingInput> ordering;
+  ordering.reserve(raw.size());
+  for (const auto& record : raw) {
+    ordering.push_back({record.id, record.x, record.y});
+  }
+  const auto order = OrderedIndices(ordering);
+
+  std::vector<DisplayRecord> out;
+  out.reserve(order.size());
+  for (std::size_t position = 0; position < order.size(); ++position) {
+    DisplayRecord record = raw[order[position]];
+    record.ordinal = static_cast<std::int64_t>(position) + 1;
+    // "Screen" is English on purpose: Windows has no NativeStringsStore, and
+    // Dart never renders this fallback — an empty os_name is absent on the
+    // wire, so DisplayLabelBuilder substitutes the localized word. This string
+    // reaches only the native pre-recording bar and the diagnostics bundle.
+    record.name = ComposeDisplayName(record.os_name, record.ordinal, "Screen");
+    out.push_back(std::move(record));
+  }
+  return out;
 }
 
 std::optional<HMONITOR> ResolveHMonitor(std::optional<std::int64_t> id) {
