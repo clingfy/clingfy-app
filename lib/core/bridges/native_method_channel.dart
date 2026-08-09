@@ -59,6 +59,24 @@ abstract class NativeMethod {
   /// Unloads and removes the speech model. Returns `{freedBytes}`; fails with
   /// `MODEL_IN_USE` while a transcription is running.
   static const String deleteCaptionModel = 'deleteCaptionModel';
+
+  /// Flashes a large ordinal (and the monitor's name) on physical displays and
+  /// auto-dismisses.
+  ///
+  /// Args `{durationMs, only, onlyDisplayId, labels}`, where `labels` maps a
+  /// stringified display id to the label this side is rendering for it.
+  ///
+  /// `only == false` flashes every display — the Identify sweep. `only == true`
+  /// with an id flashes that one display; with a null id it flashes whatever
+  /// the platform would actually capture right now, which is the Clingfy
+  /// window's display on macOS and the primary monitor on Windows.
+  ///
+  /// Replies with the display snapshot that was painted, in the same
+  /// list-of-maps shape as `getDisplays`, so the picker can adopt exactly what
+  /// is on the glass. macOS + Windows. Older native builds reply with a
+  /// `MissingPluginException`, which the bridge maps to
+  /// `IdentifyDisplaysResult.unsupported` so the UI hides the control.
+  static const String identifyDisplays = 'identifyDisplays';
 }
 
 /// Method names for native → Flutter calls.

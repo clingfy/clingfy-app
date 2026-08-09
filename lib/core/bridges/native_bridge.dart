@@ -455,6 +455,42 @@ class NativeBridge {
     }
   }
 
+  /// Asks native to flash identifying numbers on the physical displays.
+  ///
+  /// Returns the snapshot native says it painted so the caller can adopt it —
+  /// the number on the glass and the number in the picker then cannot drift.
+  ///
+  /// A native build with no handler is reported as
+  /// [IdentifyDisplaysResult.unsupported], which permanently hides the control.
+  /// Any other failure keeps the feature supported with a null snapshot: a
+  /// transient error must not disable a working button.
+  Future<IdentifyDisplaysResult> identifyDisplays({
+    required int durationMs,
+    required bool only,
+    required Map<String, String> labels,
+    int? onlyDisplayId,
+  }) async {
+    try {
+      final reply = await _nativeBridge
+          .invokeMethod<List<dynamic>>(NativeMethod.identifyDisplays, {
+            'durationMs': durationMs,
+            'only': only,
+            'onlyDisplayId': onlyDisplayId,
+            'labels': labels,
+          });
+      return IdentifyDisplaysResult(supported: true, snapshot: reply);
+    } on MissingPluginException {
+      Log.d(
+        'NativeBridge',
+        'identifyDisplays is not implemented by this native build',
+      );
+      return IdentifyDisplaysResult.unsupported;
+    } catch (e, st) {
+      Log.w('NativeBridge', 'identifyDisplays failed: $e', e, st);
+      return const IdentifyDisplaysResult(supported: true, snapshot: null);
+    }
+  }
+
   /// Pushes the mic noise-reduction setting to the open preview.
   ///
   /// Unlike gain and volume this is not a live mix parameter — native

@@ -567,4 +567,77 @@ void main() {
       );
     });
   });
+
+  group('identifyDisplays bridge', () {
+    void overrideScreenRecorder(
+      Future<Object?> Function(MethodCall call) handler,
+    ) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(screenRecorderChannel, handler);
+    }
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(screenRecorderChannel, null);
+    });
+
+    test('forwards its arguments and returns the snapshot', () async {
+      MethodCall? captured;
+      overrideScreenRecorder((call) async {
+        captured = call;
+        return <Object?>[
+          <String, Object?>{'id': 1, 'ordinal': 1},
+          <String, Object?>{'id': 2, 'ordinal': 2},
+        ];
+      });
+
+      final result = await NativeBridge.instance.identifyDisplays(
+        durationMs: 1600,
+        only: false,
+        labels: {'1': '1. A', '2': '2. B'},
+      );
+
+      expect(result.supported, isTrue);
+      expect(result.snapshot!.length, 2);
+      expect(captured!.method, NativeMethod.identifyDisplays);
+      expect(captured!.arguments, {
+        'durationMs': 1600,
+        'only': false,
+        'onlyDisplayId': null,
+        'labels': {'1': '1. A', '2': '2. B'},
+      });
+    });
+
+    test('a MissingPluginException maps to unsupported', () async {
+      overrideScreenRecorder((call) async {
+        throw MissingPluginException('no handler');
+      });
+
+      final result = await NativeBridge.instance.identifyDisplays(
+        durationMs: 900,
+        only: true,
+        onlyDisplayId: 2,
+        labels: const {},
+      );
+
+      expect(result.supported, isFalse);
+      expect(result.snapshot, isNull);
+    });
+
+    test('a PlatformException keeps the feature supported', () async {
+      // A transient failure must not permanently hide a working button.
+      overrideScreenRecorder((call) async {
+        throw PlatformException(code: 'BOOM');
+      });
+
+      final result = await NativeBridge.instance.identifyDisplays(
+        durationMs: 900,
+        only: false,
+        labels: const {},
+      );
+
+      expect(result.supported, isTrue);
+      expect(result.snapshot, isNull);
+    });
+  });
 }
