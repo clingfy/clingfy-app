@@ -2428,6 +2428,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get screen => 'Ecran';
 
   @override
+  String get identifyDisplays => 'Identifică ecranele';
+
+  @override
+  String get identifyDisplaysTooltip =>
+      'Afișează un număr mare pe fiecare ecran ca să le poți deosebi';
+
+  @override
+  String get displayMarkerMain => 'Principal';
+
+  @override
+  String get displayMarkerThisWindow => 'Fereastra curentă';
+
+  @override
   String get app => 'Aplicație';
 
   @override
