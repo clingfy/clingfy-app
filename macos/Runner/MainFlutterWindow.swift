@@ -342,6 +342,14 @@ class MainFlutterWindow: NSWindow {
 
       case "getDisplays":
         self.screenRecorder.getDisplays(result: result)
+      case FlutterToNativeMethod.identifyDisplays:
+        let args = call.arguments as? [String: Any]
+        self.screenRecorder.identifyDisplays(
+          durationMs: (args?["durationMs"] as? NSNumber)?.intValue ?? 1600,
+          onlyDisplayId: args?["onlyDisplayId"] as? NSNumber,
+          only: (args?["only"] as? Bool) ?? false,
+          labels: (args?["labels"] as? [String: String]) ?? [:],
+          result: result)
       case "getAppWindows":
         self.screenRecorder.getAppWindows(result: result)
 

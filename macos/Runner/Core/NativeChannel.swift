@@ -36,6 +36,19 @@ enum FlutterToNativeMethod {
   /// Unloads and removes the speech model. Replies `{freedBytes: Int}`, or
   /// fails with `MODEL_IN_USE` when a transcription is touching it.
   static let deleteCaptionModel = "deleteCaptionModel"
+
+  /// Flashes a large ordinal plus the monitor's name on every physical display
+  /// (or only `onlyDisplayId`) and auto-dismisses.
+  ///
+  /// Args `{durationMs: Int, only: Bool, onlyDisplayId: Int?, labels: [String: String]}`
+  /// where `labels` maps a stringified display id to the label Flutter is
+  /// rendering for it. Replies with the display snapshot that was painted, in
+  /// the same list-of-maps shape as `getDisplays` — so the picker can adopt
+  /// exactly what is on the glass and the two can never disagree.
+  ///
+  /// Keep in sync with `NativeMethod.identifyDisplays` in
+  /// `native_method_channel.dart`.
+  static let identifyDisplays = "identifyDisplays"
 }
 
 /// Method names for native → Flutter calls.
