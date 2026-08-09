@@ -98,6 +98,7 @@ TEST(MethodRouterTest, HasHandlerIsTrueForRegisteredMethod) {
   MethodRouter router;
   // `getDisplays` is registered by the devices router as part of Phase 1.
   EXPECT_TRUE(router.HasHandler("getDisplays"));
+  EXPECT_TRUE(router.HasHandler("identifyDisplays"));
 }
 
 // ---- Phase 10.4: dispatch barrier ------------------------------------------

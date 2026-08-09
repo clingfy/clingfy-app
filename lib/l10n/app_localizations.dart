@@ -4426,6 +4426,30 @@ abstract class AppLocalizations {
   /// **'Screen'**
   String get screen;
 
+  /// No description provided for @identifyDisplays.
+  ///
+  /// In en, this message translates to:
+  /// **'Identify screens'**
+  String get identifyDisplays;
+
+  /// No description provided for @identifyDisplaysTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Flash a big number on every screen so you can tell them apart'**
+  String get identifyDisplaysTooltip;
+
+  /// No description provided for @displayMarkerMain.
+  ///
+  /// In en, this message translates to:
+  /// **'Main'**
+  String get displayMarkerMain;
+
+  /// No description provided for @displayMarkerThisWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'This window'**
+  String get displayMarkerThisWindow;
+
   /// No description provided for @app.
   ///
   /// In en, this message translates to:

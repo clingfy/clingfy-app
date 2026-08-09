@@ -1245,6 +1245,41 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func getDisplays(result: @escaping FlutterResult) { result(displaySvc.allDisplays()) }
+
+  /// Paints the identify cards and replies with the snapshot it painted.
+  ///
+  /// Re-enumerates at flash time rather than trusting a list Flutter is holding:
+  /// the reply is what is on the glass, and the picker adopts it, so the two
+  /// cannot drift apart.
+  func identifyDisplays(
+    durationMs: Int, onlyDisplayId: NSNumber?, only: Bool, labels: [String: String],
+    result: @escaping FlutterResult
+  ) {
+    let word = NativeStringsStore.shared.string(for: NativeUIStringKey.displayServiceScreen)
+    let records = DisplayLabeler.payloads(from: displaySvc.descriptors(), screenWord: word)
+    let clamped = max(400, min(6000, durationMs))
+
+    var byID: [CGDirectDisplayID: String] = [:]
+    for (key, value) in labels where !value.isEmpty {
+      if let raw = UInt32(key) { byID[CGDirectDisplayID(raw)] = value }
+    }
+
+    // `only` with no id means "whatever this platform would actually capture" —
+    // the honest answer for the Main display row, which resolves differently on
+    // each platform.
+    let target: CGDirectDisplayID? =
+      only
+      ? (onlyDisplayId.map { CGDirectDisplayID($0.uint32Value) }
+        ?? displaySvc.appWindowDisplayID() ?? CGMainDisplayID())
+      : nil
+
+    DispatchQueue.main.async {
+      DisplayIdentifyOverlay.show(
+        records: records, labels: byID, onlyDisplayID: target,
+        duration: TimeInterval(clamped) / 1000.0)
+    }
+    result(records)
+  }
   func setDisplay(id: NSNumber?, result: @escaping FlutterResult) {
     prefs.selectedDisplayId = id == nil ? nil : Int(id!.uint32Value)
     selectedDisplayID = id == nil ? nil : CGDirectDisplayID(id!.uint32Value)

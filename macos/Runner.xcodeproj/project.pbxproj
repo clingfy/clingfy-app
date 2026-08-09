@@ -109,6 +109,8 @@
 		5B5427472F21985F00B06BA6 /* AreaSelectionOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427062F21985F00B06BA6 /* AreaSelectionOverlay.swift */; };
 		5B5427482F21985F00B06BA6 /* PreRecordingBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54270E2F21985F00B06BA6 /* PreRecordingBarView.swift */; };
 		5B5427492F21985F00B06BA6 /* CursorHighlighter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54270A2F21985F00B06BA6 /* CursorHighlighter.swift */; };
+		D15914E0F1A24C0197A00002 /* DisplayIdentifyOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15914E0F1A24C0197A00001 /* DisplayIdentifyOverlay.swift */; };
+		D15914E0F1A24C0197A00005 /* DisplayLabelerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15914E0F1A24C0197A00004 /* DisplayLabelerTests.swift */; };
 		5BE43BEC2F22CD3F0017267E /* RecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEB2F22CD3F0017267E /* RecordingStore.swift */; };
 		5BE43BED2F22CD3F0017267E /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEA2F22CD3F0017267E /* AppPaths.swift */; };
 		5BE43BED2F22CD3F0017267F /* CaptionModelStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BE43BEA2F22CD3F0017267F /* CaptionModelStore.swift */; };
@@ -381,6 +383,8 @@
 		5B5427062F21985F00B06BA6 /* AreaSelectionOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AreaSelectionOverlay.swift; sourceTree = "<group>"; };
 		5B5427082F21985F00B06BA6 /* CameraOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraOverlay.swift; sourceTree = "<group>"; };
 		5B54270A2F21985F00B06BA6 /* CursorHighlighter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorHighlighter.swift; sourceTree = "<group>"; };
+		D15914E0F1A24C0197A00001 /* DisplayIdentifyOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayIdentifyOverlay.swift; sourceTree = "<group>"; };
+		D15914E0F1A24C0197A00004 /* DisplayLabelerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayLabelerTests.swift; sourceTree = "<group>"; };
 		5B54270C2F21985F00B06BA6 /* OptionPickerPopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OptionPickerPopover.swift; sourceTree = "<group>"; };
 		5B54270D2F21985F00B06BA6 /* PreRecordingBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreRecordingBarController.swift; sourceTree = "<group>"; };
 		5B54270E2F21985F00B06BA6 /* PreRecordingBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreRecordingBarView.swift; sourceTree = "<group>"; };
@@ -630,6 +634,7 @@
 				A1B2C3D4E5F60718293A4B5C /* CameraOverlayLayoutTests.swift */,
 				9B1B2C3D4E5F60718293A4B1 /* CameraOverlayShapeTests.swift */,
 				9A1B2C3D4E5F60718293A4B9 /* CursorFrameResolverTests.swift */,
+				D15914E0F1A24C0197A00004 /* DisplayLabelerTests.swift */,
 				7C0FF00100000000FF00CC01 /* ZoomFocusModeTests.swift */,
 				8F5A1B2C3D4E5F60718293A1 /* OverlayUpdateDeduperTests.swift */,
 				9A1B2C3D4E5F60718293A4B7 /* PreviewProfileTests.swift */,
@@ -1017,12 +1022,21 @@
 			path = PreRecordingBar;
 			sourceTree = "<group>";
 		};
+		D15914E0F1A24C0197A00003 /* Identify */ = {
+			isa = PBXGroup;
+			children = (
+				D15914E0F1A24C0197A00001 /* DisplayIdentifyOverlay.swift */,
+			);
+			path = Identify;
+			sourceTree = "<group>";
+		};
 		5B5427102F21985F00B06BA6 /* Overlays */ = {
 			isa = PBXGroup;
 			children = (
 				5B5427072F21985F00B06BA6 /* AreaSelection */,
 				5B5427092F21985F00B06BA6 /* Camera */,
 				5B54270B2F21985F00B06BA6 /* CursorHighlighter */,
+				D15914E0F1A24C0197A00003 /* Identify */,
 				5B54270F2F21985F00B06BA6 /* PreRecordingBar */,
 			);
 			path = Overlays;
@@ -1513,6 +1527,7 @@
 				A1B2C3D4E5F60718293A4B5D /* CameraOverlayLayoutTests.swift in Sources */,
 				9B1B2C3D4E5F60718293A4B2 /* CameraOverlayShapeTests.swift in Sources */,
 				9A1B2C3D4E5F60718293A4BA /* CursorFrameResolverTests.swift in Sources */,
+				D15914E0F1A24C0197A00005 /* DisplayLabelerTests.swift in Sources */,
 				7C0FF00100000000FF00CC02 /* ZoomFocusModeTests.swift in Sources */,
 				8F5A1B2C3D4E5F60718293A2 /* OverlayUpdateDeduperTests.swift in Sources */,
 				9A1B2C3D4E5F60718293A4B8 /* PreviewProfileTests.swift in Sources */,
@@ -1653,6 +1668,7 @@
 				5B449F802F382AD400A03934 /* UpdaterController.swift in Sources */,
 				5B449F712F379BFF00A03934 /* ScreenRecorderFacade+Permissions.swift in Sources */,
 				5B5427492F21985F00B06BA6 /* CursorHighlighter.swift in Sources */,
+				D15914E0F1A24C0197A00002 /* DisplayIdentifyOverlay.swift in Sources */,
 				33CC11132044BFA00003C045 /* MainFlutterWindow.swift in Sources */,
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,

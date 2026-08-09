@@ -2400,6 +2400,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get screen => 'Screen';
 
   @override
+  String get identifyDisplays => 'Identify screens';
+
+  @override
+  String get identifyDisplaysTooltip =>
+      'Flash a big number on every screen so you can tell them apart';
+
+  @override
+  String get displayMarkerMain => 'Main';
+
+  @override
+  String get displayMarkerThisWindow => 'This window';
+
+  @override
   String get app => 'App';
 
   @override

@@ -289,6 +289,7 @@ jobs:
             -only-testing:RunnerTests/CameraOverlayLayoutTests \
             -only-testing:RunnerTests/CameraOverlayShapeTests \
             -only-testing:RunnerTests/CursorFrameResolverTests \
+            -only-testing:RunnerTests/DisplayLabelerTests \
             -only-testing:RunnerTests/InlinePreviewViewLayoutTests \
             -only-testing:RunnerTests/PauseResumeSupportTests \
             -only-testing:RunnerTests/PreviewProfileTests \

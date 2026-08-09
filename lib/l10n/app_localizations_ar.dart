@@ -2385,6 +2385,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get screen => 'شاشة';
 
   @override
+  String get identifyDisplays => 'تحديد الشاشات';
+
+  @override
+  String get identifyDisplaysTooltip =>
+      'إظهار رقم كبير على كل شاشة لتتمكن من التمييز بينها';
+
+  @override
+  String get displayMarkerMain => 'الرئيسية';
+
+  @override
+  String get displayMarkerThisWindow => 'هذه النافذة';
+
+  @override
   String get app => 'تطبيق';
 
   @override

@@ -10,7 +10,7 @@ using flutter::EncodableValue;
 }  // namespace
 
 EncodableMap ToEncodable(const DisplayRecord& record) {
-  return EncodableMap{
+  EncodableMap map{
       {EncodableValue("id"), EncodableValue(record.id)},
       {EncodableValue("name"), EncodableValue(record.name)},
       {EncodableValue("x"), EncodableValue(record.x)},
@@ -18,7 +18,18 @@ EncodableMap ToEncodable(const DisplayRecord& record) {
       {EncodableValue("width"), EncodableValue(record.width)},
       {EncodableValue("height"), EncodableValue(record.height)},
       {EncodableValue("scale"), EncodableValue(record.scale)},
+      {EncodableValue("ordinal"), EncodableValue(record.ordinal)},
+      {EncodableValue("isPrimary"), EncodableValue(record.is_primary)},
+      {EncodableValue("isAppWindowHost"),
+       EncodableValue(record.is_app_window_host)},
   };
+
+  // Absent rather than empty: Dart reads null and falls back to its own
+  // localized screen word, which an empty string would defeat.
+  if (!record.os_name.empty()) {
+    map[EncodableValue("osName")] = EncodableValue(record.os_name);
+  }
+  return map;
 }
 
 EncodableMap ToEncodable(const AppWindowRecord& record) {

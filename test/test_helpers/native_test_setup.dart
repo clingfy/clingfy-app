@@ -66,6 +66,7 @@ Future<void> installCommonNativeMocks({
       case 'getVideoSources':
       case 'getDisplays':
       case 'getAppWindows':
+      case 'identifyDisplays':
         return <dynamic>[];
       case 'getStorageSnapshot':
         return <String, dynamic>{

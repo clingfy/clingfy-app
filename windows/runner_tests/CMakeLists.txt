@@ -38,6 +38,7 @@ add_executable(runner_tests
   "updater_event_publisher_test.cpp"
   "updater_router_test.cpp"
   "area_picker_geometry_test.cpp"
+  "display_label_test.cpp"
   "canvas_composition_test.cpp"
   "background_image_cache_test.cpp"
   "abstract_waves_params_test.cpp"

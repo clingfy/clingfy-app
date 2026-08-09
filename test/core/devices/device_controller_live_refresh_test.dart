@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
@@ -12,6 +14,16 @@ List<Map<String, Object?>> _displays = const [];
 List<Map<String, Object?>> _cameras = const [];
 List<Map<String, Object?>> _appWindows = const [];
 final List<MethodCall> _calls = <MethodCall>[];
+
+/// What the fake native side replies to identifyDisplays. Null means "reply
+/// with whatever getDisplays would".
+List<Map<String, Object?>>? _identifyReply;
+
+/// When true the fake native side has no identifyDisplays handler at all.
+bool _identifyMissing = false;
+
+/// Gate that lets a test hold an identify reply open to force a race.
+Completer<void>? _identifyGate;
 
 void _installMocks() {
   final messenger =
@@ -29,6 +41,12 @@ void _installMocks() {
           return <dynamic>[];
         case 'getAppWindows':
           return _appWindows;
+        case 'identifyDisplays':
+          if (_identifyMissing) {
+            throw MissingPluginException('no identifyDisplays handler');
+          }
+          if (_identifyGate != null) await _identifyGate!.future;
+          return _identifyReply ?? _displays;
         default:
           return null;
       }
@@ -59,6 +77,9 @@ void main() {
     _displays = const [];
     _cameras = const [];
     _appWindows = const [];
+    _identifyReply = null;
+    _identifyMissing = false;
+    _identifyGate = null;
     SharedPreferences.setMockInitialValues({});
     _installMocks();
   });
@@ -377,6 +398,237 @@ void main() {
 
       expect(_calls.where((c) => c.method == 'getDisplays'), isEmpty);
       expect(_calls.where((c) => c.method == 'getAudioSources'), isEmpty);
+    });
+  });
+
+  group('identify displays', () {
+    Map<String, Object?> display(
+      int id, {
+      required int ordinal,
+      String? osName,
+      bool isPrimary = false,
+      double x = 0,
+    }) => {
+      'id': id,
+      'name': '$ordinal. ${osName ?? 'Screen'}',
+      'x': x,
+      'y': 0.0,
+      'width': 2560.0,
+      'height': 1440.0,
+      'scale': 2.0,
+      'ordinal': ordinal,
+      if (osName != null) 'osName': osName,
+      'isPrimary': isPrimary,
+      'isAppWindowHost': false,
+    };
+
+    MethodCall? lastCall(String method) {
+      for (final call in _calls.reversed) {
+        if (call.method == method) return call;
+      }
+      return null;
+    }
+
+    test('identifyDisplays is a wire constant, kept in sync with Swift', () {
+      expect(NativeMethod.identifyDisplays, 'identifyDisplays');
+    });
+
+    test('the identify sweep asks native to flash every screen', () async {
+      _displays = [
+        display(1, ordinal: 1, osName: 'A', isPrimary: true),
+        display(2, ordinal: 2, osName: 'B', x: 2560),
+      ];
+      final controller = await makeController();
+      _calls.clear();
+
+      await controller.identifyDisplays(labels: {'1': '1. A', '2': '2. B'});
+
+      final call = lastCall('identifyDisplays');
+      expect(call, isNotNull);
+      final args = call!.arguments as Map;
+      expect(args['only'], isFalse);
+      expect(args['onlyDisplayId'], isNull);
+      expect(args['durationMs'], 1600);
+      expect(args['labels'], {'1': '1. A', '2': '2. B'});
+    });
+
+    test('choosing a display flashes that display, after setDisplay', () async {
+      _displays = [
+        display(1, ordinal: 1, osName: 'A', isPrimary: true),
+        display(2, ordinal: 2, osName: 'B', x: 2560),
+      ];
+      final controller = await makeController();
+      _calls.clear();
+
+      await controller.setDisplay(2, labels: {'2': '2. B'});
+      await pumpEventQueue();
+
+      final setIndex = _calls.indexWhere((c) => c.method == 'setDisplay');
+      final flashIndex = _calls.indexWhere(
+        (c) => c.method == 'identifyDisplays',
+      );
+      expect(setIndex, isNonNegative);
+      expect(flashIndex, isNonNegative);
+      expect(
+        setIndex,
+        lessThan(flashIndex),
+        reason: 'native must know the new target before it flashes it',
+      );
+
+      final args = lastCall('identifyDisplays')!.arguments as Map;
+      expect(args['only'], isTrue);
+      expect(args['onlyDisplayId'], 2);
+      expect(args['durationMs'], 900);
+    });
+
+    test(
+      'choosing Main display asks native to flash its own default',
+      () async {
+        _displays = [display(1, ordinal: 1, osName: 'A', isPrimary: true)];
+        final controller = await makeController();
+        _calls.clear();
+
+        await controller.setDisplay(null);
+        await pumpEventQueue();
+
+        final args = lastCall('identifyDisplays')!.arguments as Map;
+        expect(args['only'], isTrue);
+        expect(args['onlyDisplayId'], isNull);
+      },
+    );
+
+    test(
+      'choosing Main display is not rewritten by the identify reply',
+      () async {
+        // The identify reply flows back into the display list. If it also re-ran
+        // the preferred-vs-effective pass, a deliberate "Main display" choice
+        // would be rewritten to an explicit id one frame later.
+        _displays = [
+          display(1, ordinal: 1, osName: 'A', isPrimary: true),
+          display(2, ordinal: 2, osName: 'B', x: 2560),
+        ];
+        final controller = await makeController();
+        await controller.setDisplay(null);
+        _calls.clear();
+        await pumpEventQueue();
+
+        expect(controller.selectedDisplayId, isNull);
+        final rewrites = _calls.where(
+          (c) => c.method == 'setDisplay' && (c.arguments as Map)['id'] != null,
+        );
+        expect(rewrites, isEmpty);
+      },
+    );
+
+    test('the flashed list is adopted without a second getDisplays', () async {
+      _displays = [display(1, ordinal: 1, osName: 'A', isPrimary: true)];
+      final controller = await makeController();
+      _identifyReply = [
+        display(1, ordinal: 1, osName: 'A', isPrimary: true),
+        display(9, ordinal: 2, osName: 'Freshly plugged in', x: 2560),
+      ];
+      _calls.clear();
+
+      await controller.identifyDisplays();
+
+      expect(controller.displays.length, 2);
+      expect(controller.displays[1].osName, 'Freshly plugged in');
+      expect(_calls.where((c) => c.method == 'getDisplays'), isEmpty);
+    });
+
+    test('a stale identify reply loses to a newer reload', () async {
+      _displays = [display(1, ordinal: 1, osName: 'A', isPrimary: true)];
+      final controller = await makeController();
+
+      _identifyGate = Completer<void>();
+      _identifyReply = [display(7, ordinal: 1, osName: 'Stale')];
+      final pending = controller.identifyDisplays();
+
+      _displays = [display(5, ordinal: 1, osName: 'Fresh', isPrimary: true)];
+      await controller.reloadDisplays();
+
+      _identifyGate!.complete();
+      await pending;
+
+      expect(controller.displays.single.osName, 'Fresh');
+    });
+
+    test(
+      'a native build without identifyDisplays is harmless and quiet',
+      () async {
+        _displays = [
+          display(1, ordinal: 1, osName: 'A', isPrimary: true),
+          display(2, ordinal: 2, osName: 'B', x: 2560),
+        ];
+        final controller = await makeController();
+        _identifyMissing = true;
+        var notifications = 0;
+        controller.addListener(() => notifications++);
+        _calls.clear();
+
+        await controller.identifyDisplays();
+        expect(controller.displayIdentifySupported, isFalse);
+        expect(notifications, 1);
+
+        final callsAfterFirst = _calls.length;
+        await controller.identifyDisplays();
+        expect(
+          _calls.length,
+          callsAfterFirst,
+          reason: 'an unsupported build must never be asked twice',
+        );
+      },
+    );
+
+    test('a malformed identify reply is dropped, not thrown', () async {
+      // _identify runs unawaited from setDisplay, so a throw here would land
+      // as an unhandled async error rather than a caught PlatformException.
+      _displays = [display(1, ordinal: 1, osName: 'A', isPrimary: true)];
+      final controller = await makeController();
+      _identifyReply = [
+        display(1, ordinal: 1, osName: 'A', isPrimary: true),
+        <String, Object?>{'name': 'no id at all'},
+      ];
+
+      await expectLater(controller.identifyDisplays(), completes);
+      expect(controller.displays.length, 1);
+      expect(controller.displays.single.id, 1);
+    });
+
+    test('the reload fallback prefers the primary display', () async {
+      // The list arrives in desk order, so the first entry is the leftmost
+      // monitor rather than the one the user calls their main screen.
+      _displays = [
+        display(7, ordinal: 1, osName: 'Left'),
+        display(9, ordinal: 2, osName: 'Middle', isPrimary: true, x: 2560),
+      ];
+      final controller = await makeController();
+
+      expect(controller.selectedDisplayId, 9);
+      final pushed = _calls.lastWhere((c) => c.method == 'setDisplay');
+      expect((pushed.arguments as Map)['id'], 9);
+    });
+
+    test('the reload fallback survives an empty display list', () async {
+      _displays = const [];
+      final controller = await makeController();
+
+      await controller.reloadDisplays();
+
+      expect(controller.selectedDisplayId, isNull);
+      expect(controller.displays, isEmpty);
+    });
+
+    test('an identical reload does not notify', () async {
+      _displays = [display(1, ordinal: 1, osName: 'A', isPrimary: true)];
+      final controller = await makeController();
+      var notifications = 0;
+      controller.addListener(() => notifications++);
+
+      await controller.reloadDisplays();
+      await controller.reloadDisplays();
+
+      expect(notifications, 0);
     });
   });
 }

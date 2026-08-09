@@ -779,15 +779,62 @@ void ExpectListOfMapsWithKeys(const RecordedReply& reply,
 TEST(StubShapesTest, DeviceListGettersReturnList) {
   MethodRouter router;
 
-  ExpectListOfMapsWithKeys(
-      Dispatch(router, "getDisplays"), "getDisplays",
-      {"id", "name", "x", "y", "width", "height", "scale"});
+  ExpectListOfMapsWithKeys(Dispatch(router, "getDisplays"), "getDisplays",
+                           {"id", "name", "x", "y", "width", "height", "scale",
+                            "ordinal", "isPrimary", "isAppWindowHost"});
+  // Same shape, deliberately: the picker adopts the identify reply directly.
+  // `osName` is legitimately optional on both and so is not required here.
+  ExpectListOfMapsWithKeys(Dispatch(router, "identifyDisplays"),
+                           "identifyDisplays",
+                           {"id", "name", "x", "y", "width", "height", "scale",
+                            "ordinal", "isPrimary", "isAppWindowHost"});
   ExpectListOfMapsWithKeys(Dispatch(router, "getAppWindows"), "getAppWindows",
                            {"windowId", "appName", "title"});
   ExpectListOfMapsWithKeys(Dispatch(router, "getAudioSources"),
                            "getAudioSources", {"id", "name"});
   ExpectListOfMapsWithKeys(Dispatch(router, "getVideoSources"),
                            "getVideoSources", {"id", "name"});
+}
+
+TEST(StubShapesTest, GetDisplaysNamesAreOrdinalPrefixed) {
+  // Dispatches the REAL handler, so this exercises EnumerateDisplays ->
+  // OrderedIndices -> ComposeDisplayName rather than the pure function alone.
+  // A pure-function suite stays green if someone stops calling the labeller;
+  // this does not. Tolerates a headless runner with zero monitors.
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "getDisplays");
+  ASSERT_TRUE(reply.success_called);
+  const auto* list = std::get_if<flutter::EncodableList>(&reply.success_value);
+  ASSERT_NE(list, nullptr);
+
+  std::vector<std::int64_t> ordinals;
+  for (const auto& entry : *list) {
+    const auto* map = std::get_if<flutter::EncodableMap>(&entry);
+    ASSERT_NE(map, nullptr);
+
+    const auto ordinal_it = map->find(flutter::EncodableValue("ordinal"));
+    ASSERT_NE(ordinal_it, map->end());
+    const auto* ordinal = std::get_if<std::int64_t>(&ordinal_it->second);
+    ASSERT_NE(ordinal, nullptr);
+    EXPECT_GE(*ordinal, 1);
+
+    const auto name_it = map->find(flutter::EncodableValue("name"));
+    ASSERT_NE(name_it, map->end());
+    const auto* name = std::get_if<std::string>(&name_it->second);
+    ASSERT_NE(name, nullptr);
+    EXPECT_FALSE(name->empty());
+
+    const std::string prefix = std::to_string(*ordinal) + ". ";
+    EXPECT_EQ(name->rfind(prefix, 0), 0u)
+        << "'" << *name << "' must be prefixed with its own ordinal";
+
+    ordinals.push_back(*ordinal);
+  }
+
+  // Ordinals are exactly 1..n, contiguous and in order.
+  for (std::size_t i = 0; i < ordinals.size(); ++i) {
+    EXPECT_EQ(ordinals[i], static_cast<std::int64_t>(i) + 1);
+  }
 }
 
 // === Empty-map getters. ====================================================

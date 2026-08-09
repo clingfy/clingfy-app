@@ -47,6 +47,7 @@ const std::vector<std::string>& BridgeContractMethods() {
 
       // Display / window / audio / video discovery + selection.
       "getDisplays",
+      "identifyDisplays",
       "getAppWindows",
       "getAudioSources",
       "getVideoSources",
