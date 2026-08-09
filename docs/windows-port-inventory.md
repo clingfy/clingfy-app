@@ -64,7 +64,7 @@ Layers:
 | Background color | `lib/app/home/post_processing/widgets/post_background_section.dart` | AVVideoComposition bg | Direct port |
 | Background image | `macos/Runner/Capture/Export/LetterboxExporter.swift` | AVAssetReader | Direct port |
 | Audio gain (dB) + Volume (%) | `lib/core/post_processing/settings/post_processing_settings_controller.dart` | AVAudioMix | Direct port |
-| Audio normalization (LUFS) | `lib/app/home/post_processing/widgets/post_audio_section.dart` | AVAudioMix analysis | MF audio analysis + gain |
+| Audio normalization (sample peak, dBFS — not LUFS) | `lib/app/home/post_processing/widgets/post_audio_section.dart` | AVAudioMix analysis | MF audio analysis + gain |
 | Export progress callback | `lib/core/bridges/native_bridge.dart`, `MainFlutterWindow.swift` | `updateExportProgress` | Direct port |
 | Cancel export | `lib/app/home/post_processing/` | `isCancelled` flag polled by the manual render loop | Direct port |
 | Custom output path | `lib/app/home/export/`, `MainFlutterWindow.swift` | NSSavePanel | Common Item Dialog |
