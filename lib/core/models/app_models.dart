@@ -797,11 +797,24 @@ enum OverlayBorder { none, white, black, green, cyan, custom }
 
 enum OverlayPosition { topLeft, topRight, bottomLeft, bottomRight }
 
+/// Dropdown sentinel for the "Main display" row.
+///
+/// `PopupMenuButton` cannot tell a null-valued selection apart from a
+/// dismissal — it routes a null result to `onCanceled` and never to
+/// `onSelected` — so a `PlatformMenuItem(value: null)` row is silently
+/// unclickable. The display picker therefore carries a non-null sentinel and
+/// maps it back to `null` at the callback boundary. -1 is safe: macOS ids are
+/// `CGDirectDisplayID` (UInt32 widened) and Windows ids are a 32-bit FNV-1a
+/// hash widened to int64, so neither platform can ever emit a negative id.
+const int kMainDisplaySentinelId = -1;
+
+String? _nonEmptyString(Object? raw) {
+  final value = raw is String ? raw.trim() : null;
+  return (value == null || value.isEmpty) ? null : value;
+}
+
 class DisplayInfo {
-  final int id; // UInt32 from native
-  final String name;
-  final double x, y, width, height, scale;
-  DisplayInfo({
+  const DisplayInfo({
     required this.id,
     required this.name,
     required this.x,
@@ -809,15 +822,103 @@ class DisplayInfo {
     required this.width,
     required this.height,
     required this.scale,
+    this.ordinal,
+    this.osName,
+    this.isPrimary = false,
+    this.isAppWindowHost = false,
   });
+
+  final int id; // UInt32 from native
+  /// Natively composed `"<ordinal>. <base>"`. This is what the native
+  /// pre-recording bar renders, so it carries the ordinal but no markers.
+  final String name;
+  final double x, y, width, height, scale;
+
+  /// 1-based position in the platform-independent desk ordering. Null only
+  /// when talking to a native binary that predates the identify feature.
+  final int? ordinal;
+
+  /// The real OS monitor name, already stripped of generic placeholders.
+  /// Never the empty string — null instead.
+  final String? osName;
+
+  /// This is the system's primary display.
+  final bool isPrimary;
+
+  /// This display hosts the Clingfy window. macOS only in v1; always false on
+  /// Windows, where a null selection resolves to the primary monitor instead.
+  final bool isAppWindowHost;
+
   factory DisplayInfo.fromMap(Map m) => DisplayInfo(
     id: (m['id'] as num).toInt(),
-    name: m['name'] as String,
-    x: (m['x'] as num).toDouble(),
-    y: (m['y'] as num).toDouble(),
-    width: (m['width'] as num).toDouble(),
-    height: (m['height'] as num).toDouble(),
-    scale: (m['scale'] as num).toDouble(),
+    // Defensive casts: a TypeError thrown here escapes reloadDisplays'
+    // PlatformException-only catch as an unhandled async error.
+    name: (m['name'] as String?) ?? '',
+    x: (m['x'] as num?)?.toDouble() ?? 0,
+    y: (m['y'] as num?)?.toDouble() ?? 0,
+    width: (m['width'] as num?)?.toDouble() ?? 0,
+    height: (m['height'] as num?)?.toDouble() ?? 0,
+    scale: (m['scale'] as num?)?.toDouble() ?? 1,
+    ordinal: (m['ordinal'] as num?)?.toInt(),
+    osName: _nonEmptyString(m['osName']),
+    isPrimary: (m['isPrimary'] as bool?) ?? false,
+    isAppWindowHost: (m['isAppWindowHost'] as bool?) ?? false,
+  );
+
+  /// Null instead of throwing when the payload has no usable `id`.
+  ///
+  /// `fromMap` hard-casts `id` because every other field has a sane default
+  /// and an id does not. Callers on an unawaited path use this instead, since
+  /// a TypeError there escapes as an unhandled async error.
+  static DisplayInfo? tryFromMap(Map<dynamic, dynamic> m) {
+    if (m['id'] is! num) return null;
+    return DisplayInfo.fromMap(m);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DisplayInfo &&
+          other.id == id &&
+          other.name == name &&
+          other.x == x &&
+          other.y == y &&
+          other.width == width &&
+          other.height == height &&
+          other.scale == scale &&
+          other.ordinal == ordinal &&
+          other.osName == osName &&
+          other.isPrimary == isPrimary &&
+          other.isAppWindowHost == isAppWindowHost;
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    name,
+    x,
+    y,
+    width,
+    height,
+    scale,
+    ordinal,
+    osName,
+    isPrimary,
+    isAppWindowHost,
+  );
+}
+
+/// Reply from `identifyDisplays`. [supported] is false only when the native
+/// binary has no handler for the method at all, which permanently hides the
+/// Identify control; a transient failure keeps it supported with a null
+/// [snapshot].
+class IdentifyDisplaysResult {
+  const IdentifyDisplaysResult({required this.supported, this.snapshot});
+
+  final bool supported;
+  final List<dynamic>? snapshot;
+
+  static const IdentifyDisplaysResult unsupported = IdentifyDisplaysResult(
+    supported: false,
   );
 }
 
