@@ -38,13 +38,13 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 |---|---|---|---|
 | System audio capture | Record what plays through the speakers. | ✅ | ✅ (48 kHz devices) |
 | Microphone capture | Record the mic alongside the screen. | ✅ | ✅ |
-| Microphone gain | Boost the mic up to +24 dB. Applied at export and previewed live (there is no capture-time input gain). | ✅ | 🚧 (export only) |
+| Microphone gain | Boost the mic up to +24 dB. Applied at export and previewed live (there is no capture-time input gain). | ✅ | 🚧 (export; audible in the preview once the timeline has a cut) |
 | Live mic level meter | dBFS meter while setting up. | ✅ | 🚧 |
 | Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | — |
 | Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
-| Loudness normalization | One-click normalize to a loudness target at export. | ✅ | — |
-| Live audio mix preview | Hear gain/mix changes while editing. | ✅ | ✅ |
-| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | — (engine not ported yet) |
+| Loudness normalization | One-click scale at export so the loudest sample lands on a target you pick (−24 to −6 dBFS). A sample-peak match, not LUFS. Export only — never previewed. Mic only on recordings with a separate mic track. | ✅ | ✅ |
+| Live audio mix preview | Hear volume and gain changes while editing; voice cleanup too, on recordings with a separate mic track. Loudness normalization is never previewed on either platform. | ✅ | 🚧 (volume only until a real cut or trim) |
+| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | 🚧 (export baked; live preview only after a cut) |
 
 ## Camera overlay
 
@@ -132,9 +132,6 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 - **Auto-subtitles (macOS)** — on-device transcription via WhisperKit, a
   cue-level caption editor, burned-in captions and `.srt` / `.vtt` sidecars.
   macOS only; Windows reports the feature as unavailable with a reason.
-- **Windows Voice Cleanup** — the on-device RNNoise engine is built into the
-  Windows target; wiring it into the Windows export/preview is the remaining
-  work.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 
