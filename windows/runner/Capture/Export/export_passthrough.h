@@ -185,6 +185,8 @@ struct PassthroughInput {
   int camera_outro_duration_ms = 0;
   std::string camera_zoom_behavior;
   double camera_zoom_scale_multiplier = 0.0;
+  std::string camera_zoom_emphasis_preset;
+  double camera_zoom_emphasis_strength = 0.0;
 
   // Editing port (color): the `colorGrade` map from the `exportVideo` args,
   // parsed by Bridge/Routers/color_grade_args. A non-identity grade forces

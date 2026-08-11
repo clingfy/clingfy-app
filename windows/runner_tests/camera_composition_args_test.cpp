@@ -14,6 +14,8 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+
+#include "Capture/Camera/camera_export_layout.h"
 #include <string>
 
 namespace clingfy::bridge {
@@ -236,6 +238,38 @@ TEST(ApplyCameraCompositionToExport, CarriesTheZoomBehaviourFields) {
   ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
   EXPECT_EQ(input.camera_zoom_behavior, "scaleWithScreenZoom");
   EXPECT_DOUBLE_EQ(input.camera_zoom_scale_multiplier, 0.6);
+}
+
+TEST(ReadCameraComposition, ReadsTheZoomEmphasisKeys) {
+  auto args = FullArgs();
+  args[Key("cameraZoomEmphasisPreset")] = EncodableValue(std::string("pulse"));
+  args[Key("cameraZoomEmphasisStrength")] = EncodableValue(0.15);
+  const auto c = ReadCameraComposition(args);
+  EXPECT_EQ(c.zoom_emphasis_preset, "pulse");
+  EXPECT_DOUBLE_EQ(c.zoom_emphasis_strength, 0.15);
+}
+
+TEST(ReadCameraComposition, AbsentZoomEmphasisRestsTheBubble) {
+  // The default has to be "no throb", not the Dart seed's 0.10 strength: a
+  // legacy payload that predates the feature must render exactly as it did,
+  // and it must render the same way on both legs.
+  const auto c = ReadCameraComposition(FullArgs());
+  EXPECT_TRUE(c.zoom_emphasis_preset.empty());
+  EXPECT_DOUBLE_EQ(c.zoom_emphasis_strength, 0.0);
+  EXPECT_EQ(capture::ParseCameraZoomEmphasisKind(c.zoom_emphasis_preset),
+            capture::CameraZoomEmphasisKind::kNone);
+}
+
+TEST(ApplyCameraCompositionToExport, CarriesTheZoomEmphasisFields) {
+  // Same guard as CarriesEveryFieldToTheExportRequest, for the pair that would
+  // otherwise pulse in the editor and not in the exported file.
+  auto args = FullArgs();
+  args[Key("cameraZoomEmphasisPreset")] = EncodableValue(std::string("pulse"));
+  args[Key("cameraZoomEmphasisStrength")] = EncodableValue(0.18);
+  capture::export_::PassthroughInput input;
+  ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
+  EXPECT_EQ(input.camera_zoom_emphasis_preset, "pulse");
+  EXPECT_DOUBLE_EQ(input.camera_zoom_emphasis_strength, 0.18);
 }
 
 TEST(ApplyCameraCompositionToExport, AbsentColoursStayNulloptNotZero) {

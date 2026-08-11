@@ -206,13 +206,18 @@ void CameraExportRenderer::SeekTo(std::int64_t frame_ms) {
 void CameraExportRenderer::Draw(ID2D1DeviceContext* ctx,
                                 std::int64_t frame_ms,
                                 std::int64_t total_duration_ms,
-                                double screen_zoom) {
+                                double screen_zoom, bool zoom_in_segment,
+                                std::int64_t zoom_segment_local_ms) {
   if (!ready_ || !has_held_frame_) {
     return;
   }
   CameraAnimationParams params = anim_params_;
   params.zoom_scale = ResolveCameraZoomScale(
       zoom_behavior_, zoom_scale_multiplier_, screen_zoom, layout_preset_);
+  params.zoom_in_segment = zoom_in_segment;
+  params.zoom_local_seconds =
+      static_cast<double>(std::max<std::int64_t>(0, zoom_segment_local_ms)) /
+      1000.0;
   const CameraAnimationOutput a =
       ResolveCameraAnimation(params, frame_ms, total_duration_ms, bubble_,
                              canvas_w_, canvas_h_, slide_edge_);

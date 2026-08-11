@@ -632,6 +632,12 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       cam_anim.outro = ParseCameraOutroKind(request.camera_outro_preset);
       cam_anim.intro_duration_ms = request.camera_intro_duration_ms;
       cam_anim.outro_duration_ms = request.camera_outro_duration_ms;
+      // Loop-invariant half of the pulse; the per-frame segment state rides on
+      // the Draw call below, off the same ZoomExportController frame that
+      // drives the screen zoom.
+      cam_anim.emphasis =
+          ParseCameraZoomEmphasisKind(request.camera_zoom_emphasis_preset);
+      cam_anim.emphasis_strength = request.camera_zoom_emphasis_strength;
       const CameraSlideEdge cam_edge = ResolveCameraSlideEdge(
           request.camera_layout_preset, request.camera_has_center, bubble,
           static_cast<double>(canvas.width),
@@ -1398,8 +1404,13 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         // `zf.zoom` is the smoothed screen zoom for THIS frame. It only scales
         // the bubble; the camera is still drawn in canvas space, outside the
         // zoom transform the video and cursor share.
+        // `zf.in_segment` / `zf.segment_local_ms` come from the same resolved
+        // segment `Advance` already located for the screen zoom — so the pulse
+        // and the zoom that owns it can never disagree about when a segment
+        // starts. Note this is a SOURCE-derived clock while camera_clock_ms is
+        // edited: deliberate, and matched exactly on the preview leg.
         camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms,
-                              zf.zoom);
+                              zf.zoom, zf.in_segment, zf.segment_local_ms);
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);

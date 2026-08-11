@@ -3,6 +3,7 @@
 #include <mfapi.h>
 #include <mferror.h>
 
+#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -277,6 +278,9 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
           clingfy::capture::ParseCameraOutroKind(comp.outro_preset);
       anim_params_.intro_duration_ms = comp.intro_duration_ms;
       anim_params_.outro_duration_ms = comp.outro_duration_ms;
+      anim_params_.emphasis = clingfy::capture::ParseCameraZoomEmphasisKind(
+          comp.zoom_emphasis_preset);
+      anim_params_.emphasis_strength = comp.zoom_emphasis_strength;
       bubble_ = bubble;
       canvas_w_ = static_cast<double>(canvas_w);
       canvas_h_ = static_cast<double>(canvas_h);
@@ -315,12 +319,17 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
 void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx,
                                  std::int64_t frame_ms,
                                  std::int64_t total_duration_ms,
-                                 double screen_zoom) {
+                                 double screen_zoom, bool zoom_in_segment,
+                                 std::int64_t zoom_segment_local_ms) {
   if (!composition_visible_ || !painter_ready_ || !has_held_frame_) {
     return;
   }
   anim_params_.zoom_scale = clingfy::capture::ResolveCameraZoomScale(
       zoom_behavior_, zoom_scale_multiplier_, screen_zoom, layout_preset_);
+  anim_params_.zoom_in_segment = zoom_in_segment;
+  anim_params_.zoom_local_seconds =
+      static_cast<double>(std::max<std::int64_t>(0, zoom_segment_local_ms)) /
+      1000.0;
   // Same nine lines as CameraExportRenderer::Draw, on the same shared painter.
   // ResolveCameraAnimation returns identity when no preset is set or the
   // duration is not known yet, and the painter's Draw falls through to the
