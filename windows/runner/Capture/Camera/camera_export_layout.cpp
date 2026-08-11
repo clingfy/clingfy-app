@@ -189,6 +189,27 @@ CameraOutroKind ParseCameraOutroKind(const std::string& name) {
   return CameraOutroKind::kNone;
 }
 
+CameraZoomEmphasisKind ParseCameraZoomEmphasisKind(const std::string& name) {
+  if (name == "pulse") return CameraZoomEmphasisKind::kPulse;
+  return CameraZoomEmphasisKind::kNone;
+}
+
+double ResolveCameraPulseScale(CameraZoomEmphasisKind preset, double strength,
+                               bool in_segment, double local_seconds) {
+  if (preset != CameraZoomEmphasisKind::kPulse || !in_segment) {
+    return 1.0;
+  }
+  // A NaN strength would otherwise propagate through the scale into the render
+  // transform and blank the bubble; a NaN local time would do the same via cos.
+  const double s =
+      std::isfinite(strength) ? Clamp(strength, 0.0, 0.20) : 0.0;
+  const double t =
+      std::isfinite(local_seconds) ? std::max(0.0, local_seconds) : 0.0;
+  constexpr double kTwoPi = 6.283185307179586;
+  const double phase = kTwoPi * kCameraPulseFrequencyHz * t;
+  return 1.0 + (s * 0.5 * (1.0 - std::cos(phase)));
+}
+
 CameraSlideEdge ResolveCameraSlideEdge(const std::string& layout_preset,
                                        bool has_center,
                                        const CameraBubbleRect& bubble,
@@ -294,6 +315,16 @@ CameraAnimationOutput ResolveCameraAnimation(const CameraAnimationParams& params
         EaseInCubic(OutroProgress(t, total_duration_ms, params.outro_duration_ms));
     scale *= Lerp(1.0, 0.90, eased);
   }
+  // The pulse is the fourth factor in the same product (macOS:
+  // `additionalScale = introScale * outroScale * pulseScale`). It rides on its
+  // OWN clock — seconds since the active zoom segment started — not on `t`,
+  // which is the clip's intro/outro clock. Under clips those two are different
+  // time bases on purpose: `t` is EDITED time so an intro fires where the user
+  // looks, while the segment clock is SOURCE-derived so the throb stays in
+  // phase with the zoom that owns it, identically on both legs.
+  scale *= ResolveCameraPulseScale(params.emphasis, params.emphasis_strength,
+                                   params.zoom_in_segment,
+                                   params.zoom_local_seconds);
   out.scale = scale;
 
   // --- Canvas clamp, BEFORE any slide translation. ---

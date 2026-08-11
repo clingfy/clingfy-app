@@ -1563,9 +1563,14 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // The export splits the two the same way — see "camera_clock_ms" in
   // export_pipeline.cpp — because on a trimmed project the source origin may sit
   // inside a cut, so a source-keyed intro would fire where the user never looks.
+  // `impl->zoom` was just refreshed by ComposeFrame above, so the segment state
+  // is this frame's — the same [start_ms, end_ms) membership the export reads,
+  // which is what keeps the camera pulse in phase between the two surfaces.
   if (impl->camera_renderer) {
     impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
-                                emit_dur_ms, impl->zoom.current_zoom);
+                                emit_dur_ms, impl->zoom.current_zoom,
+                                impl->zoom.segment_active,
+                                impl->zoom.segment_local_ms);
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();

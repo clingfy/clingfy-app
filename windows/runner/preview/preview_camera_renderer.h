@@ -82,6 +82,11 @@ struct PreviewCameraComposition {
   // matching the export parser's fallbacks.
   std::string zoom_behavior;
   double zoom_scale_multiplier = 0.0;
+  // Zoom emphasis (the pulse). Empty / unknown preset = "none", so an absent
+  // key leaves the bubble resting — the same soft-fail the animation presets
+  // take. Strength is the raw wire value; ResolveCameraPulseScale clamps it.
+  std::string zoom_emphasis_preset;
+  double zoom_emphasis_strength = 0.0;
 };
 
 // Ratio that converts an EXPORT-canvas length into a length on the preview
@@ -161,8 +166,16 @@ class PreviewCameraRenderer {
   // `screen_zoom` is the preview compositor's smoothed smart-zoom factor for
   // this frame; it scales the bubble (scale-with-screen-zoom) without moving
   // it under the zoom transform. Pass 1.0 when not zooming.
+  // `zoom_in_segment` / `zoom_segment_local_ms` are the zoom-SEGMENT state for
+  // this frame, from the compositor's ZoomState — which since the shared-segment
+  // slice resolves through the SAME ZoomSegmentStateAt over the SAME builder's
+  // segments the export uses. That identity is what lets the pulse be in phase
+  // between the editor and the exported file; see
+  // CameraAnimationParams::zoom_local_seconds for why phase is the whole game.
+  // Not defaulted, for the reason given on CameraExportRenderer::Draw.
   void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
-            std::int64_t total_duration_ms, double screen_zoom);
+            std::int64_t total_duration_ms, double screen_zoom,
+            bool zoom_in_segment, std::int64_t zoom_segment_local_ms);
 
  private:
   PreviewCameraRenderer() = default;

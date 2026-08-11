@@ -215,6 +215,11 @@ struct RenderRequest {
   // fixed, so an old payload renders exactly as before.
   std::string camera_zoom_behavior;
   double camera_zoom_scale_multiplier = 0.0;
+  // Zoom emphasis: the CameraZoomEmphasisPreset enum name ("none"/"pulse") and
+  // the 0..0.20 throb amplitude. Default "" is "none", so an old payload
+  // renders exactly as before.
+  std::string camera_zoom_emphasis_preset;
+  double camera_zoom_emphasis_strength = 0.0;
 };
 
 struct RenderResult {

@@ -92,6 +92,9 @@ preview::PreviewCameraComposition ReadCameraComposition(
   // request parser, so a payload missing these renders identically on both.
   c.zoom_behavior = StringOrEmpty(args, "cameraZoomBehavior");
   c.zoom_scale_multiplier = NumberOr(args, "cameraZoomScaleMultiplier", 0.0);
+  c.zoom_emphasis_preset = StringOrEmpty(args, "cameraZoomEmphasisPreset");
+  c.zoom_emphasis_strength =
+      NumberOr(args, "cameraZoomEmphasisStrength", 0.0);
   if (const auto it =
           args.find(flutter::EncodableValue("cameraNormalizedCenter"));
       it != args.end()) {
@@ -139,6 +142,8 @@ void ApplyCameraCompositionToExport(
   input.camera_outro_duration_ms = c.outro_duration_ms;
   input.camera_zoom_behavior = c.zoom_behavior;
   input.camera_zoom_scale_multiplier = c.zoom_scale_multiplier;
+  input.camera_zoom_emphasis_preset = c.zoom_emphasis_preset;
+  input.camera_zoom_emphasis_strength = c.zoom_emphasis_strength;
 }
 
 }  // namespace clingfy::bridge

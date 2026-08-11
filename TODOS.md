@@ -141,18 +141,37 @@ it with macOS in scope rather than diverging one platform at a time.
 - **Note `CameraBubblePainter::Style` lives in a header that pulls in `d2d1_1.h`** — move it down into `camera_export_layout.h` with a painter-side alias, or the "pure" plan drags D2D into every test translation unit.
 - **Effort:** human ~1 day / CC ~1h.
 
-### Camera zoom emphasis (the pulse) is not ported — deferred, with the reason
+### ~~Camera zoom emphasis (the pulse) is not ported~~ — DONE
 
-- **What:** `cameraZoomEmphasisPreset` (`none` / `pulse`) + `cameraZoomEmphasisStrength`. The editor controls exist and round-trip to disk on Windows; nothing renders them. macOS ships it. Scale-with-zoom, the other half of what used to be one features.md row, IS ported — these are separate features and the row is now split.
-- **What it actually is, which the name hides:** not a one-shot bump on the zoom edge. macOS runs `1 + strength*0.5*(1 - cos(2π · 2Hz · localTime))` for the WHOLE time a zoom segment is active — a continuous 2 Hz throb, amplitude `strength` (clamped 0…0.20), starting at exactly 1.0 and snapping back to 1.0 when the segment ends. Roughly three full cycles across a typical segment. Default is OFF (`none`).
-- **Why it is deferred: it is a zoom-subsystem job, not a camera job.** The pulse needs a zoom-local clock — `(isActive, localTime since this segment started)`. On the EXPORT that is nearly free: `ZoomExportController::Advance` already locates the active `ResolvedSegment` and that struct carries `start_ms`, so it is ~6 lines onto `ZoomExportController::Frame`. On the PREVIEW there is no onset at any distance: the preview zoom is a different algorithm entirely — click-hold with a hardcoded activation window, no segments, no hysteresis, no gap-merge, no minimum-segment rule. Shipping the pulse means building real segments in the preview and reconciling them with its own activation rule.
-- **The cheap shortcut is actively wrong.** Deriving the preview's local time from `zoom.last_click_ts_us` looks obvious and produces a visible defect: the export's segment starts ~200 ms after the click (hysteresis), and at 2 Hz a 200 ms offset is ~144° of phase — the editor would show the bubble growing at the exact timestamp where the export shows it shrinking. Worse than not shipping it.
-- **Two more decisions with no macOS answer to copy:** (1) `zf.active` on Windows means "smoothed zoom > 1+eps", which stays true through the whole ease-out tail after the segment's `end_ms` — a literal port either cuts the throb dead mid-cycle at a hard scale discontinuity, or throbs with no owning segment. (2) Zoom segments are SOURCE-keyed while the camera animation clock is EDITED-keyed, so a cut landing inside a zoom segment makes the pulse phase jump. macOS's segment model differs enough that neither has a copyable answer.
-- **The composition is already correct for it.** `CameraAnimationParams::zoom_scale` and the intro/outro scale already compose multiplicatively about the same bubble centre, and the canvas clamp runs before the slide translation — a pulse scale would drop into the same product with no restructuring. That part is done.
-- **Start at:** `windows/runner/Capture/Zoom/zoom_export_controller.{h,cpp}` (add `segment_active` / `segment_start_ms` to `Frame`), then the preview's segment problem at `windows/runner/preview/preview_compositor.cpp` (the click-hold block) — note `getZoomSegments` proves segments CAN be built from the cursor sidecar the preview already loads, and `previewSetZoomSegments` is a registered no-op.
-- **Effort:** human ~1 week / CC ~1 day, nearly all of it the preview zoom convergence, plus on-device phase comparison that CI cannot do.
+Ported. `cameraZoomEmphasisPreset` (`none`/`pulse`) + `cameraZoomEmphasisStrength`
+now render on BOTH legs, running the macOS formula
+`1 + strength*0.5*(1 - cos(2 pi * 2Hz * localTime))` for as long as a zoom
+segment is active — a continuous throb, not a one-shot bump on the zoom edge.
+Pure + tested as `ResolveCameraPulseScale`; it drops into the same multiplicative
+`scale` product as the zoom and intro/outro scales, before the canvas clamp.
 
+What actually unblocked it was the slice before this one, not this code: the
+preview and the export now resolve segment membership through ONE
+`ZoomSegmentStateAt` over ONE builder's segments, so both legs measure
+`localTime` from the same backdated segment start. The deferral note below was
+right that a per-click clock would have shipped a visible defect — at 2 Hz a
+200 ms offset is ~144 degrees of phase — and that failure is now pinned by
+`CameraPulseTest.PreviewAndExportAgreeOnPhaseForTheSameSegmentTime`, which
+asserts the two clocks move the bubble in OPPOSITE directions at the same
+instant.
 
+The two "no macOS answer to copy" decisions were resolved as: (1) the pulse keys
+off half-open segment MEMBERSHIP, never `zf.active` (which stays true through the
+whole ease-out tail), so the throb ends exactly at `end_ms` on both legs; (2) the
+pulse clock stays SOURCE-derived while the camera's intro/outro clock stays
+EDITED — deliberately split, and split identically on both legs, so a cut inside
+a zoom segment jumps the phase on the preview and the exported file in the same
+way rather than desyncing them.
+
+Residual, deliberately not closed here: the phase agreement is proven by
+construction and by headless tests, but an on-device eyeball comparing an
+exported file against the editor at the same timestamp has not been done — CI
+cannot do it. Fold it into the camera on-device QA pass.
 
 ### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)
 

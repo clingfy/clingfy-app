@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+#include <limits>
 #include <vector>
 
 namespace clingfy::capture {
@@ -691,6 +693,140 @@ TEST(CameraAnimationTest, TheClampDoesNotCancelTheSlideOutro) {
   p.zoom_scale = 3.0;  // the same 3x that clamps the resting centre by -80
   const auto zoomed = Resolve(p, kTotalMs, CameraSlideEdge::kRight);
   EXPECT_NEAR(zoomed.translate_x, plain.translate_x - 80.0, 0.001);
+}
+
+// --- zoom emphasis (the pulse) ----------------------------------------------
+
+TEST(CameraPulseTest, RestsAtOneOutsideASegmentAndWhenTheresNoPreset) {
+  // Both guards matter. The preset-off case is the default every existing
+  // recording has; the outside-a-segment case is most of a pulsing clip's
+  // runtime, and it is what keeps the bubble at its authored size between
+  // zooms instead of parked mid-throb.
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kNone, 0.2, true, 0.13),
+      1.0);
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 0.2, false, 0.13),
+      1.0);
+}
+
+TEST(CameraPulseTest, StartsAtExactlyOneAndPeaksAtOnePlusStrength) {
+  // The segment start MUST be scale 1.0, not "close to it": a segment that
+  // opened at 1.1 would snap the bubble on every zoom onset, which is the
+  // visible artifact the cosine form exists to avoid (cos 0 = 1 → the
+  // 1 - cos term is exactly 0).
+  EXPECT_DOUBLE_EQ(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 0.20, true, 0.0),
+      1.0);
+  // 2 Hz → a full cycle is 0.5 s, so the peak is at the quarter-cycle 0.25 s
+  // and the trough back at 1.0 on the half-cycle 0.5 s.
+  EXPECT_NEAR(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 0.20, true, 0.25),
+      1.20, 1e-9);
+  EXPECT_NEAR(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 0.20, true, 0.5),
+      1.0, 1e-9);
+  // Amplitude IS the strength — never more, so the bubble can't grow past what
+  // the slider promises.
+  EXPECT_NEAR(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 0.10, true, 0.25),
+      1.10, 1e-9);
+}
+
+TEST(CameraPulseTest, StrengthIsClampedAndNonFiniteInputsCannotBlankTheBubble) {
+  // A strength above the band is clamped rather than honoured — macOS clamps to
+  // the same [0, 0.20] at its parser, so an out-of-range wire value must not
+  // make one platform throb harder than the other.
+  EXPECT_NEAR(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 5.0, true, 0.25),
+      1.20, 1e-9);
+  EXPECT_NEAR(
+      ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, -1.0, true, 0.25),
+      1.0, 1e-9);
+  // NaN would otherwise reach the render transform and blank the bubble
+  // entirely; a negative local time would read as a phase from the future.
+  const double nan_v = std::numeric_limits<double>::quiet_NaN();
+  EXPECT_DOUBLE_EQ(ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse,
+                                           nan_v, true, 0.25),
+                   1.0);
+  EXPECT_TRUE(std::isfinite(ResolveCameraPulseScale(
+      CameraZoomEmphasisKind::kPulse, 0.2, true, nan_v)));
+  EXPECT_DOUBLE_EQ(ResolveCameraPulseScale(CameraZoomEmphasisKind::kPulse, 0.2,
+                                           true, -3.0),
+                   1.0);
+}
+
+TEST(CameraPulseTest, TheEmphasisPresetAloneEnablesTheAnimatedDrawPath) {
+  // The gap that would have made this whole feature a silent no-op on BOTH
+  // legs: CameraHasPresentationEffects short-circuits ResolveCameraAnimation to
+  // identity, so a pulse-only composition has to open that gate by itself —
+  // with no intro, no outro and no zoom scale in play.
+  CameraAnimationParams p;
+  EXPECT_FALSE(CameraHasPresentationEffects(p));
+  p.emphasis = CameraZoomEmphasisKind::kPulse;
+  EXPECT_TRUE(CameraHasPresentationEffects(p));
+  // And it must stay loop-invariant: whether a segment happens to be active on
+  // this frame cannot change which draw path the frame takes.
+  p.zoom_in_segment = false;
+  EXPECT_TRUE(CameraHasPresentationEffects(p));
+}
+
+TEST(CameraPulseTest, ComposesIntoTheScaleAndIsClampedBackOnCanvas) {
+  // The pulse is the fourth factor in the same product as zoom/intro/outro...
+  CameraAnimationParams p;
+  p.emphasis = CameraZoomEmphasisKind::kPulse;
+  p.emphasis_strength = 0.20;
+  p.zoom_in_segment = true;
+  p.zoom_local_seconds = 0.25;  // peak
+  p.zoom_scale = 2.0;
+  const auto peak = Resolve(p, 0);
+  EXPECT_NEAR(peak.scale, 2.0 * 1.20, 1e-9);
+
+  // ...and it runs BEFORE the canvas clamp, so a throb that pushes a corner
+  // bubble off-canvas gets nudged back in rather than being drawn half outside.
+  // Same bubble at the same total scale must produce the same translation
+  // whether the 2.4x came from the zoom alone or from zoom times pulse.
+  CameraAnimationParams equivalent;
+  equivalent.zoom_scale = 2.0 * 1.20;
+  const auto same = Resolve(equivalent, 0);
+  EXPECT_NEAR(peak.translate_x, same.translate_x, 1e-9);
+  EXPECT_NEAR(peak.translate_y, same.translate_y, 1e-9);
+}
+
+TEST(CameraPulseTest, PreviewAndExportAgreeOnPhaseForTheSameSegmentTime) {
+  // THE property the whole slice exists for. Both legs now feed
+  // ResolveCameraAnimation the same (in_segment, local_ms) pair resolved by the
+  // same ZoomSegmentStateAt, so for a given moment inside a segment they must
+  // land on the same scale. The failure this pins is a per-leg clock: at 2 Hz,
+  // the 200 ms hysteresis offset the export's segment start carries is ~144
+  // degrees of phase — the editor would show the bubble growing exactly where
+  // the exported file shows it shrinking.
+  CameraAnimationParams p;
+  p.emphasis = CameraZoomEmphasisKind::kPulse;
+  p.emphasis_strength = 0.20;
+  p.zoom_in_segment = true;
+
+  // At 2 Hz one cycle is 0.5 s. Take a moment where the shared clock is RISING
+  // (t = 0.125 s is the mid-point of the upswing) and read the same instant on
+  // a per-click clock, which runs 200 ms ahead because the click precedes the
+  // segment's backdated start. 0.325 s sits past the peak, on the downswing.
+  const double kDt = 0.001;
+  const auto scale_at = [&](double seconds) {
+    CameraAnimationParams q = p;
+    q.zoom_local_seconds = seconds;
+    return Resolve(q, 0).scale;
+  };
+
+  const double shared_slope = scale_at(0.125 + kDt) - scale_at(0.125);
+  const double per_click_slope = scale_at(0.325 + kDt) - scale_at(0.325);
+
+  EXPECT_GT(shared_slope, 0.0);      // the shared clock is growing the bubble
+  EXPECT_LT(per_click_slope, 0.0);   // the per-click clock is shrinking it
+  // Stated as the user-visible defect: the two clocks move the bubble in
+  // OPPOSITE directions at the same instant. Not a subtle drift — a 200 ms
+  // offset is 144 degrees of phase, which is why the pulse could not ship until
+  // both legs resolved segments the same way.
+  EXPECT_LT(shared_slope * per_click_slope, 0.0);
 }
 
 }  // namespace clingfy::capture

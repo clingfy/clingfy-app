@@ -119,11 +119,17 @@ enum class CameraIntroKind { kNone, kFade, kPop, kSlide };
 // translates out toward the nearest offscreen edge.
 enum class CameraOutroKind { kNone, kFade, kShrink, kSlide };
 
-// Map the Dart enum names ("none"/"fade"/"pop"/"slide", "shrink"). Unknown or
-// empty → kNone, so a malformed preset soft-fails to a static bubble (never an
-// export error).
+// Zoom emphasis presets. `pulse` throbs the bubble for as long as a zoom
+// SEGMENT is active — not a one-shot bump on the zoom edge, which is what the
+// name suggests and what a reader assumes. See ResolveCameraPulseScale.
+enum class CameraZoomEmphasisKind { kNone, kPulse };
+
+// Map the Dart enum names ("none"/"fade"/"pop"/"slide", "shrink", "pulse").
+// Unknown or empty → kNone, so a malformed preset soft-fails to a static bubble
+// (never an export error).
 CameraIntroKind ParseCameraIntroKind(const std::string& name);
 CameraOutroKind ParseCameraOutroKind(const std::string& name);
+CameraZoomEmphasisKind ParseCameraZoomEmphasisKind(const std::string& name);
 
 // The screen edge a `slide` preset enters from / exits toward, by VISUAL meaning
 // (kTop = top of the screen). Resolved in D2D y-DOWN space.
@@ -180,14 +186,56 @@ struct CameraAnimationParams {
   // `additionalScale = introScale * outroScale * pulseScale` on top of the
   // zoom-scaled frame.
   double zoom_scale = 1.0;
+
+  // --- Zoom emphasis (the pulse). ---
+  // Loop-invariant: preset + strength come from the composition and never
+  // change per frame.
+  CameraZoomEmphasisKind emphasis = CameraZoomEmphasisKind::kNone;
+  double emphasis_strength = 0.0;
+  // Per-frame zoom-SEGMENT state, and the reason this feature waited for the
+  // shared segment builder. `zoom_in_segment` is NOT "the smoothed zoom is
+  // above 1" — that stays true through the whole ease-out tail after a segment
+  // ends, which would keep the throb running with no owning segment and then
+  // cut it dead mid-cycle. It is membership in a half-open [start_ms, end_ms)
+  // segment, which both legs now resolve through ZoomSegmentStateAt.
+  //
+  // `zoom_local_seconds` is measured from the SEGMENT's start, not from the
+  // click and not from the frame clock. At 2 Hz a 200 ms disagreement is ~144
+  // degrees of phase, so a per-click or per-leg clock would show the bubble
+  // growing in the editor exactly where the export shows it shrinking.
+  bool zoom_in_segment = false;
+  double zoom_local_seconds = 0.0;
 };
 
+// The pulse's throb frequency. macOS parity (`pulseFrequencyHz`).
+inline constexpr double kCameraPulseFrequencyHz = 2.0;
+
+// The pulse's scale multiplier for one frame. Pure + unit-tested.
+//
+// Returns exactly 1.0 unless the preset is `pulse` AND a segment is active, so
+// the bubble rests at its authored size between zooms. Inside a segment it runs
+// `1 + strength*0.5*(1 - cos(2π·2Hz·t))` — a continuous throb of amplitude
+// `strength`, NOT a one-shot bump. It starts at exactly 1.0 (cos 0 = 1) and
+// returns to 1.0 at the end of every cycle, so the snap back when a segment
+// ends is only as large as wherever the cycle happened to be.
+//
+// `strength` is clamped to [0, 0.20] and a non-finite value reads as 0 (i.e.
+// no throb) rather than propagating NaN into the render transform. macOS
+// clamps to the same band at its parser.
+double ResolveCameraPulseScale(CameraZoomEmphasisKind preset, double strength,
+                               bool in_segment, double local_seconds);
+
 // Whether anything at all perturbs the resting bubble this frame — an
-// intro/outro preset, or a live zoom scale. Lets the renderer skip the animated
-// draw path entirely and stay byte-identical to the static bubble.
+// intro/outro preset, a live zoom scale, or the pulse. Lets the renderer skip
+// the animated draw path entirely and stay byte-identical to the static bubble.
+//
+// The emphasis term is deliberately preset-only, NOT `&& zoom_in_segment`: it
+// must stay loop-invariant so it cannot flip mid-clip and change which draw
+// path a frame takes. macOS gates the same way (`hasPresentationEffects`).
 inline bool CameraHasPresentationEffects(const CameraAnimationParams& p) {
   return p.intro != CameraIntroKind::kNone ||
-         p.outro != CameraOutroKind::kNone || p.zoom_scale != 1.0;
+         p.outro != CameraOutroKind::kNone || p.zoom_scale != 1.0 ||
+         p.emphasis != CameraZoomEmphasisKind::kNone;
 }
 
 // Per-frame presentation result. `opacity` multiplies the styled-bubble alpha;

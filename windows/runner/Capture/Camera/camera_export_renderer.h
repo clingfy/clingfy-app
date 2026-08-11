@@ -68,8 +68,20 @@ class CameraExportRenderer {
   // bubble only as a scalar that grows it (scale-with-screen-zoom); the bubble
   // is still drawn in canvas space, deliberately outside the zoom transform, so
   // it never pans with the magnified screen. Pass 1.0 when not zooming.
+  //
+  // `zoom_in_segment` / `zoom_segment_local_ms` are the zoom-SEGMENT state for
+  // this frame, straight off ZoomExportController::Frame. They drive the pulse
+  // and nothing else. Per-frame (not on Prepare) because they change every
+  // frame, and separate from `screen_zoom` because segment membership is not
+  // the same predicate as "the smoothed zoom is above 1" — see
+  // CameraAnimationParams::zoom_in_segment.
+  //
+  // Deliberately NOT defaulted. A default would let a new call site compile
+  // while silently never pulsing — the same shape as the intro/outro keys that
+  // shipped parsed on one path only. Make the next caller state its answer.
   void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
-            std::int64_t total_duration_ms, double screen_zoom);
+            std::int64_t total_duration_ms, double screen_zoom,
+            bool zoom_in_segment, std::int64_t zoom_segment_local_ms);
 
   bool ready() const { return ready_; }
 
