@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:clingfy/core/captions/caption_rasterizer.dart';
 
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
@@ -22,6 +23,37 @@ import 'package:clingfy/core/timeline/model/edit_track.dart';
 /// from the same cue list, once native reports where the video actually landed.
 /// Exposes a clip editor the controller will read, so an export can be run
 /// against a genuinely edited timeline.
+/// A rasterizer with one cue's PNG encode coming back empty.
+///
+/// The real failure is `ui.Image.toByteData` returning null — the rasterizer
+/// logs it, skips that cue and carries on so the rest still burn in. It cannot
+/// be provoked through the genuine rasterizer from a test, and without a stand-in
+/// the branch that notices the shortfall is untestable: a reviewer deleted it
+/// with the whole suite still green, which is how "Export successful" gets
+/// printed over a video missing a subtitle the user wrote.
+class _OneCueFailsToEncodeRasterizer extends CaptionRasterizer {
+  const _OneCueFailsToEncodeRasterizer();
+
+  @override
+  Future<CaptionBitmapManifest> rasterize({
+    required List<Caption> captions,
+    required Size videoSize,
+    required Directory directory,
+  }) async {
+    final full = await super.rasterize(
+      captions: captions,
+      videoSize: videoSize,
+      directory: directory,
+    );
+    // Drops the FIRST entry, so what comes back is a partial manifest of the
+    // shape a real encode failure leaves: some cues drawn, one silently absent.
+    return CaptionBitmapManifest(
+      directoryPath: full.directoryPath,
+      entries: full.entries.skip(1).toList(),
+    );
+  }
+}
+
 class _EditedPlayer extends PlayerController {
   _EditedPlayer({required super.nativeBridge, this.editor});
 
@@ -37,6 +69,12 @@ void main() {
   late Directory tempDir;
   late List<MethodCall> calls;
   late String exportedPath;
+
+  /// What the next `generateCaptions` answers with. A field rather than a
+  /// closed-over parameter so a test can re-generate with a DIFFERENT
+  /// transcript, which is the situation that used to delete a running export's
+  /// bitmaps.
+  late List<Map<String, Object?>> transcriptReply;
 
   setUp(() async {
     await installCommonNativeMocks();
@@ -60,9 +98,15 @@ void main() {
     Object? exportSizeReturns = const {'width': 1920, 'height': 1080},
     List<Clip>? clips,
     int recordingDurationMs = 120000,
+    String? exportFormat,
+    String? gifSize,
+    CaptionRasterizer captionRasterizer = const CaptionRasterizer(),
   }) async {
+    transcriptReply = transcript;
     SharedPreferences.setMockInitialValues({
       'postSubtitleMode': mode.wireValue,
+      if (exportFormat != null) 'exportFormat': exportFormat,
+      if (gifSize != null) 'gifSize': gifSize,
     });
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -76,7 +120,7 @@ void main() {
             'hasSystemAudio': true,
           };
         case 'generateCaptions':
-          return transcript;
+          return transcriptReply;
         case 'resolveExportSize':
           return exportSizeReturns;
         case 'exportVideo':
@@ -115,6 +159,7 @@ void main() {
       settings: settings,
       player: player,
       channel: nativeBridge,
+      captionRasterizer: captionRasterizer,
     );
     addTearDown(() {
       post.dispose();
@@ -592,4 +637,268 @@ void main() {
       expect(post.exportSubtitleMode, SubtitleMode.none);
     },
   );
+
+  // ---- The export's bitmaps are its own ----------------------------------
+
+  test(
+    'a transcription finishing mid-export does not delete its bitmaps',
+    () async {
+      // The failure this pins: preview and export used to rasterize into the
+      // SAME `post/captions`, and every rasterization sweeps that directory
+      // clean of anything the current cue set does not reference. Press
+      // "Generate again", then Export; the transcription lands mid-render, the
+      // preview push re-rasterizes the new transcript and sweeps away every
+      // bitmap the running export was pointed at. Native then finds no PNG per
+      // cue and composites nothing — subtitles for the first part of the video
+      // and none after, reported as a success.
+      final post = await createController(mode: SubtitleMode.burnIn);
+      await post.generateCaptions();
+
+      final args = await post.rasterizeCaptionsForExport();
+      final dir = args!['captionBitmapDirectory'] as String;
+      final name = (args['captions'] as List).first['bitmapName'] as String;
+      final bitmap = File('$dir/$name');
+      expect(bitmap.existsSync(), isTrue, reason: 'the export wrote its PNG');
+
+      // The export is still rendering. A second transcription lands with
+      // entirely different text, and pushes itself to the preview.
+      transcriptReply = const [
+        {'id': 'c9', 'startMs': 0, 'endMs': 1200, 'text': 'a different line'},
+      ];
+      await post.generateCaptions();
+      await post.pushPreviewCaptions();
+
+      expect(
+        bitmap.existsSync(),
+        isTrue,
+        reason:
+            'the running export still needs this PNG; the preview sweep must '
+            'not be able to reach it',
+      );
+    },
+  );
+
+  test('the export does not rasterize into the preview directory', () async {
+    // The mechanism behind the test above, stated directly: the sweep only ever
+    // touches the directory it is handed, so the two must not be the same one.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+    await post.pushPreviewCaptions();
+
+    final args = await post.rasterizeCaptionsForExport();
+    final exportDir = args!['captionBitmapDirectory'] as String;
+    final previewDir =
+        ((await waitForPush(hasCues))['bitmapDirectory'] as String);
+
+    expect(exportDir, isNot(previewDir));
+    expect(
+      exportDir,
+      startsWith(previewDir),
+      reason:
+          'still inside the project bundle — a temp dir the OS may reap would '
+          'leave native reading bitmaps that have vanished',
+    );
+  });
+
+  test('re-exporting the same cues re-encodes nothing', () async {
+    // The bitmap name is a hash of the text and the canvas, so a PNG already on
+    // disk is already correct and the rasterizer skips it. Giving each export a
+    // directory of its own (and deleting it afterwards) made that cache
+    // unreachable: a 20-minute recording re-ran TextPainter layout, toImage and
+    // a PNG encode for every one of ~300 cues on EVERY export, awaited serially
+    // on the UI isolate.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    final first = await post.rasterizeCaptionsForExport();
+    final firstDir = first!['captionBitmapDirectory'] as String;
+    final name = (first['captions'] as List).first['bitmapName'] as String;
+
+    // Stamp the file. Anything that re-encodes this cue overwrites the stamp
+    // with real PNG bytes, so its survival is proof the render was skipped —
+    // which a timestamp or a byte count could not tell apart from a rewrite.
+    File('$firstDir/$name').writeAsStringSync('not-a-png');
+
+    final second = await post.rasterizeCaptionsForExport();
+    final secondDir = second!['captionBitmapDirectory'] as String;
+
+    expect(
+      secondDir,
+      firstDir,
+      reason: 'a per-export directory can never be hit again',
+    );
+    expect(
+      (second['captions'] as List).first['bitmapName'],
+      name,
+      reason: 'same text, same canvas — the same content-addressed name',
+    );
+    expect(
+      File('$secondDir/$name').readAsStringSync(),
+      'not-a-png',
+      reason: 'the bitmap was reused, not rendered and encoded a second time',
+    );
+  });
+
+  test('changed cues drop the bitmaps nothing points at any more', () async {
+    // The other half of keeping one directory: it must not accumulate. The
+    // rasterizer sweeps the directory it renders into, so the export directory
+    // holds exactly the last export's cues — inside a bundle the user backs up
+    // and moves around.
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    final first = await post.rasterizeCaptionsForExport();
+    final dir = first!['captionBitmapDirectory'] as String;
+    final stale = (first['captions'] as List).first['bitmapName'] as String;
+
+    post.updateCaptionText('c1', 'an entirely different line');
+    final second = await post.rasterizeCaptionsForExport();
+    final fresh = (second!['captions'] as List).first['bitmapName'] as String;
+
+    expect(fresh, isNot(stale));
+    expect(File('$dir/$fresh').existsSync(), isTrue);
+    expect(
+      File('$dir/$stale').existsSync(),
+      isFalse,
+      reason: 'no cue references it; keeping it grows the bundle forever',
+    );
+  });
+
+  // ---- GIF canvas --------------------------------------------------------
+
+  test('a GIF export asks for the size the GIF is really rendered at', () async {
+    // A GIF is not rendered at the resolution preset: the exporter caps its
+    // intermediate to the chosen size preset's long edge. Asking without the
+    // format got the uncapped canvas back, and the caption renderer only ever
+    // shrinks a bitmap WIDER than the frame — so a short cue was drawn 1:1 and
+    // covered roughly 1.8x the fraction of the frame it was laid out for.
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      exportFormat: 'gif',
+      gifSize: 'small',
+    );
+    await post.generateCaptions();
+    await post.rasterizeCaptionsForExport();
+
+    final call = calls.lastWhere((c) => c.method == 'resolveExportSize');
+    expect(call.arguments, containsPair('format', 'gif'));
+    expect(call.arguments, containsPair('gifSize', 'small'));
+  });
+
+  test('a non-GIF export still states its format', () async {
+    // Native caps only when the format is gif, so mp4 must not arrive as a
+    // missing key that some future default could misread.
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      exportFormat: 'mp4',
+      gifSize: 'large',
+    );
+    await post.generateCaptions();
+    await post.rasterizeCaptionsForExport();
+
+    final call = calls.lastWhere((c) => c.method == 'resolveExportSize');
+    expect(call.arguments, containsPair('format', 'mp4'));
+  });
+
+  // ---- A skipped burn-in is not a success --------------------------------
+
+  test('a burn-in that could not be prepared is flagged', () async {
+    // Skipping is still the right render decision — a guessed size burns
+    // permanently wrong captions in — but the resulting payload is
+    // byte-identical to a pre-captions export, so nothing downstream can tell
+    // and the user ships a video they believe is subtitled.
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      exportSizeReturns: null,
+    );
+    await post.generateCaptions();
+
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+    expect(post.lastExportBurnInFailed, isTrue);
+  });
+
+  test('a rasterization throw is flagged, not swallowed', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    // A FILE where the bitmap directory has to go: creating it throws.
+    final blocked = File('${tempDir.path}/project.clingfyproj/post');
+    if (blocked.parent.existsSync()) {
+      blocked.parent.listSync().whereType<Directory>().forEach(
+        (d) => d.deleteSync(recursive: true),
+      );
+    }
+    blocked.parent.createSync(recursive: true);
+    blocked.writeAsStringSync('not a directory');
+
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+    expect(post.lastExportBurnInFailed, isTrue);
+  });
+
+  test('nothing to burn in is a no-op, not a failure', () async {
+    // No cues means this export is genuinely identical to one from before
+    // captions existed. Warning about it would train the warning away.
+    final post = await createController(mode: SubtitleMode.burnIn);
+
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+    expect(post.lastExportBurnInFailed, isFalse);
+  });
+
+  test('a transcript blanked by hand is a no-op, not a failure', () async {
+    // Every cue's text deleted is a deliberate "burn nothing in". Warning here
+    // would train the warning away, which is how a real one gets ignored.
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      transcript: const [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': '   '},
+      ],
+    );
+    await post.generateCaptions();
+
+    expect(await post.rasterizeCaptionsForExport(), isNull);
+    expect(post.lastExportBurnInFailed, isFalse);
+  });
+
+  test('a cue whose bitmap did not encode is not a clean export', () async {
+    // The half-failure: the rasterizer skips the cue whose PNG encode returned
+    // nothing and carries on, which is right — the other subtitles still burn
+    // in. But the file is then missing a line the user wrote, and the
+    // `exportVideo` payload looks exactly like a healthy one, so this flag is
+    // the only thing standing between that and a plain "Export successful".
+    final post = await createController(
+      mode: SubtitleMode.burnIn,
+      transcript: const [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': 'hello there'},
+        {'id': 'c2', 'startMs': 1500, 'endMs': 3000, 'text': 'second line'},
+      ],
+      captionRasterizer: const _OneCueFailsToEncodeRasterizer(),
+    );
+    await post.generateCaptions();
+
+    final args = await post.rasterizeCaptionsForExport();
+
+    expect(
+      args,
+      isNotNull,
+      reason: 'the cues that did encode still burn in; this is not an abort',
+    );
+    expect(
+      (args!['captions'] as List).length,
+      1,
+      reason: 'the payload carries one fewer subtitle than the user has',
+    );
+    expect(
+      post.lastExportBurnInFailed,
+      isTrue,
+      reason: 'and the notice is the only place that can still say so',
+    );
+  });
+
+  test('a prepared burn-in is not flagged', () async {
+    final post = await createController(mode: SubtitleMode.burnIn);
+    await post.generateCaptions();
+
+    expect(await post.rasterizeCaptionsForExport(), isNotNull);
+    expect(post.lastExportBurnInFailed, isFalse);
+  });
 }

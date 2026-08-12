@@ -360,13 +360,16 @@ final class ExportEngine {
   /// dimensions (the H.264 intermediate wants even width/height). Keeps a
   /// 4K/8K selection — or any source larger than the preset cap — from
   /// rendering a giant frame just to downscale it.
+  ///
+  /// Delegates to `GifExportPolicy` rather than computing it here: Flutter asks
+  /// the same question through `resolveExportSize` so it can rasterise caption
+  /// bitmaps at the canvas the frames will really be, and two implementations
+  /// of this would drift into captions composited at the wrong scale.
   nonisolated private static func gifIntermediateSize(
     from target: CGSize,
     maxLongEdge: CGFloat = GifExportPolicy.defaultMaxLongEdge
   ) -> CGSize {
-    let capped = GifExportPolicy.renderSize(canvasSize: target, maxLongEdge: maxLongEdge)
-    func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
-    return CGSize(width: even(capped.width), height: even(capped.height))
+    GifExportPolicy.intermediateRenderSize(canvasSize: target, maxLongEdge: maxLongEdge)
   }
 
   nonisolated private static func finishExportSuccess(

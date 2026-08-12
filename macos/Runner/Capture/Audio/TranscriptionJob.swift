@@ -115,21 +115,32 @@ struct TranscriptionJob {
       let lower = Double(index) / Double(passes.count)
       let span = 1.0 / Double(passes.count)
 
-      let raw = try transcriber.transcribe(
-        url: pass.url,
-        options: pass.options,
-        progress: { update in
-          // Only transcription fractions belong to a source's sub-range. The
-          // model download happens once for the whole job, so scaling it into
-          // the first source's half would report 50% for a finished download.
-          guard update.phase == .transcribing, let fraction = update.fraction else {
-            progress(update)
-            return
-          }
-          progress(.transcribing(lower + (fraction * span)))
-        },
-        isCancelled: isCancelled
-      )
+      let raw: [TranscribedSegment]
+      do {
+        raw = try transcriber.transcribe(
+          url: pass.url,
+          options: pass.options,
+          progress: { update in
+            // Only transcription fractions belong to a source's sub-range. The
+            // model download happens once for the whole job, so scaling it into
+            // the first source's half would report 50% for a finished download.
+            guard update.phase == .transcribing, let fraction = update.fraction else {
+              progress(update)
+              return
+            }
+            progress(.transcribing(lower + (fraction * span)))
+          },
+          isCancelled: isCancelled
+        )
+      } catch {
+        // This is the seam where an engine's error becomes an engine-agnostic
+        // one, so it is where the decode-error leak is stopped for EVERY
+        // implementation rather than for the one that happens to ship today.
+        // Above here, cancel-versus-failure is decided by `error as?
+        // TranscriptionError` in three separate places; a `DecodeError` reaching
+        // any of them reports the user's own Stop as a failure.
+        throw TranscriptionError.normalizing(error)
+      }
       let kept = Self.applyGuards(raw, options: pass.options)
       switch pass.source {
       case .mic, .mixed: micSegments = kept

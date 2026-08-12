@@ -35,18 +35,53 @@ import 'dart:convert';
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
 import 'package:clingfy/core/captions/caption_reflow.dart';
 
+/// Who asked the in-flight transcription to stop.
+///
+/// The distinction decides what may be done with the transcript the job
+/// returns anyway — native cancellation is POLLED, so a job already past its
+/// last check finishes normally however firmly it was stopped. Collapsing the
+/// two into one "cancel requested" flag is how a transcript the user pressed
+/// Stop on was still written to disk (it was salvaged as if the controller had
+/// merely moved on) and came back on the next open — with
+/// [SubtitleMode.burnIn] the default, into a published video.
+enum _CaptionsCancelOrigin {
+  /// Nobody stopped it. The result is applied and stored normally.
+  none,
+
+  /// The user pressed Stop. Its result may be written NOWHERE — not to the
+  /// recording on screen, not to the one it ran against.
+  user,
+
+  /// The controller moved to another recording, which cancels to free the
+  /// engine. Nobody refused this transcript, so it may still be salvaged into
+  /// the project it ran against when that project has nothing to lose.
+  recordingSwitch,
+}
+
 class PostProcessingController extends ChangeNotifier {
   final NativeBridge _nativeBridge;
   final SettingsController _settings;
   final PlayerController _player;
 
+  /// How caption cues become PNGs for the export to composite.
+  ///
+  /// Injectable for one reason: the only way a burn-in half-fails is a PNG
+  /// encode returning no bytes for some cues and not others, and that cannot be
+  /// provoked through the real rasterizer from a test. Without a seam here the
+  /// branch that turns "Export successful" into "saved without subtitles" is
+  /// untestable — and it was silently deletable, proven by a reviewer removing
+  /// it with the whole suite still green.
+  final CaptionRasterizer _captionRasterizer;
+
   PostProcessingController({
     required SettingsController settings,
     required PlayerController player,
     required NativeBridge channel,
+    CaptionRasterizer captionRasterizer = const CaptionRasterizer(),
   }) : _settings = settings,
        _player = player,
-       _nativeBridge = channel {
+       _nativeBridge = channel,
+       _captionRasterizer = captionRasterizer {
     _player.addListener(_onPlayerChanged);
     _warningSub = _player.warningCodeStream.listen(_onPlayerWarning);
     _cameraManualPositionSub = _player.cameraManualPositionStream.listen(
@@ -112,6 +147,15 @@ class PostProcessingController extends ChangeNotifier {
   bool _isExporting = false;
   bool _isExportInBackground = false;
   bool _lastExportWasCancelled = false;
+
+  /// True when the last export was asked to burn subtitles in and could not.
+  ///
+  /// A skipped burn-in leaves an `exportVideo` payload byte-identical to one
+  /// from before captions existed, so nothing downstream can tell the
+  /// difference — native renders happily, the export succeeds, and the user
+  /// ships a file they believe is subtitled. This is the only signal that says
+  /// otherwise, which is why the saved-file notice reads it.
+  bool _lastExportBurnInFailed = false;
   bool _hasExportedCurrentRecording = false;
   double? _exportProgress; // null = indeterminate, 0.0-1.0 = determinate
 
@@ -142,7 +186,33 @@ class PostProcessingController extends ChangeNotifier {
   List<Caption> _captions = const [];
   bool _captionsUseMic = true;
   bool _captionsUseSystem = true;
+
+  /// True while THIS recording is transcribing. Cleared when the controller
+  /// moves to another recording, because a progress bar and a Stop button that
+  /// belong to a different project's job are worse than no bar at all.
   bool _isGeneratingCaptions = false;
+
+  /// The project a native transcription is currently running against, or null
+  /// when the engine is idle.
+  ///
+  /// Separate from [_isGeneratingCaptions] because the two answer different
+  /// questions once the user can switch recordings mid-job: this one is "is the
+  /// engine busy" (it takes one job at a time and is not re-entrant), the other
+  /// is "is the recording on screen the one transcribing". Conflating them is
+  /// how a job on recording A drove recording B's bar, and how B's cues would
+  /// have been able to start a second native job.
+  String? _captionsJobProjectPath;
+
+  /// Who stopped the job [_captionsJobProjectPath] names, if anyone.
+  ///
+  /// Separate from [_isCancellingCaptions], which is UI state for the recording
+  /// ON SCREEN and is therefore cleared the moment the user opens another one.
+  /// This belongs to the JOB and has to outlive that, because native
+  /// cancellation is POLLED: a job already past its last check returns a full
+  /// transcript however loudly it was told to stop, and what may be done with
+  /// that transcript depends on WHO told it to stop. See
+  /// [_CaptionsCancelOrigin].
+  _CaptionsCancelOrigin _captionsCancelOrigin = _CaptionsCancelOrigin.none;
 
   /// Set the moment the user asks to stop, and cleared when the engine
   /// actually finishes unwinding.
@@ -206,12 +276,41 @@ class PostProcessingController extends ChangeNotifier {
 
   // --- Getters ---
   bool get processing => _isProcessingPreview;
+
+  /// Editing is unavailable: a preview render or an export is in flight, and
+  /// both are reading the state the sidebar edits.
+  ///
+  /// A running transcription is deliberately NOT here, even though
+  /// [isExportLocked] adds it. This getter dims the WHOLE post-processing
+  /// sidebar and puts an `IgnorePointer` over it — and the captions Stop button
+  /// lives inside that subtree, with no other route to [cancelCaptions]
+  /// anywhere in the app. Adding captions here left someone watching a 626 MB
+  /// model download with the only button that stops it unclickable.
   bool get isEditingLocked => _isProcessingPreview || _isExporting;
+
+  /// Export is unavailable: everything [isEditingLocked] covers, plus a running
+  /// transcription.
+  ///
+  /// Captions are in this set because a transcription that lands mid-export
+  /// re-rasterises the NEW transcript for the preview, and that pass sweeps
+  /// every bitmap the old transcript owned. Before this, Export stayed enabled
+  /// throughout a "Generate again", so pressing it produced a file with
+  /// subtitles for the first part and none after — reported as a success. The
+  /// export rasterises into a directory of its own too; that stops the race
+  /// once started, this stops it being started.
+  ///
+  /// Gate the Export ACTION on this, never a whole panel: see [isEditingLocked]
+  /// for what disabling the sidebar costs while a transcription runs.
+  bool get isExportLocked => isEditingLocked || _isGeneratingCaptions;
   bool get isExporting => _isExporting;
   bool get isExportCancelRequested => _isExportCancelRequested;
   bool get isExportInBackground => _isExportInBackground;
   bool get isExportDockCollapsed => _isExportInBackground;
   bool get lastExportWasCancelled => _lastExportWasCancelled;
+
+  /// True when the file that was just written was supposed to have subtitles
+  /// burned in and does not. See [_lastExportBurnInFailed].
+  bool get lastExportBurnInFailed => _lastExportBurnInFailed;
   bool get hasExportedCurrentRecording => _hasExportedCurrentRecording;
   double? get exportProgress => _exportProgress;
 
@@ -236,6 +335,24 @@ class PostProcessingController extends ChangeNotifier {
   bool get captionsUseSystem => _captionsUseSystem;
   bool get isGeneratingCaptions => _isGeneratingCaptions;
   bool get isCancellingCaptions => _isCancellingCaptions;
+
+  /// True when the engine is still unwinding a transcription the panel is NOT
+  /// presenting, so a Generate pressed here cannot start one.
+  ///
+  /// The panel needs this because the engine takes one job at a time and the
+  /// cancel that frees it is best-effort against a download that cannot be
+  /// interrupted — minutes, in the worst case. Without it the recording on
+  /// screen shows a live "Generate subtitles" button whose press is silently
+  /// dropped by the engine-busy guard in [generateCaptions], with nothing on
+  /// screen to explain why.
+  ///
+  /// Keyed on [isGeneratingCaptions] rather than on the job's project, because
+  /// "not mine" is not the same question as "not shown". Coming BACK to the
+  /// recording whose job is still unwinding lands on the same project path with
+  /// the progress row already torn down — a project comparison calls that
+  /// engine free and hands back the same dead button.
+  bool get isCaptionsEngineBusyOffScreen =>
+      _captionsJobProjectPath != null && !_isGeneratingCaptions;
   double? get captionsProgress => _captionsProgress;
   ProgressStage get captionsStage => _captionsStage;
   bool get hasEverGeneratedCaptions => _hasEverGeneratedCaptions;
@@ -334,7 +451,7 @@ class PostProcessingController extends ChangeNotifier {
       projectPath,
       _settings.post.layoutPreset.name,
       _settings.post.resolutionPreset.name,
-    ].join(' ');
+    ].join('\u0000');
     final cached = _cachedExportSize;
     if (cached != null && key == _cachedExportSizeKey) return cached;
 
@@ -393,7 +510,7 @@ class PostProcessingController extends ChangeNotifier {
       ].join('\u0000');
       if (signature == _pushedCaptionSignature) return;
 
-      final manifest = await const CaptionRasterizer().rasterize(
+      final manifest = await _captionRasterizer.rasterize(
         captions: [for (final span in spans) span.asOutputCue()],
         videoSize: size,
         directory: Directory('$projectPath/post/captions'),
@@ -484,6 +601,12 @@ class PostProcessingController extends ChangeNotifier {
   void updateCaptionsProgress(JobProgress progress) {
     // A cancelled job keeps emitting for as long as it takes to unwind. Letting
     // those ticks through would move a bar the user has already stopped.
+    //
+    // [_isGeneratingCaptions] is also what keeps a transcription of recording A
+    // from driving recording B's bar: the tick arrives on one shared callback,
+    // and the flag means "the recording ON SCREEN is transcribing", so
+    // [_resetForNewRecording] clearing it is what shuts this path off the
+    // moment the user opens something else.
     if (!_isGeneratingCaptions || _isCancellingCaptions) return;
     _captionsProgress = progress.fraction;
     _captionsStage = progress.stage;
@@ -492,9 +615,14 @@ class PostProcessingController extends ChangeNotifier {
 
   Future<void> generateCaptions() async {
     final projectPath = _projectPath;
-    if (projectPath == null || _isGeneratingCaptions) return;
+    // The engine takes one job at a time and is not re-entrant, so the guard is
+    // "the engine is busy", not "this recording is busy" — otherwise switching
+    // recordings mid-job would let a second native transcription start.
+    if (projectPath == null || _captionsJobProjectPath != null) return;
     if (!_captionsUseMic && !_captionsUseSystem) return;
 
+    _captionsJobProjectPath = projectPath;
+    _captionsCancelOrigin = _CaptionsCancelOrigin.none;
     _isGeneratingCaptions = true;
     // Not reset here: the `finally` below always runs once past the guards
     // above, so a previous run cannot leave this set.
@@ -511,10 +639,50 @@ class PostProcessingController extends ChangeNotifier {
         useMic: _captionsUseMic,
         useSystem: _captionsUseSystem,
       );
-      if (_projectPath != projectPath) return;
-      _captions = [for (final m in raw) Caption.fromMap(m)];
+      final cues = [for (final m in raw) Caption.fromMap(m)];
+      if (_captionsCancelOrigin != _CaptionsCancelOrigin.none) {
+        // A run nobody is waiting for any more. Native cancellation is POLLED,
+        // so a job already past its last check finishes normally and arrives
+        // here with a full transcript regardless — and what may be done with it
+        // depends entirely on who stopped it.
+        //
+        // A Stop the USER pressed is an instruction, not a hint: the result is
+        // dropped, everywhere. Writing it "somewhere harmless" is exactly the
+        // bug — the abandoned transcript landed on the recording it ran against,
+        // reappeared the next time that recording was opened, and with
+        // [SubtitleMode.burnIn] the default could be burned into a published
+        // video.
+        //
+        // A cancel the CONTROLLER issued to free the engine ([attachToRecording]
+        // → [_resetForNewRecording]) refused nothing, so the cues are still
+        // worth having. They may be written only where they can destroy
+        // nothing: the project the job ran against, which the user has already
+        // left, and only when it holds no transcript of its own — overwriting
+        // is how hand corrections were replaced by a machine transcript from a
+        // regeneration the user had walked away from. Filling an empty one
+        // loses nothing and saves minutes of compute, which is why this is not
+        // simply dropped.
+        //
+        // Never the project on SCREEN, even when that is the same one (the user
+        // left recording A and came back to it): the panel there says "not
+        // transcribed", and a write it cannot see is the same surprise-on-next-
+        // open as above.
+        if (_captionsCancelOrigin == _CaptionsCancelOrigin.recordingSwitch &&
+            _projectPath != projectPath) {
+          _persistCaptions(projectPath, cues, onlyWhenAbsent: true);
+        }
+        return;
+      }
+      // Nobody stopped this run, so it is still the OPEN recording's own
+      // transcription: every path that changes the open recording cancels the
+      // job first ([_resetForNewRecording]), and a cancelled run has returned
+      // above. That is why there is no "is this still the open project" guard
+      // here — it could not fire, and pretending otherwise described a hazard
+      // that cannot happen. If a future change ever lets a live job outlive the
+      // switch, this needs that guard back before [_captions] is assigned.
+      _persistCaptions(projectPath, cues);
+      _captions = cues;
       _hasEverGeneratedCaptions = true;
-      _persistCaptions();
       unawaited(pushPreviewCaptions());
     } on PlatformException catch (e) {
       // Cancelling is a normal outcome, not a failure worth surfacing.
@@ -543,6 +711,16 @@ class PostProcessingController extends ChangeNotifier {
       _hasEverGeneratedCaptions = true;
       _captionsErrorCode = 'CAPTIONS_FAILED';
     } finally {
+      // The engine is free again whoever was watching — this is what lets the
+      // next Generate through, on this recording or another, and what clears
+      // [isCaptionsEngineBusyOffScreen] on the recording that is waiting.
+      _captionsJobProjectPath = null;
+      _captionsCancelOrigin = _CaptionsCancelOrigin.none;
+      // Safe to clear unconditionally only because the guard above serialises
+      // jobs: no second transcription can have started while this one was in
+      // flight, so there is never another recording's in-flight state here to
+      // trample. If that guard is ever relaxed, this has to be keyed on
+      // [projectPath] as well.
       _isGeneratingCaptions = false;
       _isCancellingCaptions = false;
       _captionsProgress = null;
@@ -563,6 +741,11 @@ class PostProcessingController extends ChangeNotifier {
 
   Future<void> cancelCaptions() async {
     if (!_isGeneratingCaptions || _isCancellingCaptions) return;
+    // Marks the JOB, not the screen: the transcript it may still return has to
+    // be treated as refused even if the user opens another recording before it
+    // lands — a Stop is not undone by walking away. See
+    // [_CaptionsCancelOrigin.user].
+    _captionsCancelOrigin = _CaptionsCancelOrigin.user;
     // Flip the UI first. The engine may take seconds to unwind — it cannot be
     // interrupted mid-download — and the press has to be visibly received or
     // the user just presses again.
@@ -593,21 +776,38 @@ class PostProcessingController extends ChangeNotifier {
     );
     _captions = next;
     notifyListeners();
-    _persistCaptions();
+    final projectPath = _projectPath;
+    if (projectPath != null) _persistCaptions(projectPath, next);
     unawaited(pushPreviewCaptions());
   }
 
   /// Fire-and-forget, like every other per-project editor write. The store
   /// serialises overlapping saves itself, so a correction landing while a
   /// regeneration completes cannot interleave into unparseable JSON.
-  void _persistCaptions() {
-    final projectPath = _projectPath;
-    if (projectPath == null) return;
+  ///
+  /// Takes the project and the cues explicitly rather than reading the live
+  /// fields: a transcription outlives the recording it was started on, and the
+  /// only correct destination for its result is the project it ran against —
+  /// which by then may not be the one open.
+  ///
+  /// [onlyWhenAbsent] refuses to replace a transcript that is already stored,
+  /// for a result the user abandoned. The test is done inside the store's
+  /// mutation so it reads the same state the write is about to replace — a
+  /// read outside it would race a correction being saved at that moment, which
+  /// is precisely the hand-typed work this exists to protect.
+  void _persistCaptions(
+    String projectPath,
+    List<Caption> captions, {
+    bool onlyWhenAbsent = false,
+  }) {
     unawaited(
-      PostStateStore.update(
-        projectPath,
-        (state) => state.withTrack(CaptionTrack(captions: _captions)),
-      ),
+      PostStateStore.update(projectPath, (state) {
+        if (onlyWhenAbsent) {
+          final stored = state.trackOfType<CaptionTrack>();
+          if (stored != null && stored.captions.isNotEmpty) return state;
+        }
+        return state.withTrack(CaptionTrack(captions: captions));
+      }),
     );
   }
 
@@ -1407,6 +1607,33 @@ class PostProcessingController extends ChangeNotifier {
     // Per-recording, like everything else here: a failure belongs to the
     // recording it happened on, not to the next one opened.
     _captionsErrorCode = null;
+    // A transcription belongs to the recording it was started on. Left set,
+    // these gave the newly-opened recording someone else's progress bar and
+    // Stop button, and its Generate did nothing at all.
+    _isGeneratingCaptions = false;
+    _isCancellingCaptions = false;
+    _captionsProgress = null;
+    _captionsStage = ProgressStage.preparing;
+    // Cancelled rather than left to run, deliberately. The engine takes ONE job
+    // at a time, so a job left running keeps Generate on the newly-opened
+    // recording inert for however long the old transcription has left —
+    // [isCaptionsEngineBusyOffScreen] is what says so on screen meanwhile.
+    // Cancelling frees the engine promptly. The cancel is asynchronous and a
+    // model download cannot be interrupted, so the job may still finish:
+    // [generateCaptions] writes its cues to the project it started on when
+    // there is nothing there to lose, which is why a first transcription is not
+    // thrown away — and why a REgeneration cannot overwrite the corrections on
+    // the recording being left behind.
+    if (_captionsJobProjectPath != null) {
+      // Never downgrades a Stop the user pressed. Overwriting it here is what
+      // turned "I stopped that transcript" into "it was saved anyway": the
+      // switch relabelled the job as merely abandoned, and the salvage write
+      // below became legal again.
+      if (_captionsCancelOrigin == _CaptionsCancelOrigin.none) {
+        _captionsCancelOrigin = _CaptionsCancelOrigin.recordingSwitch;
+      }
+      unawaited(_nativeBridge.cancelCaptions().catchError((Object _) {}));
+    }
     _cursorSize = 1.5;
     _zoomFactor = _settings.post.postZoomFactor;
     _zoomEffectEnabled = _settings.post.postZoomEffectEnabled;
@@ -1695,8 +1922,11 @@ class PostProcessingController extends ChangeNotifier {
   ///
   /// Returns null whenever burn-in cannot be done honestly: no cues, or native
   /// declining to say what size the frames will be. Skipping is the right
-  /// failure — rasterising at a guessed size burns permanently wrong captions
-  /// into the video, which is worse than none.
+  /// render decision — rasterising at a guessed size burns permanently wrong
+  /// captions into the video, which is worse than none — but a skip that was
+  /// ASKED for and failed sets [lastExportBurnInFailed], because the resulting
+  /// `exportVideo` payload is byte-identical to a pre-captions export and would
+  /// otherwise end in a plain success toast over a video with no subtitles.
   @visibleForTesting
   Future<Map<String, dynamic>?> rasterizeCaptionsForExport([
     ReflowedCaptions? reflowed,
@@ -1705,6 +1935,11 @@ class PostProcessingController extends ChangeNotifier {
     // The burn-in view: source-timed, and guaranteed free of overlapping spans
     // so native's cue track accepts every one of them.
     final spans = (reflowed ?? reflowedCaptions()).burnIn;
+    // Nothing to draw is a legitimate no-op, not a failure: there is genuinely
+    // no difference between that export and one from before captions existed.
+    // Everything past this point was asked for, so every other exit is a
+    // failure the user has to be told about.
+    _lastExportBurnInFailed = false;
     if (projectPath == null || spans.isEmpty) {
       Log.i("Captions", "No burn-in payload", null, null, {
         'hasProject': projectPath != null,
@@ -1720,8 +1955,18 @@ class PostProcessingController extends ChangeNotifier {
         projectPath: projectPath,
         layoutPreset: _settings.post.layoutPreset.name,
         resolutionPreset: _settings.post.resolutionPreset.name,
+        // Read AFTER the export dialog has been applied to settings, so these
+        // are the format and GIF size the render will actually use. A GIF is
+        // not rendered at the resolution preset: the exporter caps its
+        // intermediate to the GIF long-edge preset, and a bitmap laid out for
+        // the uncapped canvas is composited ~1.8x too large — the caption
+        // renderer only ever scales a bitmap DOWN, and only when it is wider
+        // than the frame, so a short cue is drawn 1:1 at the wrong scale.
+        format: _settings.export.exportFormat,
+        gifSize: _settings.export.gifSize,
       );
       if (size == null) {
+        _lastExportBurnInFailed = true;
         Log.w(
           "Captions",
           "Skipping caption burn-in: native did not report an export size",
@@ -1732,25 +1977,67 @@ class PostProcessingController extends ChangeNotifier {
       // Inside the project bundle, not a temp dir: the export can be cancelled
       // or fail partway, and a cache the OS may reap mid-render would leave
       // native reading bitmaps that have vanished.
-      final directory = Directory('$projectPath/post/captions');
-      final manifest = await const CaptionRasterizer().rasterize(
+      //
+      // In a directory of its OWN, not the preview's `post/captions`: the
+      // preview push rasterises into that directory and then sweeps every PNG
+      // the current transcript does not reference. A "Generate again" landing
+      // mid-render therefore deleted the bitmaps this export was still reading,
+      // and native composited nothing from that point on — a video with
+      // subtitles for the first part and none after, reported as a success. The
+      // sweep only ever touches the directory it is handed, and it skips
+      // non-file entries, so a subdirectory is out of reach from both sides.
+      final directory = Directory(
+        '$projectPath/post/captions/$_exportCaptionDirName',
+      );
+      final manifest = await _captionRasterizer.rasterize(
         captions: [for (final span in spans) span.asSourceCue()],
         videoSize: size,
         directory: directory,
       );
       final args = manifest.toExportArgs();
+      // A span with visible text that produced no manifest entry is one whose
+      // PNG encode failed. The rasterizer logs it and carries on so the rest
+      // still burn in, which is right — but the file is then missing a subtitle
+      // the user wrote, and that is not a success either.
+      final drawable = spans.where((s) => s.text.trim().isNotEmpty).length;
+      if (manifest.entries.length < drawable) {
+        _lastExportBurnInFailed = true;
+      }
       Log.i("Captions", "Export burn-in payload prepared", null, null, {
         'cues': manifest.entries.length,
         'spans': spans.length,
+        'drawable': drawable,
         'canvas': '${size.width.toInt()}x${size.height.toInt()}',
         'directory': manifest.directoryPath,
       });
-      return args.isEmpty ? null : args;
+      // Empty because nothing had visible text (every cue blanked by hand) is
+      // a no-op; empty when something WAS drawable is the encode failure the
+      // check above already flagged.
+      if (args.isEmpty) return null;
+      return args;
     } catch (e, st) {
+      _lastExportBurnInFailed = true;
       Log.e("PostProcessing", "Caption rasterization failed", e, st);
       return null;
     }
   }
+
+  /// The export's caption-bitmap directory, inside the preview's
+  /// `post/captions`. One stable name, kept between exports.
+  ///
+  /// Stable rather than unique-per-export because the bitmap names are a hash
+  /// of the text and the canvas: a re-export of the same cues finds every PNG
+  /// already on disk and re-encodes nothing. A per-export name made a 300-cue
+  /// transcript re-run TextPainter layout, `toImage` and PNG encode for all 300
+  /// on EVERY export, awaited serially on the UI isolate — the cache exists
+  /// precisely to stop that.
+  ///
+  /// Kept rather than deleted afterwards for the same reason; it cannot grow
+  /// without bound because [CaptionRasterizer.rasterize] sweeps the directory it
+  /// renders into, so this holds exactly the last export's cues. Only one export
+  /// runs at a time ([_isExporting] guards that), so that sweep can never delete
+  /// a bitmap another export is still reading.
+  static const String _exportCaptionDirName = 'export';
 
   /// Strips a trailing file extension, if there is one.
   ///
@@ -1806,6 +2093,9 @@ class PostProcessingController extends ChangeNotifier {
 
   Future<String?> exportCurrentRecording(BuildContext context) async {
     _lastExportWasCancelled = false;
+    // Belongs to the export about to run, not to the last one — the notice this
+    // drives is shown against the file this call produces.
+    _lastExportBurnInFailed = false;
 
     if (_isExporting) {
       await ClingfyTelemetry.addUiBreadcrumb(

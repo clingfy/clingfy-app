@@ -41,6 +41,11 @@ class PostProcessingSidebarContainer extends StatelessWidget {
     final postHasError = context.select<PostProcessingController, bool>(
       (p) => p.hasError,
     );
+    // The narrow lock on purpose. This drives an `IgnorePointer` over the whole
+    // sidebar, and the captions Stop button is inside it — the only route to
+    // `cancelCaptions()` in the app. Widening this to
+    // `PostProcessingController.isExportLocked` makes a running transcription
+    // unstoppable; the Export action carries that lock instead.
     final postEditingLocked = context.select<PostProcessingController, bool>(
       (p) => p.isEditingLocked,
     );
@@ -80,6 +85,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         bool captionsUseSystem,
         bool isGeneratingCaptions,
         bool isCancellingCaptions,
+        bool isCaptionsEngineBusyOffScreen,
         double? captionsProgress,
         ProgressStage captionsStage,
         bool hasEverGeneratedCaptions,
@@ -121,6 +127,9 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         captionsUseSystem: p.captionsUseSystem,
         isGeneratingCaptions: p.isGeneratingCaptions,
         isCancellingCaptions: p.isCancellingCaptions,
+        // Part of the record so the panel rebuilds the moment the previous
+        // job finally unwinds and Generate becomes pressable again.
+        isCaptionsEngineBusyOffScreen: p.isCaptionsEngineBusyOffScreen,
         captionsProgress: p.captionsProgress,
         captionsStage: p.captionsStage,
         hasEverGeneratedCaptions: p.hasEverGeneratedCaptions,
@@ -184,6 +193,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               captionsUseSystem: vm.captionsUseSystem,
               isGeneratingCaptions: vm.isGeneratingCaptions,
               isCancellingCaptions: vm.isCancellingCaptions,
+              isCaptionsEngineBusyOffScreen: vm.isCaptionsEngineBusyOffScreen,
               captionsProgress: vm.captionsProgress,
               captionsStageLabel: _captionsStageLabel(
                 context,

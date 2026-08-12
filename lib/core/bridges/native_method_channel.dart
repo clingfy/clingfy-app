@@ -60,6 +60,23 @@ abstract class NativeMethod {
   /// `MODEL_IN_USE` while a transcription is running.
   static const String deleteCaptionModel = 'deleteCaptionModel';
 
+  /// The pixel size the exported frames will be. Args `{projectPath,
+  /// layoutPreset, resolutionPreset, format, gifSize}`, reply `{width, height}`.
+  ///
+  /// Asked rather than computed because the `auto` resolution preset resolves
+  /// against the recording's own oriented video track, which only native has
+  /// read. Caption bitmaps are rasterised at this size.
+  ///
+  /// `format` and `gifSize` are part of the question because a GIF does NOT
+  /// render at the resolution preset: the exporter caps its intermediate to the
+  /// GIF long-edge preset, so a caption rasterised for the uncapped canvas is
+  /// composited roughly 1.8x too large in the file. Older native builds ignore
+  /// both keys and answer the uncapped size — which is also what they render.
+  ///
+  /// macOS only today; Windows replies with a `MissingPluginException`, which
+  /// the bridge maps to null so the caller skips burn-in rather than guessing.
+  static const String resolveExportSize = 'resolveExportSize';
+
   /// Flashes a large ordinal (and the monitor's name) on physical displays and
   /// auto-dismisses.
   ///

@@ -328,14 +328,11 @@ class MainFlutterWindow: NSWindow {
       case FlutterToNativeMethod.deleteCaptionModel:
         // Refused here rather than inside the delete: the UI's copy of `busy`
         // comes from a snapshot that can be half a minute old, so this is the
-        // check that actually decides.
+        // check that actually decides. It is not the only gate — the delete
+        // itself refuses again if the engine will not hand the weights back —
+        // and both answer with the same error so the two cannot drift.
         guard self.screenRecorder.canDeleteCaptionModel() else {
-          result(
-            FlutterError(
-              code: "MODEL_IN_USE",
-              message:
-                "The speech model is in use. Wait for the transcription to finish, then try again.",
-              details: nil))
+          result(ScreenRecorderFacade.captionModelInUseError())
           return
         }
         self.screenRecorder.deleteCaptionModel(result: result)
@@ -927,6 +924,11 @@ class MainFlutterWindow: NSWindow {
         // "auto" resolution preset derives from the recording's own oriented
         // track size, which only this side has read. Guessing here would ship
         // captions sized for the wrong canvas.
+        //
+        // `format`/`gifSize` are optional and forwarded because a GIF renders
+        // at a capped intermediate rather than at the resolution preset; an
+        // older Flutter build omits both and gets the uncapped size it has
+        // always used.
         if let args = call.arguments as? [String: Any],
           let projectPath = args["projectPath"] as? String
         {
@@ -934,6 +936,8 @@ class MainFlutterWindow: NSWindow {
             projectPath: projectPath,
             layout: args["layoutPreset"] as? String ?? "auto",
             resolution: args["resolutionPreset"] as? String ?? "auto",
+            format: args["format"] as? String,
+            gifSize: args["gifSize"] as? String,
             result: result)
         } else {
           result(

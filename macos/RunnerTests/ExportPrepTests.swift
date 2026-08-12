@@ -182,18 +182,86 @@ final class ResolveExportSizeTests: XCTestCase {
   private let facade = ScreenRecorderFacade()
 
   private func resolve(
-    projectPath: String, layout: String = "auto", resolution: String = "auto"
+    projectPath: String, layout: String = "auto", resolution: String = "auto",
+    format: String? = nil, gifSize: String? = nil
   ) -> Any? {
     var reply: Any?
     let done = expectation(description: "resolveExportSize replied")
     facade.resolveExportSize(
       projectPath: projectPath, layout: layout, resolution: resolution,
+      format: format, gifSize: gifSize,
       result: { value in
         reply = value
         done.fulfill()
       })
     wait(for: [done], timeout: 10)
     return reply
+  }
+
+  private func size(_ reply: Any?) throws -> CGSize {
+    let map = try XCTUnwrap(reply as? [String: Any], "got \(String(describing: reply))")
+    return CGSize(
+      width: try XCTUnwrap(map["width"] as? Int),
+      height: try XCTUnwrap(map["height"] as? Int))
+  }
+
+  /// A real `.clingfyproj` with a real 1920x1080 screen track, because the whole
+  /// point of this method is that it reads the recording's own video.
+  private func makeProject(size: CGSize = CGSize(width: 1920, height: 1080)) throws -> String {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory
+      .appendingPathComponent("clingfy_export_size_\(UUID().uuidString)")
+    let projectRoot = root.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_export_size"), isDirectory: true)
+    addTeardownBlock { try? fm.removeItem(at: root) }
+
+    for directory in [
+      RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.postDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.derivedDirectoryURL(for: projectRoot),
+    ] {
+      try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    var manifest = RecordingProjectManifest.create(
+      projectId: "rec_export_size", displayName: "Clingfy Test", includeCamera: false)
+    manifest.updateStatus(.ready)
+    try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+    try writeVideo(to: RecordingProjectPaths.screenVideoURL(for: projectRoot), size: size)
+    return projectRoot.path
+  }
+
+  private func writeVideo(to url: URL, size: CGSize) throws {
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: Int(size.width),
+        AVVideoHeightKey: Int(size.height),
+      ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: Int(size.width),
+        kCVPixelBufferHeightKey as String: Int(size.height),
+      ])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+    for frame in 0..<2 {
+      var pixelBuffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &pixelBuffer)
+      guard let buffer = pixelBuffer else { continue }
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      adaptor.append(
+        buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
+    }
+    input.markAsFinished()
+    let written = expectation(description: "screen.mov written")
+    writer.finishWriting { written.fulfill() }
+    wait(for: [written], timeout: 30)
   }
 
   func testAMissingProjectIsAnErrorNotAGuessedSize() {
@@ -217,6 +285,67 @@ final class ResolveExportSizeTests: XCTestCase {
         XCTAssertGreaterThan(expected.width, 0, "\(layout)/\(resolution)")
         XCTAssertGreaterThan(expected.height, 0, "\(layout)/\(resolution)")
       }
+    }
+  }
+
+  /// A GIF is NOT rendered at the resolution preset, and this method is the only
+  /// thing that tells Flutter so.
+  ///
+  /// `ExportEngine` renders its H.264 intermediate at the GIF long-edge cap for
+  /// the chosen size preset. Answering the uncapped canvas here handed Flutter a
+  /// frame the export never produces, and the caption renderer only ever shrinks
+  /// a bitmap WIDER than the frame — so a cue rasterised for 1920 was drawn 1:1
+  /// on a 480-wide GIF and covered four times the width it was laid out for.
+  ///
+  /// Asserted against `GifExportPolicy.intermediateRenderSize` rather than a
+  /// literal, because "the exporter and this method use one function" is the
+  /// actual contract; a literal would still pass if the two drifted together.
+  /// The Dart tests cannot cover this — they only assert what Flutter SENDS.
+  func testAGifIsReportedAtTheCappedFrameTheExporterWillRender() throws {
+    let projectPath = try makeProject()
+
+    let canvas = try size(resolve(projectPath: projectPath))
+    XCTAssertEqual(canvas, CGSize(width: 1920, height: 1080), "the uncapped canvas")
+
+    let gif = try size(resolve(projectPath: projectPath, format: "gif", gifSize: "small"))
+    XCTAssertEqual(
+      gif,
+      GifExportPolicy.intermediateRenderSize(
+        canvasSize: canvas, maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "small")),
+      "captions would be rasterised for a canvas the GIF's frames never have")
+    XCTAssertLessThan(gif.width, canvas.width, "the small preset must actually cap something")
+  }
+
+  /// Each preset, and the case-insensitive `format` match, because "GIF" is what
+  /// a user-facing enum name round-trips to just as easily as "gif".
+  func testEveryGifSizePresetReportsItsOwnCappedFrame() throws {
+    let projectPath = try makeProject()
+    let canvas = try size(resolve(projectPath: projectPath))
+
+    for (preset, format) in [("small", "gif"), ("medium", "GIF"), ("large", "Gif")] {
+      let reply = try size(
+        resolve(projectPath: projectPath, format: format, gifSize: preset))
+      XCTAssertEqual(
+        reply,
+        GifExportPolicy.intermediateRenderSize(
+          canvasSize: canvas,
+          maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: preset)),
+        "\(format)/\(preset)")
+    }
+  }
+
+  /// Every non-GIF format, and the payload from an older Flutter build that
+  /// sends no `format` at all, must still get the uncapped canvas — that is what
+  /// they have always been given and what their frames really are.
+  func testNonGifFormatsAndOlderPayloadsAreUnaffected() throws {
+    let projectPath = try makeProject()
+    let canvas = try size(resolve(projectPath: projectPath))
+
+    for format in [nil, "mp4", "mov", "m4v"] {
+      XCTAssertEqual(
+        try size(resolve(projectPath: projectPath, format: format, gifSize: "small")),
+        canvas,
+        "format \(format ?? "nil") is not capped")
     }
   }
 

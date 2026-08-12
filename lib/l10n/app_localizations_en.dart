@@ -1929,6 +1929,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get exportSuccess => 'Export successful:';
 
   @override
+  String get exportSavedWithoutSubtitles =>
+      'Exported, but the subtitles could not be burned in:';
+
+  @override
   String get open => 'Open';
 
   @override
@@ -2801,6 +2805,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get captionsStopping => 'Stopping…';
+
+  @override
+  String get captionsEngineBusy =>
+      'Finishing the previous subtitle run. Generate becomes available as soon as it stops.';
 
   @override
   String get storageCaptionModelTitle => 'Speech model';

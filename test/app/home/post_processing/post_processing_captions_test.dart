@@ -622,4 +622,464 @@ void main() {
       containsPair('projectPath', '/tmp/second.clingfyproj'),
     );
   });
+
+  /// Two real bundles, so a transcription started on one can be observed
+  /// landing after the controller has moved to the other.
+  Future<(Directory, Directory)> twoProjects() async {
+    final a = await Directory.systemTemp.createTemp('clingfy_caps_a');
+    final b = await Directory.systemTemp.createTemp('clingfy_caps_b');
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (a.existsSync()) a.deleteSync(recursive: true);
+      if (b.existsSync()) b.deleteSync(recursive: true);
+    });
+    return (a, b);
+  }
+
+  test('a transcript that lands after the user moved on is saved to its own '
+      'recording', () async {
+    // Minutes of compute used to be dropped on the floor here: the "is this
+    // still the open project" guard sat BEFORE the assignment and the
+    // persist, so a job that finished after the user opened the next
+    // recording was neither applied nor written, with no message. Reopening
+    // that recording then showed it as never transcribed.
+    //
+    // Project A has no transcript of its own, which is what makes this write
+    // safe to do behind the user's back: it destroys nothing. The companion
+    // case — A already holding hand-corrected cues — is pinned below, and there
+    // the same run must NOT write.
+    final (projectA, projectB) = await twoProjects();
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+    await pumpEventQueue();
+
+    generateGate!.complete(transcriptReply);
+    await run;
+
+    final stored = await waitForValue(
+      () => PostStateStore.load(projectA.path).trackOfType<CaptionTrack>(),
+      reason: 'the cues belong to the recording they were transcribed from',
+    );
+    expect(stored.captions.map((c) => c.text), ['hello there', 'second line']);
+    expect(
+      post.captions,
+      isEmpty,
+      reason: 'and must not surface on the recording now open',
+    );
+    expect(
+      PostStateStore.load(projectB.path).trackOfType<CaptionTrack>(),
+      isNull,
+      reason: 'nor be written into it',
+    );
+  });
+
+  test(
+    'opening another recording does not hand it the running transcription',
+    () async {
+      // Recording B used to show A's progress bar and A's Stop button, and A's
+      // ticks moved B's bar.
+      final (projectA, projectB) = await twoProjects();
+      final post = await createController(attach: false);
+      post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+      await pumpEventQueue();
+
+      generateGate = Completer<List<Map<String, Object?>>>();
+      final run = post.generateCaptions();
+      await pumpEventQueue();
+      post.updateCaptionsProgress(
+        const JobProgress(
+          job: ProgressJob.captions,
+          stage: ProgressStage.transcribing,
+          fraction: 0.4,
+        ),
+      );
+      expect(post.captionsProgress, 0.4, reason: 'A owns the job');
+
+      post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+      await pumpEventQueue();
+
+      expect(post.isGeneratingCaptions, isFalse);
+      expect(post.captionsProgress, isNull);
+      expect(post.captionsStage, ProgressStage.preparing);
+
+      post.updateCaptionsProgress(
+        const JobProgress(
+          job: ProgressJob.captions,
+          stage: ProgressStage.transcribing,
+          fraction: 0.9,
+        ),
+      );
+      expect(
+        post.captionsProgress,
+        isNull,
+        reason: "a tick from A's job must not move B's bar",
+      );
+
+      generateGate!.complete(transcriptReply);
+      await run;
+      expect(post.captions, isEmpty);
+    },
+  );
+
+  test('switching recordings frees the caption engine', () async {
+    // The engine takes one job at a time. Left running, it makes Generate on
+    // the newly-opened recording do nothing at all — so the job is cancelled,
+    // and until it unwinds no second native job is started.
+    final (projectA, projectB) = await twoProjects();
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+    await pumpEventQueue();
+
+    expect(callsNamed('cancelCaptions'), hasLength(1));
+
+    // Deliberately not awaited: without the engine-busy guard this reaches
+    // native and blocks on the same gate, and a hung test is a far worse signal
+    // than a failed assertion.
+    final second = post.generateCaptions();
+    await pumpEventQueue();
+    expect(
+      callsNamed('generateCaptions'),
+      hasLength(1),
+      reason: 'two concurrent native jobs is a crash, not a queue',
+    );
+
+    generateGate!.complete(transcriptReply);
+    await run;
+    await second;
+  });
+
+  // ---- Export interlock --------------------------------------------------
+
+  test('export is unavailable while a transcription runs', () async {
+    // Export stayed enabled throughout a "Generate again", so pressing it let
+    // the transcription land mid-render and sweep away the caption bitmaps the
+    // export was still reading — a video with subtitles for the first part and
+    // none after, reported as a success.
+    final post = await createController();
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    expect(post.isExportLocked, isTrue);
+
+    generateGate!.complete(transcriptReply);
+    await run;
+    expect(post.isExportLocked, isFalse);
+  });
+
+  test('the editor is NOT locked while a transcription runs', () async {
+    // The two locks are separate for one reason: the editing lock dims the
+    // whole post-processing sidebar behind an IgnorePointer, and the captions
+    // Stop button lives in there with no other route to cancelCaptions(). Fold
+    // them back together and a 626 MB model download becomes unstoppable —
+    // strictly worse than the export race the wide lock was added for.
+    final post = await createController();
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    expect(post.isGeneratingCaptions, isTrue);
+    expect(
+      post.isEditingLocked,
+      isFalse,
+      reason: 'the panel holding Stop must stay interactive',
+    );
+
+    generateGate!.complete(transcriptReply);
+    await run;
+  });
+
+  // ---- An abandoned run must not destroy a transcript --------------------
+
+  test('a stopped run that finishes anyway leaves the stored cues alone', () async {
+    // Native cancellation is POLLED: a job already past its last check returns
+    // a full transcript no matter how firmly it was stopped. Writing that over
+    // the project's stored track is how hand corrections disappeared — the user
+    // pressed Stop and lost work by doing so.
+    final project = await Directory.systemTemp.createTemp('clingfy_caps_stop');
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (project.existsSync()) project.deleteSync(recursive: true);
+    });
+    await PostStateStore.update(
+      project.path,
+      (state) => state.withTrack(
+        const CaptionTrack(
+          captions: [
+            Caption(id: 'c1', startMs: 0, endMs: 1500, text: 'Clingfy'),
+          ],
+        ),
+      ),
+    );
+
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 's', projectPath: project.path);
+    await pumpEventQueue();
+    expect(post.captions.single.text, 'Clingfy');
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+    await post.cancelCaptions();
+
+    // The engine was already past its last cancel check: it completes.
+    generateGate!.complete(transcriptReply);
+    await run;
+    await PostStateStore.settled();
+
+    expect(
+      PostStateStore.load(
+        project.path,
+      ).trackOfType<CaptionTrack>()?.captions.map((c) => c.text),
+      ['Clingfy'],
+      reason: 'the correction the user typed outranks a run they stopped',
+    );
+    expect(
+      post.captions.single.text,
+      'Clingfy',
+      reason: 'nor may it appear on screen — Stop meant stop',
+    );
+  });
+
+  test('a run the user stopped is not stored, even where nothing is at '
+      'risk', () async {
+    // The salvage write exists for cues NOBODY refused — a job the controller
+    // cancelled to free the engine. A Stop the user pressed is a refusal, and
+    // "the project has no transcript, so writing costs nothing" is not a reason
+    // to keep one: it comes back on the next open, and with burn-in the default
+    // destination it can end up rendered into a published video.
+    final project = await Directory.systemTemp.createTemp('clingfy_caps_stop2');
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (project.existsSync()) project.deleteSync(recursive: true);
+    });
+
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 's', projectPath: project.path);
+    await pumpEventQueue();
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+    await post.cancelCaptions();
+
+    // Past its last cancel poll — native completes and returns everything.
+    generateGate!.complete(transcriptReply);
+    await run;
+    await PostStateStore.settled();
+
+    expect(
+      PostStateStore.load(project.path).trackOfType<CaptionTrack>(),
+      isNull,
+      reason: 'Stop means the transcript is gone, not filed away',
+    );
+    expect(post.captions, isEmpty, reason: 'and nothing appears on screen');
+  });
+
+  test(
+    'opening another recording does not resurrect a stopped transcript',
+    () async {
+      // The reported sequence: Stop pressed during the model download, then the
+      // next recording opened while the engine is still unwinding. The switch
+      // cancels too — and when both cancels were the same flag, the switch
+      // relabelled the user's refusal as "the controller moved on", which made the
+      // salvage write legal and put the abandoned transcript on disk.
+      final (projectA, projectB) = await twoProjects();
+      final post = await createController(attach: false);
+      post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+      await pumpEventQueue();
+
+      generateGate = Completer<List<Map<String, Object?>>>();
+      final run = post.generateCaptions();
+      await pumpEventQueue();
+      await post.cancelCaptions();
+
+      post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+      await pumpEventQueue();
+
+      generateGate!.complete(transcriptReply);
+      await run;
+      await PostStateStore.settled();
+
+      expect(
+        PostStateStore.load(projectA.path).trackOfType<CaptionTrack>(),
+        isNull,
+        reason: 'walking away does not un-press Stop',
+      );
+      expect(
+        PostStateStore.load(projectB.path).trackOfType<CaptionTrack>(),
+        isNull,
+        reason: 'nor does it belong to the recording now open',
+      );
+    },
+  );
+
+  test('a salvaged transcript is never written behind the recording on '
+      'screen', () async {
+    // A leaves the screen (which cancels), then comes back before the job has
+    // unwound. The panel in front of the user says "not transcribed"; a write it
+    // cannot see is the same surprise on the next open that the salvage rule
+    // exists to avoid. The cues are simply let go — the user is right there and
+    // can press Generate again.
+    final (projectA, projectB) = await twoProjects();
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+    await pumpEventQueue();
+    post.attachToRecording(sessionId: 'a2', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    generateGate!.complete(transcriptReply);
+    await run;
+    await PostStateStore.settled();
+
+    expect(
+      PostStateStore.load(projectA.path).trackOfType<CaptionTrack>(),
+      isNull,
+      reason: 'the screen and the bundle must not disagree about A',
+    );
+    expect(post.captions, isEmpty);
+  });
+
+  // ---- The engine is busy with someone else ------------------------------
+
+  test('the newly-opened recording says the engine is still busy', () async {
+    // The cancel that frees the engine is best-effort against a download that
+    // cannot be interrupted, so the wait can be minutes. Throughout it,
+    // recording B showed a live "Generate subtitles" whose press the
+    // engine-busy guard silently dropped — a button that does nothing is
+    // indistinguishable from a broken feature.
+    final (projectA, projectB) = await twoProjects();
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+    expect(
+      post.isCaptionsEngineBusyOffScreen,
+      isFalse,
+      reason: 'A owns this job: it gets the progress row, not the notice',
+    );
+
+    post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+    await pumpEventQueue();
+
+    expect(post.isCaptionsEngineBusyOffScreen, isTrue);
+    // Proof that the button had to be dead: the press cannot reach native.
+    final refused = post.generateCaptions();
+    await pumpEventQueue();
+    expect(callsNamed('generateCaptions'), hasLength(1));
+
+    generateGate!.complete(transcriptReply);
+    await run;
+    await refused;
+
+    expect(
+      post.isCaptionsEngineBusyOffScreen,
+      isFalse,
+      reason: 'the engine came free; Generate has to come back with it',
+    );
+  });
+
+  test('coming back to the recording whose job is still unwinding does not '
+      'offer a dead button either', () async {
+    // The corner a "is the job on another project" test misses: the user
+    // returns to A. The job that is still occupying the engine IS A's, so a
+    // project comparison calls the engine free — and hands back exactly the
+    // enabled Generate that does nothing. The progress row is gone (the switch
+    // tore it down), so there would be nothing on screen at all.
+    final (projectA, projectB) = await twoProjects();
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+    await pumpEventQueue();
+    post.attachToRecording(sessionId: 'a2', projectPath: projectA.path);
+    await pumpEventQueue();
+
+    expect(
+      post.isGeneratingCaptions,
+      isFalse,
+      reason: 'no progress row: this run was cancelled on the way out',
+    );
+    expect(post.isCaptionsEngineBusyOffScreen, isTrue);
+    final refused = post.generateCaptions();
+    await pumpEventQueue();
+    expect(callsNamed('generateCaptions'), hasLength(1));
+
+    generateGate!.complete(transcriptReply);
+    await run;
+    await refused;
+    expect(post.isCaptionsEngineBusyOffScreen, isFalse);
+  });
+
+  test('an abandoned regeneration does not overwrite corrections on the '
+      'recording left behind', () async {
+    // The reported sequence: recording A holds hand-corrected cues, the user
+    // presses Regenerate and opens recording B before it finishes. The switch
+    // cancels, but the job is past its last poll and completes — and used to
+    // write its machine transcript straight over A's corrections.
+    final (projectA, projectB) = await twoProjects();
+    await PostStateStore.update(
+      projectA.path,
+      (state) => state.withTrack(
+        const CaptionTrack(
+          captions: [
+            Caption(id: 'c1', startMs: 0, endMs: 1500, text: 'Clingfy'),
+          ],
+        ),
+      ),
+    );
+
+    final post = await createController(attach: false);
+    post.attachToRecording(sessionId: 'a', projectPath: projectA.path);
+    await pumpEventQueue();
+    expect(post.captions.single.text, 'Clingfy');
+
+    generateGate = Completer<List<Map<String, Object?>>>();
+    final run = post.generateCaptions();
+    await pumpEventQueue();
+
+    post.attachToRecording(sessionId: 'b', projectPath: projectB.path);
+    await pumpEventQueue();
+
+    generateGate!.complete(transcriptReply);
+    await run;
+    await PostStateStore.settled();
+
+    expect(
+      PostStateStore.load(
+        projectA.path,
+      ).trackOfType<CaptionTrack>()?.captions.map((c) => c.text),
+      ['Clingfy'],
+      reason: 'minutes of compute are worth less than typed corrections',
+    );
+  });
 }

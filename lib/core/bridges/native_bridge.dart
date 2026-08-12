@@ -1044,6 +1044,16 @@ class NativeBridge {
   /// read. Caption bitmaps are rasterised at this size, so guessing here would
   /// burn in captions scaled for a canvas the video does not have.
   ///
+  /// [format] and [gifSize] are part of the question, not decoration: a GIF is
+  /// NOT rendered at the resolution preset. The exporter renders its
+  /// intermediate at the GIF long-edge cap for the chosen size preset, so a
+  /// bitmap rasterised for the uncapped canvas lands in a frame roughly 1.8x
+  /// smaller than the one it was laid out for — and the caption renderer only
+  /// scales a bitmap DOWN when it is wider than the canvas, so a short cue is
+  /// drawn 1:1 and covers far more of the frame than it should. Omitting them
+  /// (older callers) or talking to an older binary that ignores them yields the
+  /// uncapped size, which is exactly what those builds render.
+  ///
   /// Returns null when native cannot answer — on Windows, on an older binary,
   /// or when the project is unreadable. The caller skips burn-in rather than
   /// rasterising at a made-up size.
@@ -1051,13 +1061,17 @@ class NativeBridge {
     required String projectPath,
     required String layoutPreset,
     required String resolutionPreset,
+    String? format,
+    String? gifSize,
   }) async {
     try {
       final raw = await _nativeBridge
-          .invokeMethod<Map<dynamic, dynamic>>('resolveExportSize', {
+          .invokeMethod<Map<dynamic, dynamic>>(NativeMethod.resolveExportSize, {
             'projectPath': projectPath,
             'layoutPreset': layoutPreset,
             'resolutionPreset': resolutionPreset,
+            'format': format,
+            'gifSize': gifSize,
           });
       final width = (raw?['width'] as num?)?.toDouble();
       final height = (raw?['height'] as num?)?.toDouble();

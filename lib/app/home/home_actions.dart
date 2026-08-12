@@ -382,7 +382,10 @@ class HomeActions {
       return;
     }
 
-    if (postProcessingController.isEditingLocked ||
+    // The wider lock, not [isEditingLocked]: a transcription in flight must not
+    // be able to start an export, but the sidebar it shares a getter with has
+    // to stay live — the captions Stop button is in there.
+    if (postProcessingController.isExportLocked ||
         postProcessingController.hasError) {
       return;
     }
@@ -455,7 +458,20 @@ class HomeActions {
         if (!context.mounted) return;
       }
 
-      _showSavedFileNotice(context, prefix: l10n.exportSuccess, path: path);
+      // A burn-in that was asked for and failed leaves an export payload
+      // byte-identical to a captionless one, so native renders happily and
+      // everything downstream reports success. Saying "Export successful" here
+      // is how someone publishes a video they believe is subtitled.
+      _showSavedFileNotice(
+        context,
+        prefix: postProcessingController.lastExportBurnInFailed
+            ? l10n.exportSavedWithoutSubtitles
+            : l10n.exportSuccess,
+        path: path,
+        tone: postProcessingController.lastExportBurnInFailed
+            ? HomeUiNoticeTone.warning
+            : HomeUiNoticeTone.success,
+      );
       // First successful export is when the crash-reporting disclosure fires.
       // At launch it is a modal about diagnostics in front of someone who has
       // not used the app yet, and the fastest way past it is to dismiss it
@@ -873,12 +889,13 @@ class HomeActions {
     BuildContext context, {
     required String prefix,
     required String path,
+    HomeUiNoticeTone tone = HomeUiNoticeTone.success,
   }) {
     final l10n = AppLocalizations.of(context)!;
     uiState.setNotice(
       HomeUiNotice(
         message: '$prefix $path',
-        tone: HomeUiNoticeTone.success,
+        tone: tone,
         action: HomeUiNoticeAction(
           label: l10n.revealInFinder,
           onPressed: () => settingsController.workspace.revealFile(path),

@@ -27,6 +27,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.isCancelling,
     required this.progress,
     required this.isProcessing,
+    this.engineBusyOffScreen = false,
     required this.onUseMicChanged,
     required this.onUseSystemChanged,
     required this.onGenerate,
@@ -59,6 +60,14 @@ class PostCaptionsSection extends StatelessWidget {
 
   /// Export or preview work in flight; every control is inert.
   final bool isProcessing;
+
+  /// The transcription engine is still unwinding a job this panel is not
+  /// showing — one started on another recording, or one this recording started
+  /// and left. It takes one job at a time, so Generate cannot start and says so:
+  /// an enabled button whose press the controller silently drops is
+  /// indistinguishable from a broken feature, and the wait can be minutes
+  /// because a model download cannot be interrupted.
+  final bool engineBusyOffScreen;
 
   /// Distinguishes "not run yet" from "ran and found nothing", which are very
   /// different messages to show someone.
@@ -109,7 +118,8 @@ class PostCaptionsSection extends StatelessWidget {
       );
     }
 
-    final canGenerate = !isProcessing && (useMic || useSystem);
+    final canGenerate =
+        !isProcessing && !engineBusyOffScreen && (useMic || useSystem);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -177,6 +187,19 @@ class PostCaptionsSection extends StatelessWidget {
                   ),
                 ),
               ),
+
+            // Says why the button above is dead. Without it the disabled
+            // Generate on a freshly-opened recording looks like the feature
+            // failing, with nothing on screen tying it to the transcription
+            // still unwinding on the recording just left.
+            if (engineBusyOffScreen && !isGenerating) ...[
+              const SizedBox(height: AppSidebarTokens.compactGap),
+              AppInlineNotice(
+                key: const Key('captions_engine_busy_notice'),
+                message: l10n.captionsEngineBusy,
+                variant: AppInlineNoticeVariant.info,
+              ),
+            ],
 
             // Shown only while generating, and only the first time — the model
             // download is a one-off and repeating the warning is noise.

@@ -183,4 +183,24 @@ enum GifExportPolicy {
     let height = max(1, (canvasSize.height * scale).rounded())
     return CGSize(width: width, height: height)
   }
+
+  /// The size a GIF export's frames are ACTUALLY rendered at: `renderSize`
+  /// rounded to even dimensions, because the H.264 intermediate the GIF is
+  /// transcoded from wants an even width and height.
+  ///
+  /// Lives here, not in `ExportEngine`, because two callers need the same
+  /// answer and a second copy would drift silently. `ExportEngine` renders at
+  /// it; `resolveExportSize` reports it to Flutter, which rasterises caption
+  /// bitmaps against it. When those two disagree the captions are composited at
+  /// the wrong scale — the renderer only ever shrinks a bitmap that is WIDER
+  /// than the frame, so a short cue drawn for a 1920-wide canvas lands 1:1 on a
+  /// 1080-wide GIF and covers ~1.8x the width it was laid out for.
+  static func intermediateRenderSize(
+    canvasSize: CGSize,
+    maxLongEdge: CGFloat = defaultMaxLongEdge
+  ) -> CGSize {
+    let capped = renderSize(canvasSize: canvasSize, maxLongEdge: maxLongEdge)
+    func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
+    return CGSize(width: even(capped.width), height: even(capped.height))
+  }
 }

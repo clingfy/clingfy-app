@@ -164,6 +164,7 @@ void main() {
       captionsUseSystem: true,
       isGeneratingCaptions: false,
       isCancellingCaptions: false,
+      isCaptionsEngineBusyOffScreen: false,
       captionsProgress: null,
       captionsStageLabel: null,
       hasEverGeneratedCaptions: false,

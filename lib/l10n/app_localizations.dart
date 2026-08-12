@@ -3622,6 +3622,12 @@ abstract class AppLocalizations {
   /// **'Export successful:'**
   String get exportSuccess;
 
+  /// No description provided for @exportSavedWithoutSubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported, but the subtitles could not be burned in:'**
+  String get exportSavedWithoutSubtitles;
+
   /// No description provided for @open.
   ///
   /// In en, this message translates to:
@@ -5115,6 +5121,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Stopping…'**
   String get captionsStopping;
+
+  /// Shown while the transcription engine is still unwinding a job this panel is not showing — started on another recording, or on this one before the user navigated away — which is why Generate is unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing the previous subtitle run. Generate becomes available as soon as it stops.'**
+  String get captionsEngineBusy;
 
   /// No description provided for @storageCaptionModelTitle.
   ///

@@ -1912,6 +1912,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get exportSuccess => 'تم التصدير بنجاح:';
 
   @override
+  String get exportSavedWithoutSubtitles =>
+      'تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:';
+
+  @override
   String get open => 'فتح';
 
   @override
@@ -2786,6 +2790,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get captionsStopping => 'جارٍ الإيقاف…';
+
+  @override
+  String get captionsEngineBusy =>
+      'يجري إنهاء عملية الترجمة السابقة. سيتاح الإنشاء فور توقفها.';
 
   @override
   String get storageCaptionModelTitle => 'نموذج الكلام';
