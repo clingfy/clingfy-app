@@ -49,6 +49,7 @@ void main() {
     bool isCancelling = false,
     double? progress,
     bool isProcessing = false,
+    bool engineBusyOffScreen = false,
     bool hasEverGenerated = false,
     bool failed = false,
     ValueChanged<bool>? onUseMicChanged,
@@ -68,6 +69,7 @@ void main() {
       isCancelling: isCancelling,
       progress: progress,
       isProcessing: isProcessing,
+      engineBusyOffScreen: engineBusyOffScreen,
       hasEverGenerated: hasEverGenerated,
       failed: failed,
       onUseMicChanged: onUseMicChanged ?? (_) {},
@@ -210,6 +212,47 @@ void main() {
     await tester.tap(find.byKey(generateKey));
     await tester.pump();
     expect(fired, 0);
+  });
+
+  testWidgets('generate is dead — and says why — while the engine finishes '
+      'another recording', (tester) async {
+    // The engine takes one job at a time, and the cancel that frees it is
+    // best-effort against a model download that cannot be interrupted. For as
+    // long as that takes, this recording's Generate looked perfectly live and
+    // the controller dropped every press on the floor.
+    var fired = 0;
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(
+      host(section(engineBusyOffScreen: true, onGenerate: () => fired++)),
+    );
+
+    await tester.tap(find.byKey(generateKey));
+    await tester.pump();
+    expect(
+      fired,
+      0,
+      reason: 'the press cannot start a job, so it must not try',
+    );
+    expect(
+      find.text(l10n.captionsEngineBusy),
+      findsOneWidget,
+      reason: 'a grey button with no reason reads as the feature being broken',
+    );
+  });
+
+  testWidgets('an idle engine leaves generate live and says nothing', (
+    tester,
+  ) async {
+    // The control for the test above: the notice is for a genuinely occupied
+    // engine only. Shown always, it would be trained away.
+    var fired = 0;
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    await tester.pumpWidget(host(section(onGenerate: () => fired++)));
+
+    await tester.tap(find.byKey(generateKey));
+    await tester.pump();
+    expect(fired, 1);
+    expect(find.text(l10n.captionsEngineBusy), findsNothing);
   });
 
   testWidgets('the button says regenerate once cues exist', (tester) async {

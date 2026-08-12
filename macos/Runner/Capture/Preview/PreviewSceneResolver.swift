@@ -555,10 +555,21 @@ extension ScreenRecorderFacade {
   /// Deliberately runs the SAME `resolveTargetSize` the exporter runs. A second
   /// implementation would drift, and the failure would be silent: captions
   /// sized for a canvas the video does not have.
+  ///
+  /// `format`/`gifSize` are asked for because a GIF is NOT rendered at the
+  /// resolution preset. The exporter renders its H.264 intermediate at the GIF
+  /// long-edge cap for the chosen size preset, so answering the uncapped size
+  /// here hands Flutter a canvas the frames never have — and the caption
+  /// renderer only ever shrinks a bitmap WIDER than the frame, so a short cue
+  /// rasterised for 1920 is drawn 1:1 on a 1080-wide GIF and covers ~1.8x the
+  /// width it was laid out for. Both are optional: an older Flutter build sends
+  /// neither and gets the uncapped size, which is what it has always used.
   func resolveExportSize(
     projectPath: String,
     layout: String,
     resolution: String,
+    format: String? = nil,
+    gifSize: String? = nil,
     result: @escaping FlutterResult
   ) {
     guard let components = resolvePreviewSceneComponents(projectPath: projectPath) else {
@@ -590,9 +601,18 @@ extension ScreenRecorderFacade {
 
     let target = resolveTargetSize(
       sourceSize: sourceSize, layout: layout, resolution: resolution)
+    // Same cap, from the same helper, that `ExportEngine` applies to its render
+    // target for a GIF. Non-GIF formats — and payloads that omit `format` —
+    // pass through untouched.
+    let rendered: CGSize =
+      format?.lowercased() == "gif"
+      ? GifExportPolicy.intermediateRenderSize(
+        canvasSize: target,
+        maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: gifSize))
+      : target
     result([
-      "width": Int(target.width.rounded()),
-      "height": Int(target.height.rounded()),
+      "width": Int(rendered.width.rounded()),
+      "height": Int(rendered.height.rounded()),
     ])
   }
 

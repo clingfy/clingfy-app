@@ -1948,6 +1948,10 @@ class AppLocalizationsRo extends AppLocalizations {
   String get exportSuccess => 'Export reușit:';
 
   @override
+  String get exportSavedWithoutSubtitles =>
+      'Exportat, dar subtitrările nu au putut fi incluse în imagine:';
+
+  @override
   String get open => 'Deschide';
 
   @override
@@ -2837,6 +2841,10 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get captionsStopping => 'Se oprește…';
+
+  @override
+  String get captionsEngineBusy =>
+      'Se finalizează rularea anterioară a subtitrărilor. Generarea devine disponibilă imediat ce se oprește.';
 
   @override
   String get storageCaptionModelTitle => 'Model de vorbire';

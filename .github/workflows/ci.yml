@@ -272,6 +272,29 @@ jobs:
           # that hung for 180-360s each on a runner with no microphone. All are
           # fixed, so nothing here is skipped. If a -skip-testing line ever
           # reappears, it should say why and name what would remove it.
+          #
+          # An allowlist has the same failure mode as the selector it replaced,
+          # one class at a time: a NEW class is dead in CI until someone adds it
+          # here, and nothing fails to say so. That is what happened to the whole
+          # captions surface — ~775 of 824 new native test lines never ran, and a
+          # reviewer proved it by mutating the GIF long-edge cap in
+          # PreviewSceneResolver: the only class that failed was
+          # ResolveExportSizeTests, which was not listed. The caption /
+          # export-size block below is the fix. It is all unit-level work: no
+          # GPU, no model download, no network. CaptionBurnInSeat and
+          # ResolveExportSize do run real AVFoundation encodes, which is what the
+          # other export classes here already do; measured together the block
+          # adds ~30s wall on this developer's machine.
+          #
+          # Deliberately NOT added: CaptionBurnInProofTests. It composites a
+          # burned-in .mov for a human to look at, from bitmaps that
+          # `flutter test test/core/captions/caption_proof_bitmaps.dart` writes
+          # to /tmp — absent on a runner, so it skips and can never fail here.
+          #
+          # This list is still far short of the 93 classes in RunnerTests. Adding
+          # the rest is worth doing, but it is a separate change: several have
+          # never run in CI and would need triaging first, and the point of this
+          # block is that the code THIS branch changes is covered.
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
@@ -323,6 +346,23 @@ jobs:
             -only-testing:RunnerTests/GifEncoderTests \
             -only-testing:RunnerTests/GifExportSessionTests \
             -only-testing:RunnerTests/ColorTransferFunctionTests \
+            -only-testing:RunnerTests/CaptionAudioDecoderTests \
+            -only-testing:RunnerTests/CaptionBurnInSeatTests \
+            -only-testing:RunnerTests/CaptionCueTrackTests \
+            -only-testing:RunnerTests/CaptionModelStoreTests \
+            -only-testing:RunnerTests/CaptionOverlayRendererTests \
+            -only-testing:RunnerTests/CaptionPreviewTrackTests \
+            -only-testing:RunnerTests/CaptionsCapabilityTests \
+            -only-testing:RunnerTests/CaptionsServiceTests \
+            -only-testing:RunnerTests/TranscriptionJobTests \
+            -only-testing:RunnerTests/WhisperKitTranscriberTests \
+            -only-testing:RunnerTests/ExportCaptionWiringTests \
+            -only-testing:RunnerTests/ExportEngineTests \
+            -only-testing:RunnerTests/ExportPrepTests \
+            -only-testing:RunnerTests/ExportVideoRequestParsingTests \
+            -only-testing:RunnerTests/PreviewSceneResolverTests \
+            -only-testing:RunnerTests/ResolveExportSizeTests \
+            -only-testing:RunnerTests/StorageDiagnosticsServiceTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts

@@ -113,7 +113,26 @@ final class ScreenRecorderFacade: NSObject {
   /// instance, its cancel flag. Deliberately not on `AudioComputeQueue` — see
   /// CaptionsService for why a minutes-long job cannot share the queue that an
   /// export preamble blocks on.
-  let captionsService = CaptionsService()
+  ///
+  /// `private(set)` rather than `let` for the test seam below: the setter is
+  /// file-private, so the app cannot swap the service out at runtime, and a test
+  /// can still reach `deleteCaptionModel`'s refusal path without a 626 MB model.
+  private(set) var captionsService = CaptionsService()
+
+  #if DEBUG
+    /// Test seam: substitutes a captions service backed by a fake engine.
+    ///
+    /// `deleteCaptionModel` removes ~730 MB and must refuse when the unload was
+    /// declined — the engine skips the unload while a cancelled job's abandoned
+    /// task still owns the pipeline, and deleting then takes the weights out
+    /// from under a live Core ML mapping while an uninterruptible download is
+    /// still writing into the same folder. That refusal is unreachable from a
+    /// test without this: the real engine only declines after a real cancelled
+    /// download.
+    func useCaptionsServiceForTesting(_ service: CaptionsService) {
+      captionsService = service
+    }
+  #endif
   var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
@@ -1563,6 +1582,22 @@ final class ScreenRecorderFacade: NSObject {
     onProgress: ((Double) -> Void)? = nil,
     result: @escaping FlutterResult
   ) {
+    // Hand the speech model back before the memory-hungry part starts.
+    //
+    // A loaded WhisperKit pipeline is several hundred megabytes and a 4K export
+    // is the peak-memory moment in this app, so holding both at once is the one
+    // case worth avoiding. `CaptionsService` already releases at the end of
+    // every job; this is the second gate, for the pipeline a job could not hand
+    // back at the time — the release is refused while a cancelled job's
+    // abandoned task still owns the engine, and an export is exactly when that
+    // stranded model costs the most.
+    //
+    // The result is deliberately ignored HERE and only here: a refusal means a
+    // cancelled job still owns the engine, and this is an optimisation, not a
+    // precondition — the export proceeds either way and the next one asks again.
+    // The delete path is the caller that must not ignore it.
+    captionsService.releaseModel { _ in }
+
     // Slice 8 / PR 27: orchestration moved to ExportEngine. The facade
     // assembles the typed Input + dependency closures and delegates;
     // ExportPrep helpers (`resolveTargetSize`, `exportFormatInfo`,

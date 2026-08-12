@@ -52,14 +52,21 @@ protocol CaptionTranscriber {
   /// pipeline is alive frees no space and leaves the engine able to keep
   /// transcribing from an inode with no name — the disk stays full and the UI
   /// reports it empty.
-  func releaseModel() async
+  ///
+  /// - Returns: `false` when the engine DECLINED, because something it does not
+  ///   control still owns the weights (a cancelled job's abandoned task). A
+  ///   caller that deletes files must treat that as a refusal: this used to
+  ///   return the same nothing whether it had unloaded a pipeline or skipped
+  ///   entirely, and `deleteCaptionModel` removed 730 MB on the strength of it.
+  @discardableResult
+  func releaseModel() async -> Bool
 }
 
 extension CaptionTranscriber {
   // Defaulted so the existing test doubles keep compiling: only the real engine
-  // owns a model on disk.
+  // owns a model on disk. A double holding nothing has, trivially, released it.
   var isEngineBusy: Bool { false }
-  func releaseModel() async {}
+  func releaseModel() async -> Bool { true }
 }
 
 /// What a transcriber is doing, and how far in.
@@ -186,4 +193,53 @@ enum TranscriptionError: Error, Equatable {
   case noAudioTrack(URL)
   case modelUnavailable(String)
   case engine(String)
+}
+
+extension TranscriptionError {
+
+  /// Re-expresses a decode failure in this taxonomy.
+  ///
+  /// `CaptionAudioDecoder` throws its own `DecodeError`, and a file AVFoundation
+  /// refuses surfaces as a plain `NSError` from the reader. Neither is a
+  /// `TranscriptionError` — and every layer above a transcriber decides what to
+  /// show the user by asking `error as? TranscriptionError`: the service picks
+  /// an info log over an error log, the bridge picks `CAPTIONS_CANCELLED` over
+  /// `CAPTIONS_FAILED`, and the panel picks silence over a red notice.
+  ///
+  /// So a decode error that crossed the seam untranslated failed all three
+  /// casts at once. Decoding runs FIRST, before any model download, which made
+  /// the common case the worst one: the user pressed Stop, and got "Couldn't
+  /// generate subtitles" plus a Sentry error for doing exactly what they meant.
+  init(decodeFailure error: Error) {
+    if let already = error as? TranscriptionError {
+      self = already
+      return
+    }
+    guard let decode = error as? CaptionAudioDecoder.DecodeError else {
+      self = .engine(String(describing: error))
+      return
+    }
+    switch decode {
+    case .cancelled:
+      self = .cancelled
+    case .noAudioTrack(let url):
+      self = .noAudioTrack(url)
+    case .unreadable(let url):
+      // No `unreadable` case here, and adding one would widen a taxonomy the
+      // bridge already pins. The path is what makes it diagnosable.
+      self = .engine("Audio could not be decoded: \(url.path)")
+    }
+  }
+
+  /// Passes an error through untouched unless it is a decode failure.
+  ///
+  /// The net above the protocol, not below it: `transcribe(url:…)` is documented
+  /// to throw `TranscriptionError`, but the decode that every implementation
+  /// must do throws a different type, and one leak reports a deliberate cancel
+  /// as a failure. An engine's own errors are left alone — only the known leak
+  /// is translated.
+  static func normalizing(_ error: Error) -> Error {
+    guard error is CaptionAudioDecoder.DecodeError else { return error }
+    return TranscriptionError(decodeFailure: error)
+  }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show Tristate;
 
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
@@ -13,6 +14,7 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:provider/provider.dart';
@@ -324,6 +326,152 @@ void main() {
     expect(harness.post.sceneHasAudio, isNull);
     expect(harness.post.sceneMicGainApplies, isNull);
     await tester.pump(const Duration(milliseconds: 50));
+  });
+
+  testWidgets('the captions Stop button stays pressable while a transcription '
+      'runs', (tester) async {
+    // The regression this pins: `isEditingLocked` grew a captions term, the
+    // container feeds it to an IgnorePointer over the WHOLE sidebar, and the
+    // Stop button lives inside that subtree — its only call site in the app.
+    // Generate, and the 626 MB model download could no longer be stopped.
+    await clearCommonNativeMocks();
+    await installCommonNativeMocks();
+
+    final calls = <MethodCall>[];
+    // Held open so the transcription can be observed mid-flight, which is the
+    // only moment the Stop button exists at all.
+    final gate = Completer<List<Map<String, Object?>>>();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      calls.add(call);
+      switch (call.method) {
+        case 'captionsCapability':
+          return {
+            'available': true,
+            'hasMicAudio': true,
+            'hasSystemAudio': true,
+          };
+        case 'generateCaptions':
+          return gate.future;
+        default:
+          return null;
+      }
+    });
+
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+    harness.post.attachToRecording(
+      sessionId: 'sess-captions-stop',
+      projectPath: '/tmp/p.clingfyproj',
+    );
+
+    // selectedIndex 3 = Export tab, where PostCaptionsSection lives.
+    await tester.pumpWidget(buildTestApp(harness, selectedIndex: 3));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final run = harness.post.generateCaptions();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(harness.post.isGeneratingCaptions, isTrue);
+
+    final stop = find.byKey(const Key('captions_cancel_button'));
+    expect(stop, findsOneWidget, reason: 'the progress row is up');
+    expect(
+      stop.hitTestable(),
+      findsOneWidget,
+      reason: 'an IgnorePointer over the sidebar takes it out of the hit test',
+    );
+
+    await tester.tap(stop);
+    await tester.pump();
+
+    expect(
+      calls.where((c) => c.method == 'cancelCaptions'),
+      hasLength(1),
+      reason: 'the press has to actually reach the engine, not just render',
+    );
+    expect(harness.post.isCancellingCaptions, isTrue);
+
+    gate.complete(const []);
+    await run;
+    await tester.pump();
+  });
+
+  testWidgets('the newly-opened recording gets a dead Generate button with a '
+      'reason on it', (tester) async {
+    // End to end through the seam the controller state has to cross: opening
+    // another recording cancels the transcription, but the cancel is
+    // best-effort against a download that cannot be interrupted, so the engine
+    // stays occupied. Recording B rendered a live "Generate subtitles" for that
+    // whole window and every press was silently dropped.
+    await clearCommonNativeMocks();
+    await installCommonNativeMocks();
+
+    // Held open so the engine can be observed still occupied after the switch.
+    final gate = Completer<List<Map<String, Object?>>>();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      switch (call.method) {
+        case 'captionsCapability':
+          return {
+            'available': true,
+            'hasMicAudio': true,
+            'hasSystemAudio': true,
+          };
+        case 'generateCaptions':
+          return gate.future;
+        default:
+          return null;
+      }
+    });
+
+    final harness = await createHarness();
+    addTearDown(harness.dispose);
+    harness.post.attachToRecording(
+      sessionId: 'sess-a',
+      projectPath: '/tmp/a.clingfyproj',
+    );
+
+    // selectedIndex 3 = Export tab, where PostCaptionsSection lives.
+    await tester.pumpWidget(buildTestApp(harness, selectedIndex: 3));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final run = harness.post.generateCaptions();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    harness.post.attachToRecording(
+      sessionId: 'sess-b',
+      projectPath: '/tmp/b.clingfyproj',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    final generate = find.byKey(const Key('captions_generate_button'));
+    expect(generate, findsOneWidget, reason: 'B is not the one transcribing');
+    expect(
+      tester.widget<FilledButton>(generate).onPressed,
+      isNull,
+      reason: 'the engine is not free; a live button here does nothing at all',
+    );
+    expect(find.text(l10n.captionsEngineBusy), findsOneWidget);
+
+    gate.complete(const []);
+    await run;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      tester.widget<FilledButton>(generate).onPressed,
+      isNotNull,
+      reason: 'the engine came free, so B can transcribe now',
+    );
+    expect(find.text(l10n.captionsEngineBusy), findsNothing);
   });
 
   testWidgets('container rebuilds the color sliders when the grade changes '

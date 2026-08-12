@@ -151,6 +151,10 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool captionsUseSystem;
   final bool isGeneratingCaptions;
   final bool isCancellingCaptions;
+
+  /// A transcription this panel is not presenting is still unwinding, so
+  /// Generate cannot start one. See [PostCaptionsSection.engineBusyOffScreen].
+  final bool isCaptionsEngineBusyOffScreen;
   final double? captionsProgress;
   final String? captionsStageLabel;
   final bool hasEverGeneratedCaptions;
@@ -312,6 +316,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsUseSystem,
     required this.isGeneratingCaptions,
     required this.isCancellingCaptions,
+    required this.isCaptionsEngineBusyOffScreen,
     required this.captionsProgress,
     required this.captionsStageLabel,
     required this.hasEverGeneratedCaptions,
@@ -534,6 +539,7 @@ class PostProcessingSidebar extends StatelessWidget {
         useSystem: captionsUseSystem,
         isGenerating: isGeneratingCaptions,
         isCancelling: isCancellingCaptions,
+        engineBusyOffScreen: isCaptionsEngineBusyOffScreen,
         progress: captionsProgress,
         stageLabel: captionsStageLabel,
         isProcessing: isProcessing,

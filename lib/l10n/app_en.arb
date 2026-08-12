@@ -655,6 +655,7 @@
   "externalProjectOpenBlocked": "Finish the current recording or preview transition before opening another project.",
   "externalProjectOpenFailed": "Couldn't open that Clingfy project.",
   "exportSuccess": "Export successful:",
+  "exportSavedWithoutSubtitles": "Exported, but the subtitles could not be burned in:",
   "open": "Open",
   "cursorDataMissing": "Cursor data missing",
   "voiceBoost": "Voice Boost",
@@ -972,6 +973,10 @@
   "captionsStopping": "Stopping…",
   "@captionsStopping": {
     "description": "Shown after the user cancels a transcription, while the engine finishes unwinding."
+  },
+  "captionsEngineBusy": "Finishing the previous subtitle run. Generate becomes available as soon as it stops.",
+  "@captionsEngineBusy": {
+    "description": "Shown while the transcription engine is still unwinding a job this panel is not showing — started on another recording, or on this one before the user navigated away — which is why Generate is unavailable."
   },
   "storageCaptionModelTitle": "Speech model",
   "storageCaptionModelDescription": "The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.",

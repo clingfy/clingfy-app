@@ -117,8 +117,14 @@ class HomeToolbar extends StatelessWidget {
         final postHasError = context.select<PostProcessingController, bool>(
           (p) => p.hasError,
         );
-        final postEditingLocked = context
-            .select<PostProcessingController, bool>((p) => p.isEditingLocked);
+        // The wider lock: this drives the Export button alone, and a
+        // transcription in flight must not be able to start an export. The
+        // narrower [PostProcessingController.isEditingLocked] belongs to the
+        // sidebar, which has to stay live so the captions Stop button can be
+        // pressed.
+        final postExportLocked = context.select<PostProcessingController, bool>(
+          (p) => p.isExportLocked,
+        );
         final previewReady = context.select<RecordingController, bool>(
           (r) => r.canInteractWithPreview,
         );
@@ -212,15 +218,20 @@ class HomeToolbar extends StatelessWidget {
               elapsedText: d.$1,
               countdownText: d.$2,
               notice: resolvedNotice,
-              onExport:
-                  (previewReady &&
-                      !isRecording &&
-                      !postEditingLocked &&
-                      !postHasError)
+              // Handed over whenever exporting is a thing this screen does at
+              // all. Whether it can run RIGHT NOW is a separate question, and
+              // answering it by withholding the callback made the button vanish
+              // mid-session — the action has to stay visible and go grey, or
+              // there is nothing on screen for the disabled state to explain.
+              onExport: (previewReady && !isRecording && !postHasError)
                   ? onExport
                   : null,
               exportStatus: exportStatus,
-              isProcessing: postEditingLocked,
+              isExportUnavailable: postExportLocked,
+              // Deliberately NOT postExportLocked: that also covers a running
+              // transcription, and dressing the button as an export in progress
+              // tells the user a file is being written when none is.
+              isExporting: exportToolbarState.exporting,
               isInspectorVisible: isInspectorVisible,
               onToggleInspector: onToggleInspector,
               showPreviewActions: showPreviewActions,
