@@ -79,6 +79,7 @@ add_executable(runner_tests
   "zoom_hysteresis_test.cpp"
   "zoom_timeline_builder_test.cpp"
   "audio_format_test.cpp"
+  "wasapi_stream_format_test.cpp"
   "audio_sidecar_writer_test.cpp"
   "rnnoise_denoiser_test.cpp"
   "audio_mixer_test.cpp"
