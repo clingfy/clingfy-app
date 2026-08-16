@@ -53,6 +53,8 @@ add_library(runner_bridge STATIC
   "Bridge/method_dispatcher.cpp"
   "Bridge/method_router.cpp"
   "Bridge/camera_overlay_move_publisher.cpp"
+  "Bridge/device_event_publisher.cpp"
+  "Bridge/Devices/device_change_watcher.cpp"
   "Bridge/event_channel_stubs.cpp"
   "Bridge/export_progress_publisher.cpp"
   "Bridge/indicator_event_publisher.cpp"
