@@ -16,6 +16,7 @@
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
+#include <winrt/Windows.Security.Authorization.AppCapabilityAccess.h>
 
 #include <atomic>
 #include <functional>
@@ -23,6 +24,7 @@
 #include <mutex>
 #include <utility>
 
+#include "Bridge/native_log_publisher.h"
 #include "Capture/captured_video_frame.h"
 #include "Graphics/d3d_device.h"
 
@@ -72,6 +74,71 @@ dxd3d::IDirect3DDevice WinRTDeviceFromD3D11(ID3D11Device* d3d_device) {
     return nullptr;
   }
   return inspectable.as<dxd3d::IDirect3DDevice>();
+}
+
+// Ask the OS, once per process, for permission to capture WITHOUT the yellow
+// border. Windows 11 22H2 (build 22621) and later ignore
+// `IsBorderRequired(false)` unless the app holds the borderless capability.
+//
+// This app ships unpackaged (Inno Setup, per-user — not MSIX), so the route is
+// this runtime request; the `graphicsCaptureWithoutBorder` restricted
+// capability in an appx manifest does not apply to us.
+//
+// FIRE AND FORGET, on purpose. This sits on the recording-start path, and a
+// permission round-trip that blocks there would turn a consent prompt — or a
+// hung broker — into a recording that never starts. A dropped border is a
+// cosmetic nicety; a recording that will not start is a lost take. The cost of
+// not blocking is that the FIRST capture of a fresh install may still show the
+// border, with every later one borderless.
+//
+// Everything is wrapped: the whole type is absent before 22621, so even naming
+// it can throw at activation.
+void RequestBorderlessCaptureAccessOnce() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    try {
+      namespace access = winrt::Windows::Security::Authorization::AppCapabilityAccess;
+      auto op = wgc::GraphicsCaptureAccess::RequestAccessAsync(
+          wgc::GraphicsCaptureAccessKind::Borderless);
+      // The operation keeps itself alive until it completes, so letting the
+      // local go out of scope here is safe.
+      op.Completed([](auto const& sender, winrt::Windows::Foundation::AsyncStatus) {
+        try {
+          const bool allowed =
+              sender.GetResults() == access::AppCapabilityAccessStatus::Allowed;
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Capture", allowed
+                             ? "Borderless capture access allowed."
+                             : "Borderless capture access denied; the yellow "
+                               "capture border stays visible.");
+        } catch (winrt::hresult_error const&) {
+        }
+      });
+    } catch (winrt::hresult_error const&) {
+      // Pre-22621: no such API. IsBorderRequired alone governs there, and on
+      // Windows 10 not even that exists — the border simply stays.
+    }
+  });
+}
+
+// Best-effort "turn the yellow capture border off" for a freshly created
+// session. Returns nothing because there is no recovery: a host that refuses
+// keeps the border, which is exactly the pre-existing behaviour.
+//
+// The property lives on IGraphicsCaptureSession3, NOT on the base interface,
+// so the `try_as` doubles as the version guard — it simply yields null on any
+// build below Windows 11 21H2 (10.0.22000), with no ApiInformation dependency.
+// The app's documented floor is Windows 10 1903, so that null path is a real,
+// supported configuration and not an error worth reporting.
+void TryDisableCaptureBorder(wgc::GraphicsCaptureSession const& session) {
+  try {
+    if (auto session3 = session.try_as<wgc::IGraphicsCaptureSession3>()) {
+      session3.IsBorderRequired(false);
+    }
+  } catch (winrt::hresult_error const&) {
+    // Present but refusing (missing capability on 22621+, policy, etc.) —
+    // keep the border rather than failing the capture.
+  }
 }
 
 }  // namespace
@@ -289,6 +356,15 @@ std::optional<WgcCaptureError> WgcDisplayCaptureBackend::Impl::StartWithItem(
   } catch (winrt::hresult_error const&) {
     // Older OS without the property — leave the default (cursor-on).
   }
+  // Drop the OS yellow capture border (Phase 7 decision D8). One insertion
+  // point covers display, window AND area capture, since all three funnel
+  // through StartWithItem. macOS has no equivalent border and no toggle for
+  // one, so parity here means "always off" rather than a user setting.
+  //
+  // Must happen BEFORE StartCapture: the border is decided when the session
+  // starts, so setting it afterwards is a no-op on some builds.
+  RequestBorderlessCaptureAccessOnce();
+  TryDisableCaptureBorder(session_);
   session_.StartCapture();
   return std::nullopt;
 }
