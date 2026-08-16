@@ -2,6 +2,8 @@
 
 #include <flutter/event_stream_handler_functions.h>
 
+#include "Bridge/Devices/device_change_watcher.h"
+#include "Bridge/device_event_publisher.h"
 #include "Bridge/native_channel_names.h"
 #include "Bridge/player_event_publisher.h"
 #include "Bridge/project_open_coordinator.h"
@@ -11,28 +13,6 @@
 namespace clingfy::bridge {
 
 namespace {
-
-// A stream handler that accepts the listen call, ignores the sink, and never
-// emits anything. Real handlers will replace this in later phases.
-class NoopStreamHandler
-    : public flutter::StreamHandler<flutter::EncodableValue> {
- public:
-  NoopStreamHandler() = default;
-
- protected:
-  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
-  OnListenInternal(
-      const flutter::EncodableValue* /*arguments*/,
-      std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& /*events*/)
-      override {
-    return nullptr;
-  }
-
-  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
-  OnCancelInternal(const flutter::EncodableValue* /*arguments*/) override {
-    return nullptr;
-  }
-};
 
 // Phase 3E forwards listen / cancel for the workflow channel to the
 // process-level `WorkflowEventPublisher`. The recording engine emits
@@ -116,10 +96,42 @@ class UpdaterStreamHandler
   }
 };
 
+// Device hot-plug. The last channel still on the Phase-0 stub path: Dart's
+// DeviceController has always subscribed here and never heard anything, so a
+// mic plugged in mid-session left every list stale.
+//
+// The OS listeners start on FIRST LISTEN rather than at construction. There is
+// no point holding a WASAPI notification registration and a message-only
+// window open when nobody is subscribed, and starting here means the watcher's
+// lifetime is exactly the lifetime of a live sink.
+class DeviceStreamHandler
+    : public flutter::StreamHandler<flutter::EncodableValue> {
+ public:
+  DeviceStreamHandler() = default;
+
+ protected:
+  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
+  OnListenInternal(
+      const flutter::EncodableValue* /*arguments*/,
+      std::unique_ptr<flutter::EventSink<flutter::EncodableValue>>&& events)
+      override {
+    DeviceEventPublisher::Instance().SetSink(std::move(events));
+    devices::DeviceChangeWatcher::Instance().Start();
+    return nullptr;
+  }
+
+  std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>>
+  OnCancelInternal(const flutter::EncodableValue* /*arguments*/) override {
+    devices::DeviceChangeWatcher::Instance().Stop();
+    DeviceEventPublisher::Instance().ClearSink();
+    return nullptr;
+  }
+};
+
 }  // namespace
 
 EventChannelStubs::EventChannelStubs(flutter::BinaryMessenger* messenger) {
-  Register(messenger, channel::kScreenRecorderEvents);
+  RegisterDevices(messenger);
   RegisterPlayer(messenger);
   RegisterWorkflow(messenger);
   RegisterUpdater(messenger);
@@ -137,14 +149,19 @@ EventChannelStubs::~EventChannelStubs() {
   PlayerEventPublisher::Instance().ClearSink();
   WorkflowEventPublisher::Instance().ClearSink();
   UpdaterEventPublisher::Instance().ClearSink();
+  // Stop the OS listeners BEFORE dropping the sink: a WASAPI callback racing
+  // teardown would otherwise schedule an emit against a dying engine.
+  devices::DeviceChangeWatcher::Instance().Stop();
+  DeviceEventPublisher::Instance().ClearSink();
+  DeviceEventPublisher::Instance().ClearObservers();
 }
 
-void EventChannelStubs::Register(flutter::BinaryMessenger* messenger,
-                                 const char* name) {
+void EventChannelStubs::RegisterDevices(flutter::BinaryMessenger* messenger) {
   auto channel =
       std::make_unique<flutter::EventChannel<flutter::EncodableValue>>(
-          messenger, name, &flutter::StandardMethodCodec::GetInstance());
-  channel->SetStreamHandler(std::make_unique<NoopStreamHandler>());
+          messenger, channel::kScreenRecorderEvents,
+          &flutter::StandardMethodCodec::GetInstance());
+  channel->SetStreamHandler(std::make_unique<DeviceStreamHandler>());
   channels_.push_back(std::move(channel));
 }
 
