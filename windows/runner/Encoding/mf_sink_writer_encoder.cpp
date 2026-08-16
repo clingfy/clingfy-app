@@ -155,6 +155,15 @@ std::optional<EncoderError> MfSinkWriterEncoder::ConfigureVideoMediaTypes() {
   output_type->SetUINT32(MF_MT_AVG_BITRATE, config_.avg_bitrate_bps);
   output_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
   output_type->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
+  // Issue #294: bound the GOP so a seek's keyframe lead-in has a known worst
+  // case. Set on the OUTPUT type before AddStream, which is the only point
+  // the sink writer reads it. Best-effort by design — the return is ignored
+  // because an MFT that rejects or ignores the hint must still record, it
+  // just keeps the encoder's own spacing (see the field's comment).
+  if (config_.keyframe_interval_frames > 0) {
+    output_type->SetUINT32(MF_MT_MAX_KEYFRAME_SPACING,
+                           config_.keyframe_interval_frames);
+  }
   hr = ::MFSetAttributeSize(output_type.Get(), MF_MT_FRAME_SIZE,
                              config_.width, config_.height);
   if (FAILED(hr)) {

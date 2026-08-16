@@ -413,6 +413,11 @@ std::optional<RecordingError> RecordingEngine::Start(
   encoder_config.width = EvenCaptureDimension(width);
   encoder_config.height = EvenCaptureDimension(height);
   encoder_config.fps = static_cast<std::uint32_t>(request.frame_rate);
+  // Issue #294: the RECORDING is the file every later seek pays a lead-in
+  // against — scrub, cut-gap jump, reorder boundary, audio chase — so this is
+  // the site that matters most.
+  encoder_config.keyframe_interval_frames =
+      clingfy::encoding::ResolveKeyframeIntervalFrames(encoder_config.fps);
   encoder_config.output_path =
       clingfy::encoding::ResolveTempMp4Path(request.session_id);
 
