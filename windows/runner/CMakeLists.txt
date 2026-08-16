@@ -79,6 +79,7 @@ add_library(runner_bridge STATIC
   "Audio/gain_processor.cpp"
   "Audio/audio_packet_queue.cpp"
   "Audio/wasapi_audio_capture.cpp"
+  "Audio/wasapi_stream_format.cpp"
   "Audio/VoiceCleanup/rnnoise_denoiser.cpp"
   "Bridge/Devices/audio_source_enumerator.cpp"
   "Bridge/Devices/device_probe_log.cpp"
