@@ -21,6 +21,7 @@
 #include "Capture/Export/export_pipeline.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
+#include "Encoding/mf_encoder_config.h"
 #include "Services/save_folder.h"
 
 namespace clingfy::capture::export_ {
@@ -393,13 +394,27 @@ PassthroughResult ExportPassthroughCopy(
   // passthrough landmine). Reorder/overlap bake too (3b-2, per-range seeks).
   // Audio separation: a separated recording must compose even at identity
   // settings — the byte-copy would ship the premix (see the probe above).
+  // Codec: the recording is always H.264, so asking for HEVC is a real change
+  // to the output and must force a re-encode. The byte-copy would otherwise
+  // ship the H.264 source while reporting success — the same passthrough
+  // landmine as an ungraded or uncut file, and the reason a codec setting can
+  // look inert even after the encoder learns HEVC.
+  //
+  // Gated on AVAILABILITY, not just the request: on a machine with no HEVC
+  // encoder the export is going to produce H.264 either way, so forcing a
+  // pointless re-encode there would cost the user a lossless instant copy and
+  // give them nothing.
+  const bool wants_hevc =
+      clingfy::encoding::ResolveVideoCodec(
+          clingfy::encoding::ParseVideoCodec(input.codec), nullptr) ==
+      clingfy::encoding::VideoCodec::kHevc;
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
       wants_non_mov_container || wants_sidecar || wants_camera ||
-      wants_color_grade || wants_clips || wants_separated_audio;
+      wants_color_grade || wants_clips || wants_separated_audio || wants_hevc;
 
   // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
   // the destination (source size + headroom for the chosen path) and compare
@@ -540,6 +555,7 @@ PassthroughResult ExportPassthroughCopy(
       render.system_audio_path = *read.project->system_audio_path;
     }
     render.bitrate = input.bitrate;
+    render.codec = input.codec;
     // Phase 8.2/8.3: cursor + zoom share the sidecar path; set it when EITHER is
     // active so each feature can read it independently.
     render.show_cursor = wants_cursor_render;

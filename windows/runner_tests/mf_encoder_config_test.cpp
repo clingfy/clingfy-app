@@ -113,5 +113,59 @@ TEST(MfEncoderConfigTest, AWildKeyframeIntervalIsRejected) {
   EXPECT_FALSE(c.Validate().has_value());
 }
 
+// --- codec selection ---------------------------------------------------------
+
+TEST(VideoCodecTest, ParsesTheDartWireValues) {
+  EXPECT_EQ(ParseVideoCodec("hevc"), VideoCodec::kHevc);
+  EXPECT_EQ(ParseVideoCodec("h264"), VideoCodec::kH264);
+}
+
+TEST(VideoCodecTest, UnknownAndEmptyFallBackToH264) {
+  // Every Windows export produced H.264 before codec selection existed, so an
+  // absent or garbled key must keep producing exactly that.
+  EXPECT_EQ(ParseVideoCodec(""), VideoCodec::kH264);
+  EXPECT_EQ(ParseVideoCodec("av1"), VideoCodec::kH264);
+  EXPECT_EQ(ParseVideoCodec("HEVC"), VideoCodec::kH264);  // wire value is lower
+}
+
+TEST(VideoCodecTest, H264IsNeverReportedAsADowngrade) {
+  // A user who asked for H.264 and got H.264 has nothing to be told about.
+  bool downgraded = true;
+  EXPECT_EQ(ResolveVideoCodec(VideoCodec::kH264, &downgraded),
+            VideoCodec::kH264);
+  EXPECT_FALSE(downgraded);
+}
+
+TEST(VideoCodecTest, AnHevcRequestEitherLandsOrIsReportedAsDowngraded) {
+  // This machine may or may not have an HEVC encoder, and CI agents differ —
+  // so assert the INVARIANT that ties the two outputs together rather than a
+  // fixed answer. The bug this guards is returning H.264 with downgraded
+  // still false, which is precisely the silent fallback being fixed.
+  bool downgraded = false;
+  const VideoCodec got = ResolveVideoCodec(VideoCodec::kHevc, &downgraded);
+  if (got == VideoCodec::kHevc) {
+    EXPECT_FALSE(downgraded);
+    EXPECT_TRUE(IsHevcEncoderAvailable());
+  } else {
+    EXPECT_EQ(got, VideoCodec::kH264);
+    EXPECT_TRUE(downgraded);
+    EXPECT_FALSE(IsHevcEncoderAvailable());
+  }
+}
+
+TEST(VideoCodecTest, TheOutParamIsOptional) {
+  // export_passthrough calls this purely to decide whether to defeat the
+  // byte-copy, and has no use for the flag.
+  EXPECT_NO_FATAL_FAILURE(
+      (void)ResolveVideoCodec(VideoCodec::kHevc, nullptr));
+}
+
+TEST(VideoCodecTest, TheAvailabilityProbeIsStable) {
+  // It is cached behind a function-local static; a probe that flipped between
+  // calls would make the byte-copy decision and the encoder's decision
+  // disagree within a single export.
+  EXPECT_EQ(IsHevcEncoderAvailable(), IsHevcEncoderAvailable());
+}
+
 }  // namespace
 }  // namespace clingfy::encoding

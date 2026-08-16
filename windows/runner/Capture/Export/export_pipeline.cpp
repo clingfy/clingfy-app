@@ -763,6 +763,10 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     // the macOS export already picks rather than whatever the MFT defaults to.
     enc_config.keyframe_interval_frames =
         clingfy::encoding::ResolveKeyframeIntervalFrames(enc_config.fps);
+    // Resolve, don't assume: an HEVC request on a machine without an HEVC
+    // encoder MFT degrades to H.264 here rather than failing the export.
+    enc_config.codec = clingfy::encoding::ResolveVideoCodec(
+        clingfy::encoding::ParseVideoCodec(request.codec), nullptr);
 
     std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
     // Separated recordings feed the encoder from the sidecar pumps, not the
