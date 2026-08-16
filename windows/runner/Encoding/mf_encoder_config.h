@@ -13,6 +13,30 @@
 // unit-tested without touching MF.
 namespace clingfy::encoding {
 
+// Video codec for the Sink Writer's output stream.
+//
+// UNLIKE macOS, WHERE THIS IS A FREE CHOICE. AVFoundation always has
+// `AVVideoCodecType.hevc`; on Windows an HEVC encoder MFT is hardware- and
+// SKU-dependent, so the request has to be probed rather than assumed. See
+// `IsHevcEncoderAvailable`.
+enum class VideoCodec { kH264, kHevc };
+
+// Map the Dart `codec` wire value ("h264" / "hevc"). Unknown or empty → H.264,
+// which is both the safe default and what every Windows export produced before
+// codec selection existed.
+VideoCodec ParseVideoCodec(const std::string& name);
+
+// Whether this machine can actually encode HEVC.
+//
+// Enumerates video-encoder MFTs that advertise an HEVC output type. Returns
+// false on a box with no hardware HEVC encoder and no software fallback
+// installed — a real configuration, not an error, since the codec depends on
+// the GPU and (for some paths) the Store "HEVC Video Extensions" package.
+//
+// Result is cached: MFTEnumEx is not free and the answer cannot change within
+// a process's lifetime in any way worth tracking.
+bool IsHevcEncoderAvailable();
+
 struct EncoderConfig {
   // Absolute path to the MP4 file the Sink Writer will create.
   // `MFCreateSinkWriterFromURL` requires a fully-qualified URL or file
@@ -53,6 +77,11 @@ struct EncoderConfig {
   // real spacing on device before lowering any of them.
   std::uint32_t keyframe_interval_frames = 0;
 
+  // The codec to encode with. Callers should resolve this through
+  // `ResolveVideoCodec` rather than setting kHevc directly, so an unavailable
+  // encoder degrades to H.264 instead of failing the export.
+  VideoCodec codec = VideoCodec::kH264;
+
   // Validation. Returns std::nullopt when the config is usable; otherwise
   // a human-readable message describing what's wrong. Kept here so the
   // engine can fail with `BAD_ARGS` before any MF object is created.
@@ -75,6 +104,15 @@ struct EncoderConfig {
 // so a malformed config degrades to the pre-#294 behaviour rather than
 // pinning something nonsensical.
 std::uint32_t ResolveKeyframeIntervalFrames(std::uint32_t fps);
+
+// What the export will ACTUALLY encode with, given what the user asked for.
+//
+// Returns kH264 whenever HEVC was not requested, or was requested on a machine
+// with no HEVC encoder. `out_downgraded` (optional) reports the second case
+// specifically — the user asked for HEVC and is not getting it — so the caller
+// can tell them instead of silently shipping a different codec, which is what
+// Windows did for every export before this existed.
+VideoCodec ResolveVideoCodec(VideoCodec requested, bool* out_downgraded);
 
 // Audio side of the encoder, added in Phase 3D. Pinned to AAC-LC at
 // 48 kHz stereo because that's what the WASAPI mixer produces and what

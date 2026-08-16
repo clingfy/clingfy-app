@@ -138,6 +138,10 @@ struct RenderRequest {
   // is polled each frame so a cancel aborts the loop cleanly. Both default to
   // no-ops — a synchronous export (or a test) needs neither.
   std::string bitrate;
+
+  // Requested video codec ("h264"/"hevc"). Resolved against what this machine
+  // can actually encode; see EncoderConfig::codec.
+  std::string codec;
   std::function<void(double)> on_progress;
   std::function<bool()> is_cancelled;
 

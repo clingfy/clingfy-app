@@ -394,6 +394,8 @@ void HandleExportVideo(
     // Slice 5A. Bitrate is a preset string resolved against the output size;
     // format selects the container (.mp4 vs .mov).
     input.bitrate = ReadString(*args, "bitrate");
+    // Dart has sent this since codec selection shipped; Windows never read it.
+    input.codec = ReadString(*args, "codec");
     // Phase 8.2: cursor rendering. showCursor (default true) + cursorSize
     // (0.5..3.0, default 1.5) match the Dart export args. When showCursor is on
     // and the recording has a cursor sidecar, the export renders the cursor

@@ -127,6 +127,14 @@ struct PassthroughInput {
   // The `format` field above selects the container (.mp4 vs .mov).
   std::string bitrate;
 
+  // Requested video codec ("h264" / "hevc"). Dart has always sent this and
+  // Windows always dropped it on the floor, so a user picking HEVC — which is
+  // the Dart DEFAULT — silently received H.264. Empty/unknown → H.264.
+  //
+  // Requesting HEVC does not guarantee getting it: the encoder MFT is
+  // hardware- and SKU-dependent, so `ResolveVideoCodec` probes and degrades.
+  std::string codec;
+
   // Phase 8.2 cursor rendering. `show_cursor` (Dart default true) draws the
   // recorded cursor sidecar into the export; `cursor_size` (0.5..3.0, default
   // 1.5) scales it. When the recording has a `capture/cursor.jsonl` and

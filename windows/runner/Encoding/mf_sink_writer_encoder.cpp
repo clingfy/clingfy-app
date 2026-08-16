@@ -151,15 +151,29 @@ std::optional<EncoderError> MfSinkWriterEncoder::ConfigureVideoMediaTypes() {
     return ToError("MFCreateMediaType failed for output H.264 type.", hr);
   }
   output_type->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-  output_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+  const bool hevc = config_.codec == VideoCodec::kHevc;
+  output_type->SetGUID(MF_MT_SUBTYPE,
+                       hevc ? MFVideoFormat_HEVC : MFVideoFormat_H264);
   output_type->SetUINT32(MF_MT_AVG_BITRATE, config_.avg_bitrate_bps);
   output_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
-  output_type->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
+  // The profile attribute is NOT a drop-in swap. Both codecs report through
+  // MF_MT_MPEG2_PROFILE, but the value spaces are different enums:
+  // eAVEncH264VProfile_Main for H.264 vs eAVEncH265VProfile_Main_420_8 for
+  // HEVC. Main/4:2:0/8-bit is the profile every HEVC decoder handles, which is
+  // what a user exporting a screen recording needs — not a 10-bit or 4:4:4
+  // variant that half their playback targets would refuse.
+  output_type->SetUINT32(MF_MT_MPEG2_PROFILE,
+                         hevc ? static_cast<UINT32>(
+                                    eAVEncH265VProfile_Main_420_8)
+                              : static_cast<UINT32>(eAVEncH264VProfile_Main));
   // Issue #294: bound the GOP so a seek's keyframe lead-in has a known worst
   // case. Set on the OUTPUT type before AddStream, which is the only point
   // the sink writer reads it. Best-effort by design — the return is ignored
   // because an MFT that rejects or ignores the hint must still record, it
   // just keeps the encoder's own spacing (see the field's comment).
+  //
+  // Applies to HEVC too: the attribute is codec-agnostic, and an HEVC export
+  // is seeked by exactly the same consumers.
   if (config_.keyframe_interval_frames > 0) {
     output_type->SetUINT32(MF_MT_MAX_KEYFRAME_SPACING,
                            config_.keyframe_interval_frames);
