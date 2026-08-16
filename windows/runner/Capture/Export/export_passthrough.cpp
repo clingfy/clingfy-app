@@ -20,8 +20,10 @@
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
 #include "Capture/Export/mic_cleanup.h"
+#include "Capture/Zoom/zoom_manual_store.h"
 #include "Capture/recording_project_reader.h"
 #include "Encoding/mf_encoder_config.h"
+#include "Services/shell_reveal.h"
 #include "Services/save_folder.h"
 
 namespace clingfy::capture::export_ {
@@ -604,6 +606,10 @@ PassthroughResult ExportPassthroughCopy(
     render.zoom_factor = input.zoom_factor;
     render.cursor_sidecar_path =
         wants_sidecar ? cursor_sidecar.wstring() : std::wstring();
+    // User-authored zoom. Read by the pipeline and merged with the auto
+    // timeline; absent file → auto only, exactly as before.
+    render.zoom_manual_path = clingfy::capture::ZoomManualSidecarPath(
+        clingfy::storage::Utf8ToWide(input.project_path));
     // Phase 9.4: camera bubble. Only set when the gate passed; the pipeline
     // still soft-fails internally if the reader/D2D resources can't be built.
     if (wants_camera) {

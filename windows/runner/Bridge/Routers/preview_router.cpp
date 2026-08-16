@@ -20,6 +20,7 @@
 #include "Capture/recording_project_reader.h"
 #include "Core/canvas_composition.h"
 #include "preview/preview_engine.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 
 namespace clingfy::bridge::routers::preview {
 
@@ -713,6 +714,52 @@ void HandlePreviewSetColorGrade(
   reply::Null(*result);
 }
 
+// The EFFECTIVE zoom timeline from the Dart editor — auto segments minus the
+// ones the user overrode or deleted, plus the ones they authored. Dart does
+// that merge (see the previewSetZoomSegments contract in native_bridge.dart),
+// so the engine replaces its list wholesale rather than merging again.
+//
+// This was a registered no-op, which is why every manual zoom edit vanished
+// the moment it was made: ZoomEditorController pushed here on every change and
+// re-pushed after an in-place rebuild via resyncToNative, into nothing.
+//
+// An EMPTY list is meaningful and is forwarded as such — it is what deleting
+// every segment looks like, and dropping it would resurrect the auto timeline
+// the user just cleared. Always replies null (the void Dart contract).
+void HandlePreviewSetZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    std::vector<clingfy::capture::ZoomSegment> segments;
+    const auto it = args->find(flutter::EncodableValue("segments"));
+    if (it != args->end()) {
+      if (const auto* list = std::get_if<flutter::EncodableList>(&it->second)) {
+        for (const auto& entry : *list) {
+          const auto* map = std::get_if<flutter::EncodableMap>(&entry);
+          if (map == nullptr) {
+            continue;
+          }
+          clingfy::capture::ZoomSegment seg;
+          seg.start_ms =
+              static_cast<std::int64_t>(ReadDouble(*map, "startMs", 0.0));
+          seg.end_ms =
+              static_cast<std::int64_t>(ReadDouble(*map, "endMs", 0.0));
+          // Guard the invariant ZoomSegmentStateAt relies on: membership is
+          // half-open [start, end), so a non-positive span would be a segment
+          // no frame can ever be inside.
+          if (seg.end_ms > seg.start_ms) {
+            segments.push_back(seg);
+          }
+        }
+      }
+    }
+    PreviewEngine::Instance()->SetZoomSegments(session_id, segments);
+  }
+  reply::Null(*result);
+}
+
 // Canvas framing (background colour, padding, corner radius) for the live
 // preview, so the editor shows the frame the export will produce instead of bare
 // video.
@@ -901,7 +948,7 @@ void RegisterHandlers(HandlerTable& table) {
   table["inlinePreviewStop"] = &HandleNoopSetter;
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
-  table["previewSetZoomSegments"] = &HandleNoopSetter;
+  table["previewSetZoomSegments"] = &HandlePreviewSetZoomSegments;
   // Voice cleanup (Phase 4 preview WYSIWYG): the RNNoise engine now runs on
   // Windows and the export denoises the mic; this drives the LIVE preview mic
   // too. Enabling produces the cleaned mic on a background thread and rebuilds

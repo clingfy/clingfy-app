@@ -79,31 +79,39 @@ ZoomFocus ResolveZoomFocus(const std::vector<CursorSidecarSample>& samples,
   return focus;
 }
 
-std::unique_ptr<ZoomExportController> ZoomExportController::CreateFromData(
-    CursorSidecarData data, std::int64_t duration_ms, double zoom_factor) {
+std::unique_ptr<ZoomExportController> ZoomExportController::CreateFromSegments(
+    CursorSidecarData data, const std::vector<ZoomSegment>& segments,
+    double zoom_factor) {
   double factor = std::isfinite(zoom_factor) ? zoom_factor : 1.0;
   factor = std::min(std::max(factor, clingfy::preview::kZoomFactorMin),
                     clingfy::preview::kZoomFactorMax);
   if (factor <= 1.0 + clingfy::preview::kZoomFactorWriteEpsilon) {
     return nullptr;  // no magnification requested → no zoom.
   }
-  const auto raw_segments =
-      BuildZoomSegments(data.samples, data.clicks, duration_ms);
-  if (raw_segments.empty()) {
+  if (segments.empty()) {
     return nullptr;
   }
   std::unique_ptr<ZoomExportController> controller(new ZoomExportController());
   controller->zoom_factor_ = factor;
-  for (const auto& seg : raw_segments) {
+  for (const auto& seg : segments) {
     ResolvedSegment resolved;
     resolved.start_ms = seg.start_ms;
     resolved.end_ms = seg.end_ms;
+    // Focus is resolved from the cursor samples the same way for every
+    // segment, so a hand-authored one behaves exactly like a detected one.
     resolved.focus = ResolveZoomFocus(data.samples, seg.start_ms, seg.end_ms,
                                       data.width, data.height);
     controller->segments_.push_back(resolved);
   }
   controller->data_ = std::move(data);
   return controller;
+}
+
+std::unique_ptr<ZoomExportController> ZoomExportController::CreateFromData(
+    CursorSidecarData data, std::int64_t duration_ms, double zoom_factor) {
+  const auto raw_segments =
+      BuildZoomSegments(data.samples, data.clicks, duration_ms);
+  return CreateFromSegments(std::move(data), raw_segments, zoom_factor);
 }
 
 std::unique_ptr<ZoomExportController> ZoomExportController::Create(

@@ -33,6 +33,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(runner_tests
   "method_router_test.cpp"
   "device_event_publisher_test.cpp"
+  "zoom_manual_store_test.cpp"
   "bridge_contract_coverage_test.cpp"
   "router_stub_shapes_test.cpp"
   "update_feed_test.cpp"

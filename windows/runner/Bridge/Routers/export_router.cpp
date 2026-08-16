@@ -25,6 +25,7 @@
 #include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Zoom/zoom_manual_store.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Capture/recording_project_reader.h"
 #include "Services/keep_awake.h"
@@ -45,15 +46,6 @@ void HandleEmptyList(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::EmptyList(*result);
-}
-
-void HandleSaveManualZoomSegments(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  // Dart treats `false` as "save failed"; the manual-zoom workflow falls
-  // back gracefully. Manual zoom editing is hidden on Windows (Phase 10.3)
-  // until real persistence lands.
-  reply::Bool(*result, false);
 }
 
 // True when no partial output remains at `utf8_path` (empty = nothing to
@@ -242,6 +234,103 @@ bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
     return *value;
   }
   return fallback;
+}
+
+// ---- manual zoom segments ---------------------------------------------------
+//
+// The user-authored half of the zoom lane. Both of these were stubs — save
+// always replied false and load always replied [] — so the Dart editor, which
+// is attached on both platforms, wrote into a void and nothing survived a
+// keystroke.
+//
+// The on-disk shape is macOS's, at capture/zoom.manual.json, so a project
+// edited on either platform opens on the other. See zoom_manual_store.h for
+// the two encodings that carry the semantics (`baseId` overrides,
+// zero-length tombstones).
+void HandleSaveManualZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = AsMap(call.arguments());
+  if (args == nullptr) {
+    reply::Bool(*result, false);
+    return;
+  }
+  const std::string project_path = ReadString(*args, "projectPath");
+  if (project_path.empty()) {
+    reply::Bool(*result, false);
+    return;
+  }
+
+  std::vector<clingfy::capture::ZoomManualSegment> segments;
+  const auto it = args->find(flutter::EncodableValue("segments"));
+  if (it != args->end()) {
+    if (const auto* list = std::get_if<flutter::EncodableList>(&it->second)) {
+      for (const auto& entry : *list) {
+        const auto* map = std::get_if<flutter::EncodableMap>(&entry);
+        if (map == nullptr) {
+          continue;
+        }
+        clingfy::capture::ZoomManualSegment s;
+        s.id = ReadString(*map, "id");
+        s.start_ms = static_cast<std::int64_t>(ReadDouble(*map, "startMs", 0.0));
+        s.end_ms = static_cast<std::int64_t>(ReadDouble(*map, "endMs", 0.0));
+        s.source = ReadString(*map, "source");
+        s.base_id = ReadString(*map, "baseId");
+        if (s.source.empty()) {
+          s.source = "manual";
+        }
+        // A tombstone is legal (end <= start) — it is how a deletion is
+        // recorded — but it is only meaningful with a baseId to point at.
+        // Dropping the meaningless ones keeps the sidecar honest.
+        if (clingfy::capture::IsZoomTombstone(s) && s.base_id.empty()) {
+          continue;
+        }
+        segments.push_back(std::move(s));
+      }
+    }
+  }
+
+  const bool ok = clingfy::capture::SaveZoomManualSegments(
+      clingfy::storage::Utf8ToWide(project_path), segments);
+  reply::Bool(*result, ok);
+}
+
+void HandleGetManualZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string project_path;
+  if (const auto* args = AsMap(call.arguments())) {
+    project_path = ReadString(*args, "projectPath");
+  }
+  if (project_path.empty()) {
+    reply::EmptyList(*result);
+    return;
+  }
+  const auto segments = clingfy::capture::LoadZoomManualSegments(
+      clingfy::storage::Utf8ToWide(project_path));
+
+  flutter::EncodableList out;
+  out.reserve(segments.size());
+  for (const auto& s : segments) {
+    flutter::EncodableMap map{
+        {flutter::EncodableValue("id"), flutter::EncodableValue(s.id)},
+        {flutter::EncodableValue("startMs"),
+         flutter::EncodableValue(static_cast<std::int64_t>(s.start_ms))},
+        {flutter::EncodableValue("endMs"),
+         flutter::EncodableValue(static_cast<std::int64_t>(s.end_ms))},
+        {flutter::EncodableValue("source"),
+         flutter::EncodableValue(s.source.empty() ? std::string("manual")
+                                                  : s.source)},
+    };
+    // Only present when it means something — matching what macOS writes, so
+    // Dart sees the same absence rather than an empty string.
+    if (!s.base_id.empty()) {
+      map[flutter::EncodableValue("baseId")] =
+          flutter::EncodableValue(s.base_id);
+    }
+    out.push_back(flutter::EncodableValue(std::move(map)));
+  }
+  result->Success(flutter::EncodableValue(std::move(out)));
 }
 
 // ---- getZoomSegments (Phase 10.3) -------------------------------------------
@@ -684,7 +773,7 @@ void RegisterHandlers(HandlerTable& table) {
   // and returns the macOS-shaped map.
 
   table["getZoomSegments"] = &HandleGetZoomSegments;
-  table["getManualZoomSegments"] = &HandleEmptyList;
+  table["getManualZoomSegments"] = &HandleGetManualZoomSegments;
   table["saveManualZoomSegments"] = &HandleSaveManualZoomSegments;
 }
 

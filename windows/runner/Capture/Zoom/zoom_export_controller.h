@@ -45,6 +45,25 @@ class ZoomExportController {
   static std::unique_ptr<ZoomExportController> CreateFromData(
       CursorSidecarData data, std::int64_t duration_ms, double zoom_factor);
 
+  // Build against a CALLER-SUPPLIED timeline instead of deriving one from the
+  // cursor sidecar.
+  //
+  // This is how user-authored zoom reaches the export. The effective timeline
+  // is auto-minus-overridden plus manual (see `MergeZoomSegments`), and that
+  // merge deliberately lives with the store rather than here — this class
+  // stays responsible only for turning a timeline into per-frame transforms.
+  //
+  // `data` is still required: focus resolution reads the cursor samples to
+  // decide whether a segment follows the cursor or anchors on a fixed point,
+  // and a manual segment gets exactly the same treatment as an auto one.
+  //
+  // An empty `segments` yields nullptr — same as "no zoom" — so a project
+  // whose every auto segment was deleted exports unzoomed rather than falling
+  // back to the auto timeline the user just removed.
+  static std::unique_ptr<ZoomExportController> CreateFromSegments(
+      CursorSidecarData data, const std::vector<ZoomSegment>& segments,
+      double zoom_factor);
+
   // Per-frame transform for the frame presented at `frame_ms`, advancing the
   // smoother by `dt_seconds`. `center_*` are normalized [0,1] and already clamped
   // so the zoom window stays inside the content (no background reveal).
