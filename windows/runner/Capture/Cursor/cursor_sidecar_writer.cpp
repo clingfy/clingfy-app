@@ -67,7 +67,8 @@ bool CursorSidecarWriter::Open(const std::string& path, const Header& header) {
 
 void CursorSidecarWriter::WriteSample(std::int64_t t_ms, std::int32_t screen_x,
                                       std::int32_t screen_y, std::int32_t x,
-                                      std::int32_t y, bool visible) {
+                                      std::int32_t y, bool visible,
+                                      int sprite_id) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!open_) {
     return;
@@ -75,7 +76,32 @@ void CursorSidecarWriter::WriteSample(std::int64_t t_ms, std::int32_t screen_x,
   std::ostringstream line;
   line << "{\"type\":\"sample\",\"tMs\":" << t_ms << ",\"screenX\":" << screen_x
        << ",\"screenY\":" << screen_y << ",\"x\":" << x << ",\"y\":" << y
-       << ",\"visible\":" << (visible ? "true" : "false") << "}\n";
+       << ",\"visible\":" << (visible ? "true" : "false");
+  // Omitted rather than written as -1 when there is no shape, so a v1 reader
+  // sees exactly the line it always saw and a v2 file stays smaller.
+  if (sprite_id >= 0) {
+    line << ",\"spriteId\":" << sprite_id;
+  }
+  line << "}\n";
+  const std::string text = line.str();
+  out_.write(text.data(), static_cast<std::streamsize>(text.size()));
+  out_.flush();
+}
+
+void CursorSidecarWriter::WriteSprite(int id, std::int32_t width,
+                                      std::int32_t height,
+                                      std::int32_t hotspot_x,
+                                      std::int32_t hotspot_y,
+                                      const std::string& pixels_base64) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!open_) {
+    return;
+  }
+  std::ostringstream line;
+  line << "{\"type\":\"sprite\",\"id\":" << id << ",\"width\":" << width
+       << ",\"height\":" << height << ",\"hotspotX\":" << hotspot_x
+       << ",\"hotspotY\":" << hotspot_y << ",\"pixels\":\"" << pixels_base64
+       << "\"}\n";
   const std::string text = line.str();
   out_.write(text.data(), static_cast<std::streamsize>(text.size()));
   out_.flush();

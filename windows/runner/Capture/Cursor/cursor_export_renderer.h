@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <string>
 
@@ -62,7 +63,15 @@ class CursorExportRenderer {
  private:
   CursorExportRenderer() = default;
 
+  // Upload one recorded shape to a D2D bitmap, cached by sprite id. Returns
+  // null when the recording has no such sprite or the upload fails — the
+  // caller then falls back to the vector arrow.
+  ID2D1Bitmap* BitmapForSprite(ID2D1DeviceContext* ctx, int sprite_id);
+
   CursorSidecarData data_;
+  // Lazily uploaded, because a recording can carry a dozen shapes and most
+  // exports draw only two or three of them.
+  std::map<int, Microsoft::WRL::ComPtr<ID2D1Bitmap>> sprite_bitmaps_;
   Microsoft::WRL::ComPtr<ID2D1PathGeometry> arrow_;
   Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fill_brush_;
   Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> stroke_brush_;

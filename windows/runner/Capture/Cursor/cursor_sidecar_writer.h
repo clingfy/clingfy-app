@@ -49,9 +49,22 @@ class CursorSidecarWriter {
 
   // Append one sample / click line and flush (small lines; flush keeps the file
   // crash-robust). No-ops when not open.
+  // `sprite_id` names the shape this sample was drawn with, or -1 when none
+  // was captured (an older recording, or a cursor that failed to rasterize).
+  // The key is OMITTED from the line when -1, so a v1 reader sees exactly the
+  // line it always saw.
   void WriteSample(std::int64_t t_ms, std::int32_t screen_x,
                    std::int32_t screen_y, std::int32_t x, std::int32_t y,
-                   bool visible);
+                   bool visible, int sprite_id = -1);
+
+  // Emit one cursor SHAPE. Must be written BEFORE any sample referencing it —
+  // the reader resolves ids against sprites it has already seen, and a
+  // forward reference would silently render as no shape.
+  //
+  // `pixels_base64` is premultiplied BGRA, top-down, width*height*4 bytes.
+  void WriteSprite(int id, std::int32_t width, std::int32_t height,
+                   std::int32_t hotspot_x, std::int32_t hotspot_y,
+                   const std::string& pixels_base64);
   // `button` is "left" | "right" | "middle"; `down` true = press, false =
   // release.
   void WriteClick(std::int64_t t_ms, std::int32_t screen_x,
