@@ -32,11 +32,49 @@ struct EncoderConfig {
   // settings UI.
   std::uint32_t avg_bitrate_bps = 8'000'000;
 
+  // Maximum frames between IDR keyframes (issue #294). 0 = leave the choice
+  // to the encoder MFT, which is what shipped before this field existed.
+  //
+  // WHY PIN IT: every seek costs a decode from the keyframe AT OR BEFORE the
+  // target, so the GOP length is the upper bound on the lead-in for a scrub,
+  // a cut-gap jump, a reorder boundary, and an audio-chase reposition alike.
+  // Left unpinned, a hardware MFT picks its own — typically 2-4 s on sparse
+  // screen recordings, and unbounded in principle — so the preview's seek
+  // thresholds have to be sized for the worst case rather than a known one
+  // (see kGapSeekThresholdMs / kChaseSeekDeficitMs in preview_engine).
+  //
+  // `ResolveKeyframeIntervalFrames` supplies the default; see it for why 2 s.
+  //
+  // NOT a guarantee. MF_MT_MAX_KEYFRAME_SPACING is a HINT some hardware MFTs
+  // ignore, and MF_LOW_LATENCY is already TRUE on the writer, which a few
+  // encoders read as a licence to shorten the GOP on their own. So this
+  // bounds the lead-in on encoders that honour it and changes nothing on
+  // those that don't — which is why no seek threshold moves with it. Measure
+  // real spacing on device before lowering any of them.
+  std::uint32_t keyframe_interval_frames = 0;
+
   // Validation. Returns std::nullopt when the config is usable; otherwise
   // a human-readable message describing what's wrong. Kept here so the
   // engine can fail with `BAD_ARGS` before any MF object is created.
   std::optional<std::string> Validate() const;
 };
+
+// The keyframe interval to use for a clip at `fps`, in frames (issue #294).
+// Pure so both encoder sites and the tests agree without duplicating the rule.
+//
+// TWO SECONDS, matching what the macOS export already picks
+// (`AVVideoMaxKeyFrameIntervalKey = max(fps, 30) * 2`, chosen there for "good
+// seek granularity for any downstream reader"). Two seconds is the usual
+// streaming-preset GOP: short enough that a seek lead-in stays under the
+// preview's frame budget, long enough that the bitrate cost of the extra IDR
+// frames stays in the noise for screen content.
+//
+// `fps` is floored at 30 for the same reason macOS floors it: a 5 fps
+// timelapse would otherwise get a 10-frame GOP and pay for keyframes it has
+// no seek pressure to justify. Returns 0 for fps 0 (leave it to the encoder)
+// so a malformed config degrades to the pre-#294 behaviour rather than
+// pinning something nonsensical.
+std::uint32_t ResolveKeyframeIntervalFrames(std::uint32_t fps);
 
 // Audio side of the encoder, added in Phase 3D. Pinned to AAC-LC at
 // 48 kHz stereo because that's what the WASAPI mixer produces and what

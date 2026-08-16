@@ -30,7 +30,23 @@ std::optional<std::string> EncoderConfig::Validate() const {
         "EncoderConfig.avg_bitrate_bps must be > 0; the Sink Writer "
         "rejects a zero target bitrate.");
   }
+  // 0 is legal — it means "let the encoder choose", the pre-#294 behaviour.
+  // The upper bound only catches a plainly wrong value (a caller passing
+  // milliseconds or microseconds instead of frames); an over-long GOP is a
+  // seek-latency problem, not a correctness one, so the ceiling is generous.
+  if (keyframe_interval_frames > 3600) {
+    return std::string(
+        "EncoderConfig.keyframe_interval_frames must be <= 3600 (frames, not "
+        "milliseconds); 0 leaves the choice to the encoder.");
+  }
   return std::nullopt;
+}
+
+std::uint32_t ResolveKeyframeIntervalFrames(std::uint32_t fps) {
+  if (fps == 0) {
+    return 0;  // malformed config — leave the GOP to the encoder
+  }
+  return (fps < 30 ? 30u : fps) * 2u;
 }
 
 std::optional<std::string> AudioEncoderConfig::Validate() const {

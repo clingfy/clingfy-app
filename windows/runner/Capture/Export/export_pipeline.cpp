@@ -758,6 +758,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     enc_config.fps = request.fps_hint != 0 ? request.fps_hint : 30u;
     enc_config.avg_bitrate_bps = ResolveVideoBitrateBps(
         request.bitrate, canvas.width, canvas.height, enc_config.fps);
+    // Issue #294. The exported file is somebody else's input — an editor, a
+    // player, an upload pipeline — so give it the same 2 s seek granularity
+    // the macOS export already picks rather than whatever the MFT defaults to.
+    enc_config.keyframe_interval_frames =
+        clingfy::encoding::ResolveKeyframeIntervalFrames(enc_config.fps);
 
     std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
     // Separated recordings feed the encoder from the sidecar pumps, not the
