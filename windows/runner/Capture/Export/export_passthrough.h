@@ -123,6 +123,17 @@ struct PassthroughInput {
   bool voice_cleanup_enabled = false;
   std::string voice_cleanup_mode;
 
+  // Speaker-to-mic bleed removal. Only meaningful when BOTH separated sidecars
+  // exist — with no system track there is no reference to cancel against.
+  //
+  // Routed through the per-call export args rather than a native preference,
+  // for the same reason voiceCleanup is: Windows has no preferences store, and
+  // the export must not depend on one existing.
+  //
+  // Off leaves the mic exactly as recorded. So does ON, when the recording has
+  // no measurable bleed — the headphone case, which is most recordings.
+  bool mic_echo_cancellation_enabled = false;
+
   // Slice 5A: requested output bitrate preset ("auto"/"low"/"medium"/"high").
   // The `format` field above selects the container (.mp4 vs .mov).
   std::string bitrate;

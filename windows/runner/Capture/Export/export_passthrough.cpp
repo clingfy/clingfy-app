@@ -491,6 +491,7 @@ PassthroughResult ExportPassthroughCopy(
     // scope so it outlives RenderComposedExport below, then deleted right after
     // the render returns.
     std::optional<fs::path> cleaned_mic_temp;
+    std::optional<fs::path> echo_mic_temp;
     render.source_video_path = read.project->screen_path;
     render.destination_path = destination.u8string();
     render.layout = input.layout;
@@ -517,13 +518,52 @@ PassthroughResult ExportPassthroughCopy(
     // is that a non-empty path decodes).
     if (mic_sidecar_decodable) {
       render.mic_audio_path = *read.project->mic_audio_path;
+      // Speaker-to-mic bleed removal, FIRST among the mic passes.
+      //
+      // Order is load-bearing. It must run before voice cleanup, whose noise
+      // suppression would distort the very bleed the correlation needs to find
+      // it, and before the normalize peak scan, which would otherwise measure a
+      // peak inflated by the echo.
+      //
+      // Only meaningful when BOTH sidecars exist: with no system track there is
+      // no reference to cancel against. Best-effort throughout — a false return
+      // (including the common "no bleed found") leaves the raw mic in place.
+      if (input.mic_echo_cancellation_enabled && system_sidecar_decodable) {
+        fs::path decoupled = destination;
+        decoupled += ".micecho.mp4";
+        EchoCancelReport report;
+        if (ProduceEchoCancelledMic(*read.project->mic_audio_path,
+                                    *read.project->system_audio_path,
+                                    decoupled.u8string(), is_cancelled,
+                                    &report)) {
+          render.mic_audio_path = decoupled.wstring();
+          echo_mic_temp = decoupled;
+          char buf[192];
+          std::snprintf(buf, sizeof(buf),
+                        "echo cancellation applied: correlation %.2f, delay "
+                        "%.1f ms, residual %.1f dB",
+                        report.bleed_correlation, report.delay_ms,
+                        report.reduction_db);
+          clingfy::bridge::NativeLogPublisher::Instance().Info("Export", buf);
+        } else {
+          std::error_code echo_ec;
+          fs::remove(decoupled, echo_ec);
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Export",
+              report.applied
+                  ? "echo cancellation failed; exporting the raw mic"
+                  : "no measurable speaker bleed; exporting the raw mic");
+        }
+      }
       // Phase 4 voice cleanup: run the mic through RNNoise before the audio
       // pump. Best-effort -- a failed clean leaves render.mic_audio_path on the
       // raw sidecar, so the export just skips denoising rather than failing.
       if (input.voice_cleanup_enabled) {
         fs::path cleaned = destination;
         cleaned += ".miccleanup.mp4";
-        if (ProduceCleanedMic(*read.project->mic_audio_path, cleaned.u8string(),
+        // Chain from whatever the echo pass produced, not from the raw
+        // sidecar, or enabling both would silently discard the cancellation.
+        if (ProduceCleanedMic(render.mic_audio_path, cleaned.u8string(),
                               is_cancelled,
                               VoiceCleanupWetMix(input.voice_cleanup_mode))) {
           render.mic_audio_path = cleaned.wstring();
@@ -591,6 +631,10 @@ PassthroughResult ExportPassthroughCopy(
     if (cleaned_mic_temp) {
       std::error_code clean_ec;
       fs::remove(*cleaned_mic_temp, clean_ec);
+    }
+    if (echo_mic_temp) {
+      std::error_code echo_ec;
+      fs::remove(*echo_mic_temp, echo_ec);
     }
     if (!render_result.ok) {
       if (render_result.cancelled) {

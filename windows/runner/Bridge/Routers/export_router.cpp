@@ -391,6 +391,11 @@ void HandleExportVideo(
         input.voice_cleanup_mode = ReadString(*vc, "mode");
       }
     }
+    // Speaker-to-mic bleed removal. Same per-call-args route as voiceCleanup:
+    // Windows has no native preferences store, so the toggle's state travels
+    // with the export request rather than being read back from one.
+    input.mic_echo_cancellation_enabled =
+        ReadBool(*args, "micEchoCancellationEnabled", false);
     // Slice 5A. Bitrate is a preset string resolved against the output size;
     // format selects the container (.mp4 vs .mov).
     input.bitrate = ReadString(*args, "bitrate");
