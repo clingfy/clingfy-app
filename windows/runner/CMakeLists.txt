@@ -83,6 +83,7 @@ add_library(runner_bridge STATIC
   "Audio/wasapi_audio_capture.cpp"
   "Audio/wasapi_stream_format.cpp"
   "Audio/VoiceCleanup/rnnoise_denoiser.cpp"
+  "Audio/EchoCancel/mic_echo_canceller.cpp"
   "Bridge/Devices/audio_source_enumerator.cpp"
   "Bridge/Devices/device_probe_log.cpp"
   "Bridge/Devices/device_record.cpp"

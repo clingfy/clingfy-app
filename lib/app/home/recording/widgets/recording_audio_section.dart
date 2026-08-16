@@ -182,13 +182,13 @@ class RecordingAudioSection extends StatelessWidget {
                   ],
                 ),
               ],
-              // Consumed natively at preview/export time (CleanedMicCache
-              // gate) on any EXISTING project with mic+system tracks — the
-              // raw mic is always what gets recorded. Not gated on the
-              // current capture toggles: hiding it there would strand an
-              // enabled canceller with no reachable off switch. macOS-only
-              // pipeline today.
-              if (!isWindows()) ...[
+              // Consumed natively at preview/export time on any EXISTING
+              // project with mic+system tracks — the raw mic is always what
+              // gets recorded. Not gated on the current capture toggles:
+              // hiding it there would strand an enabled canceller with no
+              // reachable off switch. Both platforms now: Windows grew its own
+              // canceller (Audio/EchoCancel), so the toggle is real there too.
+              ...[
                 const SizedBox(height: AppSidebarTokens.optionsSubgroupGap),
                 AppInsetGroup(
                   children: [

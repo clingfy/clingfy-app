@@ -1804,6 +1804,11 @@ class PostProcessingController extends ChangeNotifier {
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
         'voiceCleanup': _voiceCleanup.toMap(),
+        // Speaker-to-mic bleed removal. Native runs it only when BOTH
+        // separated sidecars exist and only when it measures real bleed,
+        // so sending it unconditionally is safe.
+        'micEchoCancellationEnabled':
+            _settings.recording.micEchoCancellationEnabled,
         'audioVolumePercent': _audioVolumePercent,
         'sessionId': _activeSessionId,
         // For preview, we still use mov/hevc for maximum quality/performance
@@ -2274,6 +2279,11 @@ class PostProcessingController extends ChangeNotifier {
         'showCursor': _showCursor,
         'audioGainDb': _audioGainDb,
         'voiceCleanup': _voiceCleanup.toMap(),
+        // Speaker-to-mic bleed removal. Native runs it only when BOTH
+        // separated sidecars exist and only when it measures real bleed,
+        // so sending it unconditionally is safe.
+        'micEchoCancellationEnabled':
+            _settings.recording.micEchoCancellationEnabled,
         'audioVolumePercent': _audioVolumePercent,
         // Bake the same grade the user sees in the live preview into the
         // exported file. Identity (no adjustment) is a no-op on the native

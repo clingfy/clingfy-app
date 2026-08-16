@@ -12,6 +12,7 @@
 #include <mutex>
 #include <vector>
 
+#include "Audio/EchoCancel/mic_echo_canceller.h"
 #include "Audio/VoiceCleanup/rnnoise_denoiser.h"
 #include "Encoding/audio_sidecar_writer.h"
 
@@ -214,6 +215,113 @@ bool ProduceCleanedMic(const std::wstring& mic_path,
     const std::size_t count = std::min(kBlock, n - written);
     for (std::size_t i = 0; i < count; ++i) {
       const std::int16_t s = ClampToInt16(output[written + i]);
+      stereo[i * 2] = s;
+      stereo[i * 2 + 1] = s;
+    }
+    const std::int64_t ts =
+        static_cast<std::int64_t>(written) * 10'000'000 / kSampleRate;
+    if (writer
+            .WriteSamples(stereo.data(), static_cast<std::uint32_t>(count), ts)
+            .has_value()) {
+      writer.Cancel();
+      return false;
+    }
+    written += count;
+  }
+
+  return !writer.Finalize().has_value();
+}
+
+bool ProduceEchoCancelledMic(const std::wstring& mic_path,
+                             const std::wstring& system_path,
+                             const std::string& output_path,
+                             const std::function<bool()>& is_cancelled,
+                             EchoCancelReport* report) {
+  if (report != nullptr) {
+    *report = EchoCancelReport{};
+  }
+  if (mic_path.empty() || system_path.empty() || output_path.empty()) {
+    return false;
+  }
+  EnsureMediaFoundationStarted();
+
+  const auto decode = [&](const std::wstring& path,
+                          std::vector<std::int16_t>* out) -> bool {
+    ComPtr<IMFSourceReader> reader;
+    if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), nullptr,
+                                             reader.GetAddressOf())) ||
+        reader == nullptr) {
+      return false;
+    }
+    const DWORD index = SelectMonoPcmStream(reader.Get());
+    if (index == kNoStream) {
+      return false;
+    }
+    return DecodeMonoInt16(reader.Get(), index, is_cancelled, out);
+  };
+
+  std::vector<std::int16_t> mic_pcm;
+  std::vector<std::int16_t> system_pcm;
+  if (!decode(mic_path, &mic_pcm) || !decode(system_path, &system_pcm)) {
+    return false;
+  }
+  if (is_cancelled && is_cancelled()) {
+    return false;
+  }
+
+  // NORMALIZE to +/-1.0. Everything else in this file carries int16-VALUED
+  // floats (+/-32768), but the canceller's thresholds — the correlation gate,
+  // the reference-present floor, the voice floor — are all in +/-1.0 units.
+  // Feeding it unnormalized samples would put every envelope thousands of
+  // times over those floors and make the gates meaningless.
+  constexpr float kToUnit = 1.0f / 32768.0f;
+  std::vector<float> mic_unit(mic_pcm.size());
+  for (std::size_t i = 0; i < mic_pcm.size(); ++i) {
+    mic_unit[i] = static_cast<float>(mic_pcm[i]) * kToUnit;
+  }
+  std::vector<float> system_unit(system_pcm.size());
+  for (std::size_t i = 0; i < system_pcm.size(); ++i) {
+    system_unit[i] = static_cast<float>(system_pcm[i]) * kToUnit;
+  }
+
+  const clingfy::audio::echo::EchoCancelResult result =
+      clingfy::audio::echo::CancelEcho(mic_unit, system_unit);
+  if (report != nullptr) {
+    report->applied = result.applied;
+    report->bleed_correlation = result.bleed_correlation;
+    report->delay_ms = result.delay_ms;
+    report->reduction_db = result.reduction_db;
+  }
+  if (!result.applied) {
+    // No measurable bleed. Returning false makes the caller keep the ORIGINAL
+    // mic file rather than a re-encoded copy of it — cheaper, and it avoids a
+    // needless AAC generation loss on the overwhelmingly common headphone
+    // recording.
+    return false;
+  }
+  if (is_cancelled && is_cancelled()) {
+    return false;
+  }
+
+  clingfy::encoding::AudioSidecarWriter writer;
+  if (writer.Open(output_path).has_value()) {
+    return false;
+  }
+
+  const std::size_t n = result.mic.size();
+  constexpr std::size_t kBlock = 4'800;
+  std::vector<std::int16_t> stereo(kBlock * 2);
+  std::size_t written = 0;
+  while (written < n) {
+    if (is_cancelled && is_cancelled()) {
+      writer.Cancel();
+      return false;
+    }
+    const std::size_t count = std::min(kBlock, n - written);
+    for (std::size_t i = 0; i < count; ++i) {
+      // Back to int16 scale before the shared clamp.
+      const std::int16_t s =
+          ClampToInt16(result.mic[written + i] * 32768.0f);
       stereo[i * 2] = s;
       stereo[i * 2 + 1] = s;
     }
