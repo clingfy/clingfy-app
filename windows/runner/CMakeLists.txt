@@ -140,6 +140,8 @@ add_library(runner_bridge STATIC
   "Capture/Cursor/cursor_sample_mapper.cpp"
   "Capture/Cursor/cursor_sampler.cpp"
   "Capture/Cursor/cursor_sidecar_reader.cpp"
+  "Capture/Cursor/cursor_base64.cpp"
+  "Capture/Cursor/cursor_sprite_capture.cpp"
   "Capture/Cursor/cursor_sidecar_writer.cpp"
   "Capture/Zoom/zoom_export_controller.cpp"
   "Capture/Zoom/zoom_follow_smoother.cpp"

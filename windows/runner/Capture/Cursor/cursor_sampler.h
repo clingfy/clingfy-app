@@ -26,6 +26,10 @@
 // Win32-free and unit-testable with fakes.
 namespace clingfy::capture {
 
+// Declared, not included: the cache needs <windows.h> for HCURSOR and this
+// header is deliberately Win32-free so the sampler can be tested with fakes.
+class CursorSpriteCache;
+
 class CursorSampler {
  public:
   // Cursor probe result: screen (virtual-desktop physical) px + whether the
@@ -34,6 +38,11 @@ class CursorSampler {
     std::int32_t screen_x = 0;
     std::int32_t screen_y = 0;
     bool present = false;
+    // The live cursor SHAPE handle (an HCURSOR), kept as void* so this
+    // header stays Win32-free and unit-testable with fakes. GetCursorInfo
+    // already fills it in; it used to be read and thrown away, which is why
+    // every export drew the same arrow. Null = no shape this tick.
+    void* cursor_handle = nullptr;
   };
   using ProbeFn = std::function<Probe()>;
   // Resolve the capture-region top-left in screen px. Display/area pass a
@@ -98,6 +107,10 @@ class CursorSampler {
   RecordingClock clock_;
 
   CursorSidecarWriter writer_;
+  // Rasterized cursor shapes, deduped by handle. Held by pointer to keep
+  // <windows.h> out of this header; created lazily on the first shaped sample
+  // so a fake-probe test never touches GDI.
+  std::unique_ptr<CursorSpriteCache> sprite_cache_;
   CursorClickHook click_hook_;
   bool click_hook_active_ = false;
 

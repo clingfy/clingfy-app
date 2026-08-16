@@ -75,6 +75,7 @@ add_executable(runner_tests
   "cursor_sampler_test.cpp"
   "cursor_sidecar_reader_test.cpp"
   "cursor_sidecar_writer_test.cpp"
+  "cursor_sprite_sidecar_test.cpp"
   "zoom_export_controller_test.cpp"
   "zoom_follow_smoother_test.cpp"
   "zoom_hysteresis_test.cpp"

@@ -1015,9 +1015,12 @@ std::optional<RecordingError> RecordingEngine::Start(
       CURSORINFO ci{};
       ci.cbSize = sizeof(ci);
       if (::GetCursorInfo(&ci) != 0) {
+        // ci.hCursor is the live SHAPE handle. It was already being filled
+        // in here and discarded, which is why every export drew one arrow.
         return CursorSampler::Probe{static_cast<std::int32_t>(ci.ptScreenPos.x),
                                     static_cast<std::int32_t>(ci.ptScreenPos.y),
-                                    (ci.flags & CURSOR_SHOWING) != 0};
+                                    (ci.flags & CURSOR_SHOWING) != 0,
+                                    static_cast<void*>(ci.hCursor)};
       }
       return CursorSampler::Probe{0, 0, false};
     };
