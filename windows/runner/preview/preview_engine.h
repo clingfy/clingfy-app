@@ -39,6 +39,7 @@
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
 #include "Core/canvas_composition.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Preview/preview_camera_renderer.h"
 
 #include <atomic>
@@ -483,6 +484,14 @@ class PreviewEngine {
   // the exported file for anyone who moved the slider or turned zoom off. A
   // stale session_id is a silent no-op; a paused preview is nudged to
   // recomposite so the change is visible without pressing play.
+  // Replace the rendered zoom timeline with the EFFECTIVE one Dart computed
+  // (auto minus overrides, plus the user's manual segments). Empty is
+  // meaningful — it is what deleting every segment looks like — and is kept
+  // distinct from "Dart has not pushed a timeline yet", which still renders
+  // the auto one built at Open.
+  void SetZoomSegments(const std::string& session_id,
+                       const std::vector<capture::ZoomSegment>& segments);
+
   void SetZoomSettings(const std::string& session_id, double factor,
                        bool effect_enabled);
 

@@ -27,7 +27,13 @@
 #include "Capture/Camera/camera_export_layout.h"
 #include "Capture/Camera/camera_export_renderer.h"
 #include "Capture/Cursor/cursor_export_renderer.h"
+#include <fstream>
+#include <sstream>
+
+#include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Zoom/zoom_export_controller.h"
+#include "Capture/Zoom/zoom_manual_store.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Bridge/native_log_publisher.h"
 #include "Capture/Export/clip_audio_stitch.h"
 #include "Capture/Export/color_grade.h"
@@ -50,6 +56,21 @@ namespace clingfy::capture::export_ {
 namespace {
 
 using Microsoft::WRL::ComPtr;
+
+// Slurp a small sidecar. Returns "" for a missing or unreadable file, which
+// every caller here treats the same way it treats an empty one.
+std::string ReadFileUtf8(const std::wstring& path) {
+  if (path.empty()) {
+    return {};
+  }
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return {};
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
 
 // Sentinel for "stream not found" — distinguishable from any concrete
 // stream index (which start at 0) and from MF's symbolic selectors.
@@ -589,10 +610,31 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // Phase 8.3: optional smart-zoom controller. Builds auto-zoom segments from the
   // sidecar (clicks + cursor) and produces a smoothed per-frame transform. Same
   // soft-fail discipline as the cursor renderer — null → no zoom.
+  //
+  // The timeline is the EFFECTIVE one — auto segments minus any the user
+  // overrode or deleted, plus the ones they authored. Reading the manual store
+  // here (rather than taking segments over the wire) mirrors macOS and means a
+  // headless or scripted export honours the user's edits too.
   std::unique_ptr<ZoomExportController> zoom_controller;
   if (request.zoom_enabled && !request.cursor_sidecar_path.empty()) {
-    zoom_controller = ZoomExportController::Create(
-        request.cursor_sidecar_path, duration_hns / 10000, request.zoom_factor);
+    // No manual edits (the overwhelmingly common case) takes the original
+    // path untouched, so nothing about auto-only exports changes.
+    const auto manual =
+        request.zoom_manual_path.empty()
+            ? std::vector<ZoomManualSegment>{}
+            : ParseZoomManualJson(ReadFileUtf8(request.zoom_manual_path));
+    if (manual.empty()) {
+      zoom_controller = ZoomExportController::Create(
+          request.cursor_sidecar_path, duration_hns / 10000,
+          request.zoom_factor);
+    } else if (auto parsed = ParseCursorSidecar(
+                   ReadFileUtf8(request.cursor_sidecar_path))) {
+      const auto autos = BuildZoomSegments(parsed->samples, parsed->clicks,
+                                           duration_hns / 10000);
+      zoom_controller = ZoomExportController::CreateFromSegments(
+          std::move(*parsed), MergeZoomSegments(autos, manual),
+          request.zoom_factor);
+    }
   }
 
   // Phase 9.4: optional camera bubble. Opens camera/raw.mov on its own reader

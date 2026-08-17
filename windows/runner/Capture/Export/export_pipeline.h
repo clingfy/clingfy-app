@@ -157,6 +157,12 @@ struct RenderRequest {
   // feature is active.
   std::wstring cursor_sidecar_path;
 
+  // `<project>/capture/zoom.manual.json`, when the user has authored or edited
+  // zoom segments. Empty → auto zoom only, exactly as before manual editing
+  // existed. Passed explicitly rather than derived from cursor_sidecar_path so
+  // the layout rule lives in one place (zoom_manual_store.h).
+  std::wstring zoom_manual_path;
+
   // Phase 8.3 smart zoom. When `zoom_enabled` and a sidecar is present, the
   // export auto-generates zoom segments from the recorded clicks + cursor path
   // and applies a smoothed zoom transform (magnified by `zoom_factor`, 1.0..3.0;

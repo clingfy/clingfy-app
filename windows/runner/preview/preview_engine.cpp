@@ -290,7 +290,16 @@ struct PreviewEngine::Impl {
   clingfy::preview::PreviewCompositor compositor;
   capture::CursorSidecarData cursor;
   // Source-keyed, built once at Open. Read on the frame thread.
+  // The timeline the compositor renders. Built from the cursor sidecar at
+  // Open; REPLACED wholesale when Dart pushes an effective timeline through
+  // previewSetZoomSegments (Dart has already merged auto + manual there — see
+  // the `previewSetZoomSegments` contract in native_bridge.dart).
   std::vector<capture::ZoomSegment> zoom_segments;
+  // Distinguishes "Dart has not sent a timeline" from "Dart sent an EMPTY
+  // timeline", which is what the user deleting every segment looks like. A
+  // plain empty vector cannot tell those apart, and falling back to the auto
+  // timeline in the second case would resurrect exactly what they deleted.
+  bool has_zoom_override = false;
   clingfy::preview::ZoomState zoom;
   bool cursor_mode = false;
 
@@ -1134,8 +1143,14 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
     // media's natural duration, which differs only in where a still-active
     // FINAL segment is truncated; segment starts — and therefore anything
     // keyed to segment-local time — are identical either way.
-    impl_->zoom_segments = capture::BuildZoomSegments(
-        impl_->cursor.samples, impl_->cursor.clicks, /*duration_ms=*/0);
+    // Auto only. A manual timeline arrives afterwards via
+    // previewSetZoomSegments — Dart re-pushes it on attach and after an
+    // in-place rebuild (resyncToNative), which is what that method was
+    // written for. Not overwriting an override that somehow already landed.
+    if (!impl_->has_zoom_override) {
+      impl_->zoom_segments = capture::BuildZoomSegments(
+          impl_->cursor.samples, impl_->cursor.clicks, /*duration_ms=*/0);
+    }
     char buf[160];
     std::snprintf(buf, sizeof(buf),
                   "cursor sidecar parsed: %zu samples, %zu clicks, "
@@ -2710,6 +2725,31 @@ void PreviewEngine::SetCameraComposition(
     // AFTER releasing mutex_, matching the snapshot-then-release discipline of
     // SeekTo/Pause.
     impl_->camera_renderer->SetComposition(composition);
+  }
+  RepaintPausedPreview();
+}
+
+void PreviewEngine::SetZoomSegments(
+    const std::string& session_id,
+    const std::vector<capture::ZoomSegment>& segments) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetZoomSettings / SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+  }
+  {
+    // render_mutex ALONE, for the reason spelled out in SetZoomSettings: the
+    // frame thread takes render_mutex -> mutex_ and never the reverse.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->zoom_segments = segments;
+    impl->has_zoom_override = true;
   }
   RepaintPausedPreview();
 }
