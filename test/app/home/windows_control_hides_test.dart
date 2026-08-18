@@ -1,4 +1,5 @@
 import 'package:clingfy/app/home/post_processing/widgets/post_background_section.dart';
+import 'package:clingfy/app/home/recording/widgets/recording_audio_section.dart';
 import 'package:clingfy/app/home/recording/widgets/recording_output_section.dart';
 import 'package:clingfy/app/home/recording/widgets/recording_source_section.dart';
 import 'package:clingfy/core/models/app_models.dart';
@@ -15,6 +16,13 @@ import 'package:macos_ui/macos_ui.dart';
 ///   - RecordingOutputSection: frame-rate group (setCaptureFrameRate no-op)
 ///   - RecordingSourceSection: area Reveal button (reveal overlay missing)
 ///   - PostBackgroundSection: image/preset modes (export renders color only)
+///   - RecordingAudioSection: exclude-mic toggle — hidden for a DIFFERENT
+///     reason than the rest of this file, so do not "fix" it by wiring the
+///     setter up. The others are unbuilt; this one has nothing to build.
+///     WASAPI takes system audio as loopback on the default render endpoint
+///     and the mic on a separate capture endpoint, so the mic is never in the
+///     system track. macOS needs the toggle because its aggregate device
+///     really does mix them.
 void main() {
   tearDown(() {
     debugPlatformKindOverride = null;
@@ -179,6 +187,62 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byIcon(Icons.image_outlined), findsOneWidget);
       expect(find.byIcon(Icons.auto_awesome_outlined), findsOneWidget);
+    });
+  });
+
+  group('RecordingAudioSection exclude-mic toggle', () {
+    // Both preconditions the toggle needs on macOS: system audio on AND a real
+    // microphone selected. With either missing it is hidden on every platform,
+    // so a passing Windows expectation would prove nothing.
+    Widget section() => SizedBox(
+      width: 720,
+      child: RecordingAudioSection(
+        isRecording: false,
+        audioSources: const [
+          AudioSource(id: 'mic-1', name: 'Built-in Microphone'),
+        ],
+        selectedAudioSourceId: 'mic-1',
+        loadingAudio: false,
+        systemAudioEnabled: true,
+        systemAudioBleedRisk: false,
+        excludeMicFromSystemAudio: false,
+        micEchoCancellationEnabled: false,
+        micInputLevelLinear: 0.0,
+        micInputLevelDbfs: -160.0,
+        micInputTooLow: false,
+        onAudioSourceChanged: (_) {},
+        onRefreshAudio: () {},
+        onSystemAudioEnabledChanged: (_) {},
+        onExcludeMicFromSystemAudioChanged: (_) {},
+        onMicEchoCancellationEnabledChanged: (_) {},
+      ),
+    );
+
+    String label(WidgetTester tester) {
+      return AppLocalizations.of(
+        tester.element(find.byType(RecordingAudioSection)),
+      )!.recordingExcludeMicFromSystemAudio;
+    }
+
+    testWidgets('hidden on Windows (the mic is never in the system track)', (
+      tester,
+    ) async {
+      debugPlatformKindOverride = PlatformKind.windows;
+      await tester.pumpWidget(host(section()));
+      await tester.pumpAndSettle();
+      expect(find.text(label(tester)), findsNothing);
+      // The section itself still renders — this is one hidden row, not a
+      // collapsed panel.
+      expect(find.byType(RecordingAudioSection), findsOneWidget);
+    });
+
+    testWidgets('visible on macOS, where the aggregate device mixes them', (
+      tester,
+    ) async {
+      debugPlatformKindOverride = PlatformKind.macos;
+      await tester.pumpWidget(host(section()));
+      await tester.pumpAndSettle();
+      expect(find.text(label(tester)), findsOneWidget);
     });
   });
 }

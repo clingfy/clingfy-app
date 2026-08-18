@@ -201,16 +201,26 @@ a legacy embedded fallback when neither sidecar decodes.
   D4 the recording keeps system audio and the mixed track gains silence in
   the mic's place. Strictly better, but it is a behavior change worth a
   line in the recording-warning docs.
-- **Echo-cancelled mic (deliberate divergence, review-flagged).** macOS
+- **Echo-cancelled mic (RESOLVED — was a deliberate divergence).** macOS
   separated exports route the mic through its speaker-bleed canceller
   (`echoCancelledMicURL` / `CleanedMicCache`) BEFORE the decodability
-  gate, the normalize peak estimate, and the mix. Windows feeds the raw
-  `mic.m4a` to all three — the "exclude mic from system audio" feature
-  family is not shipped on Windows at all (see `docs/features.md`), and
-  the export-time canceller belongs to that track, not to separation.
-  Consequence: a speakers-plus-mic recording exported on Windows keeps the
-  bleed in the mic track (and normalize measures it); revisit when the
-  exclude-mic feature is ported.
+  gate, the normalize peak estimate, and the mix. Windows originally fed
+  the raw `mic.m4a` to all three, so a speakers-plus-mic recording kept
+  the bleed in the mic track and normalize measured it.
+
+  Windows grew its own canceller in `Audio/EchoCancel/mic_echo_canceller`,
+  and the export takes the user's choice per call
+  (`export_router.cpp`, `micEchoCancellationEnabled`) rather than from a
+  native mirror — Dart owns that setting in SharedPreferences. The
+  divergence is closed.
+
+  Note this was never blocked on "exclude mic from system audio", despite
+  the original wording pairing them. That feature is **not applicable** on
+  Windows, not unported: WASAPI takes system audio as loopback on the
+  default render endpoint and the mic on a separate capture endpoint, so
+  the mic cannot enter the system track in the first place. There is
+  nothing to exclude, and `getExcludeMicFromSystemAudio` reports `true` as
+  a fact.
 
 ## 6. Slices
 

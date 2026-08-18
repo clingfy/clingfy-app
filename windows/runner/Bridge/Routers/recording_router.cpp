@@ -222,18 +222,32 @@ void HandleGetExcludeRecorderApp(
   reply::Bool(*result, false);
 }
 
-// macOS default is `true` (exclude mic from the system-audio mix so the user
-// doesn't hear themselves echoed back). Mirror that default until WASAPI
-// loopback is wired up in Phase 3D.
+// Always `true`, and that is a structural fact rather than a placeholder.
+// macOS needs the setting because its aggregate device mixes the mic into the
+// system-audio tap. WASAPI cannot: system audio is loopback on the default
+// RENDER endpoint (`wasapi_audio_capture.cpp`, eRender +
+// AUDCLNT_STREAMFLAGS_LOOPBACK) while the mic is a separate CAPTURE endpoint
+// written to its own sidecar, so the mic never reaches the system track. The
+// paired setter is therefore inert by design, not pending — see
+// `docs/decisions/windows-audio-separation.md`.
+//
+// The one case this does not cover is a user who enabled "Listen to this
+// device" for the mic in Windows sound settings, which routes mic playback
+// into the render endpoint. Removing it there would need mic-out-of-loopback
+// cancellation — the inverse of the export canceller added for speaker bleed.
 void HandleGetExcludeMicFromSystemAudio(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::Bool(*result, true);
 }
 
-// macOS default is `false` (mic echo cancellation is opt-in; the canceller
-// itself is a macOS-only preview/export step). Mirror the default; the
-// setter is a no-op until Windows grows an equivalent pipeline.
+// Windows has its own canceller now (`Audio/EchoCancel/mic_echo_canceller`),
+// so the feature is live on both platforms — but this pair stays inert on
+// purpose. Dart owns the setting in SharedPreferences
+// (`recording_settings_controller.dart`) and hands the value to each export
+// over the wire (`export_router.cpp`, `micEchoCancellationEnabled`), so the
+// canceller reads the user's choice without a native mirror. Nothing in Dart
+// calls this getter; `false` is the macOS-matching default it would return.
 void HandleGetMicEchoCancellationEnabled(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {

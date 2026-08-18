@@ -13,7 +13,9 @@ feature, with platform status. Update this file whenever a release ships
   `docs/windows-port-inventory.md`.
 - Marketing scripts derived from this file: `docs/marketing/reels-series.md`.
 
-Status legend: ✅ shipped · 🚧 partial / with caveats · — not available yet.
+Status legend: ✅ shipped · 🚧 partial / with caveats · — not available yet ·
+n/a not applicable on that platform (the underlying problem does not exist
+there, so there is nothing to ship).
 
 ## Recording
 
@@ -40,7 +42,7 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Microphone capture | Record the mic alongside the screen. | ✅ | ✅ |
 | Microphone gain | Boost the mic up to +24 dB. Applied at export and previewed live (there is no capture-time input gain). | ✅ | 🚧 (export; audible in the preview once the timeline has a cut) |
 | Live mic level meter | dBFS meter while setting up. | ✅ | 🚧 |
-| Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | — |
+| Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | n/a (WASAPI captures system audio as loopback on the render endpoint and the mic on a separate capture endpoint, so the mic is never in the system track; the toggle is hidden rather than always-on) |
 | Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
 | Loudness normalization | One-click scale at export so the loudest sample lands on a target you pick (−24 to −6 dBFS). A sample-peak match, not LUFS. Export only — never previewed. Mic only on recordings with a separate mic track. | ✅ | ✅ |
 | Live audio mix preview | Hear volume and gain changes while editing; voice cleanup too, on recordings with a separate mic track. Loudness normalization is never previewed on either platform. | ✅ | 🚧 (volume only until a real cut or trim) |

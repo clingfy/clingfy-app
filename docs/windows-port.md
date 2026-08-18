@@ -64,6 +64,33 @@ lifecycle, preview, and basic export.
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
+## Verified parity gaps — all closed
+
+A code-level audit after Phase 10 found the behaviours below still diverging
+from macOS. Each was fixed in its own PR; they were previously enumerated only
+in those PR bodies, which is why this table exists.
+
+| # | Gap | Fix | Where |
+|---|---|---|---|
+| 1 | Keyframe spacing unpinned, so seek lead-in was unbounded (#294) | #466 | `Encoding/mf_sink_writer_encoder.cpp` (`MF_MT_MAX_KEYFRAME_SPACING`) |
+| 2 | WGC yellow capture border never disabled | #467 | `Capture/wgc_display_capture_backend.cpp` (`IsBorderRequired(false)`) |
+| 3 | No resampler — a non-48 kHz endpoint recorded silence, silently | #468 | `Audio/wasapi_stream_format.cpp` (`AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) |
+| 4 | HEVC silently downgraded to H.264 | #469 | `Encoding/mf_encoder_config.cpp` (`MFVideoFormat_HEVC`) |
+| 5 | Device hot-plug events never emitted | #470 | `Bridge/Devices/device_change_watcher.cpp` |
+| 6 | Manual zoom segments stubbed — auto zoom was real but read-only | #471 | `Capture/Zoom/zoom_manual_store.cpp` |
+| 7 | Speaker-to-mic bleed not cancelled at export | #472 | `Audio/EchoCancel/mic_echo_canceller.cpp` |
+| 8 | Export drew one hardcoded arrow instead of the real cursor | #473 | `Capture/Cursor/cursor_sprite_capture.cpp` |
+
+Two items that appeared on early drafts of this list are **not** gaps:
+
+- **Background image export** — already shipped with the canvas port.
+  `Capture/Export/export_pipeline.cpp` renders it through
+  `Background/background_image_cache`, fed by `backgroundImagePath` in
+  `export_router.cpp`.
+- **Exclude mic from system audio** — not applicable on Windows rather than
+  unported. See the note in
+  [decisions/windows-audio-separation.md](decisions/windows-audio-separation.md).
+
 ## Current status — Phase 10.0 (beta readiness) — DESIGN LOCKED
 
 Phase 10 takes the Windows app from "a Release folder that works on the dev

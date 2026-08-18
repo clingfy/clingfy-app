@@ -163,9 +163,15 @@ class RecordingAudioSection extends StatelessWidget {
                   icon: Icons.headset_outlined,
                 ),
               ],
-              // Phase 10.3 (Windows): setExcludeMicFromSystemAudio is a
-              // native no-op — the WASAPI loopback mix can't exclude the
-              // mic yet, so the toggle is hidden.
+              // Hidden on Windows because there is nothing to exclude, not
+              // because the exclusion is unbuilt. macOS needs this toggle: its
+              // aggregate device genuinely mixes the mic into the system tap.
+              // WASAPI does not — system audio is loopback on the default
+              // RENDER endpoint and the mic is a separate CAPTURE endpoint,
+              // written to its own sidecar, so the mic cannot reach the system
+              // track by construction. `getExcludeMicFromSystemAudio` reports
+              // `true` there as a fact, not a placeholder. Showing an
+              // always-on toggle would imply a choice the user does not have.
               if (systemAudioEnabled &&
                   _hasSelectedMicrophone &&
                   !isWindows()) ...[
