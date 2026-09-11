@@ -132,6 +132,40 @@ double ResolveCornerRadiusPx(double requested, RectF content);
 bool IsIdentityTransform(const std::string& layout,
                          const std::string& resolution);
 
+// The exact pixel size an export will render at. This is the answer the
+// `resolveExportSize` bridge method hands Flutter so it can rasterize caption
+// bitmaps against the canvas the frames will actually have.
+//
+// It MUST stay identical to what `export_pipeline` computes for the same
+// inputs, which is why both funnel through `ResolveTargetSize` +
+// `ToEvenPixelSize` rather than each doing their own arithmetic. Flutter
+// cannot compute this itself: the "auto" resolution preset derives from the
+// recording's own source track size, which only this side has read.
+//
+// `format` and `gif_size` are accepted for parity with the macOS payload but
+// deliberately do NOT change the answer on Windows, and that divergence is the
+// point rather than an oversight:
+//
+//   macOS has no real GIF encoder — its "gif" format downgrades to a video
+//   container and renders its intermediate at a capped long edge
+//   (`GifExportPolicy.intermediateRenderSize`), so it must report the CAPPED
+//   size or a cue laid out for 1920 is drawn 1:1 on a 1080-wide frame, ~1.8x
+//   the width it was laid out for.
+//
+//   Windows encodes GIF natively through WIC at the FULL canvas —
+//   `export_pipeline.cpp` hands the encoder `gif_config.width/height =
+//   canvas.width/height`, the same canvas every other format gets — and
+//   `gif_export_policy.h` is purely temporal (frame decimation and delay
+//   stamping, no size cap at all).
+//
+// So mirroring the macOS cap here would rasterize captions for a canvas
+// Windows never renders. Answering uncapped is what keeps the bitmap and the
+// frame the same size.
+PixelSize ResolveExportPixelSize(SizeF source, const std::string& layout,
+                                 const std::string& resolution,
+                                 const std::string& format,
+                                 const std::string& gif_size);
+
 }  // namespace clingfy::capture::export_
 
 #endif  // RUNNER_CAPTURE_EXPORT_EXPORT_GEOMETRY_H_

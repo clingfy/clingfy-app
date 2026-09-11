@@ -119,6 +119,7 @@ add_library(runner_bridge STATIC
   "Capture/Export/gif_export_policy.cpp"
   "Capture/Export/mic_cleanup.cpp"
   "Capture/Export/reorder_audio_pump.cpp"
+  "Capture/Export/video_source_probe.cpp"
   "Capture/Camera/camera_bubble_painter.cpp"
   "Capture/Camera/camera_dcomp_device_loss.cpp"
   "Capture/Camera/camera_dcomp_overlay.cpp"

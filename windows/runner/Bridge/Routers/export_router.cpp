@@ -23,8 +23,10 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Cursor/cursor_sidecar_reader.h"
+#include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Export/video_source_probe.h"
 #include "Capture/Zoom/zoom_manual_store.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Capture/recording_project_reader.h"
@@ -350,6 +352,81 @@ void HandleGetManualZoomSegments(
 // sidecar event (zoom_timeline_builder.cpp): start times and interior end
 // times are identical to the export's; only a final still-active segment's
 // endMs can differ from the export's MF-duration-clamped value.
+// resolveExportSize — the pixel size an export of this project would render
+// at, so Flutter can rasterize caption bitmaps against the canvas the frames
+// will actually have.
+//
+// Flutter genuinely cannot compute this. The "auto" resolution preset derives
+// from the recording's own source track size, which only this side reads, and
+// the caption renderer scales a bitmap DOWN to fit a narrower frame but never
+// up — so a cue rasterized for a canvas wider than the real one is drawn 1:1
+// and covers more of the frame than it was laid out for. Guessing here ships
+// captions sized for a canvas that never existed.
+//
+// Failure replies an error rather than a fallback size, and that is
+// deliberate: `NativeBridge.resolveExportSize` maps any error to null and the
+// caller then SKIPS burn-in. A video with no captions is a recoverable
+// disappointment; a video with permanently mis-scaled captions burned into the
+// pixels is not.
+void HandleResolveExportSize(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = AsMap(call.arguments());
+  if (args == nullptr) {
+    reply::BadArgs(*result, "resolveExportSize: missing arguments.");
+    return;
+  }
+  const std::string project_path = ReadString(*args, "projectPath");
+  if (project_path.empty()) {
+    reply::BadArgs(*result, "resolveExportSize: missing projectPath.");
+    return;
+  }
+
+  // UTF-8 from the channel; fs::path(std::string) would decode it with the
+  // legacy ACP. Same conversion every other ReadRecordingProject call site
+  // uses.
+  auto read = clingfy::capture::ReadRecordingProject(
+      clingfy::storage::Utf8ToWide(project_path));
+  if (read.error != clingfy::capture::ReadError::kNone ||
+      !read.project.has_value()) {
+    result->Error("SCENE_INPUT_MISSING",
+                  "Recording project not found. It may have been moved or "
+                  "deleted.",
+                  flutter::EncodableValue(project_path));
+    return;
+  }
+
+  // Probe the video, do not read screen.meta.json. The exporter distrusts the
+  // manifest here on purpose ("Read the true source dimensions from the
+  // negotiated type rather than trusting the project metadata",
+  // export_pipeline.cpp) and this answer only means anything if it matches
+  // what the exporter will do.
+  const auto source = clingfy::capture::export_::ProbeVideoFrameSize(
+      read.project->screen_path);
+  if (!source.has_value()) {
+    result->Error("SCENE_INPUT_MISSING",
+                  "Could not determine source video dimensions.",
+                  flutter::EncodableValue(project_path));
+    return;
+  }
+
+  const clingfy::capture::export_::PixelSize size =
+      clingfy::capture::export_::ResolveExportPixelSize(
+          clingfy::capture::export_::SizeF{
+              static_cast<double>(source->width),
+              static_cast<double>(source->height)},
+          ReadString(*args, "layoutPreset"), ReadString(*args, "resolutionPreset"),
+          ReadString(*args, "format"), ReadString(*args, "gifSize"));
+
+  reply::Map(*result,
+             flutter::EncodableMap{
+                 {flutter::EncodableValue("width"),
+                  flutter::EncodableValue(static_cast<int64_t>(size.width))},
+                 {flutter::EncodableValue("height"),
+                  flutter::EncodableValue(static_cast<int64_t>(size.height))},
+             });
+}
+
 void HandleGetZoomSegments(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -771,6 +848,8 @@ void RegisterHandlers(HandlerTable& table) {
   // into `Bridge/Routers/preview_router.cpp` where it now reads the
   // .clingfyproj manifest via `clingfy::capture::RecordingProjectReader`
   // and returns the macOS-shaped map.
+
+  table["resolveExportSize"] = &HandleResolveExportSize;
 
   table["getZoomSegments"] = &HandleGetZoomSegments;
   table["getManualZoomSegments"] = &HandleGetManualZoomSegments;

@@ -120,6 +120,7 @@ const std::vector<std::string>& BridgeContractMethods() {
       "previewSetZoomSegments",
       "previewSetVoiceCleanup",
       "previewSetColorGrade",
+      "previewSetCaptions",
       "previewSetCanvas",
       "canvasPresetThumbnail",
       "previewSetClips",
@@ -133,6 +134,7 @@ const std::vector<std::string>& BridgeContractMethods() {
       "exportVideo",
       "processVideo",
       "cancelExport",
+      "resolveExportSize",
       "getRecordingSceneInfo",
       "getZoomSegments",
       "getManualZoomSegments",
@@ -174,6 +176,13 @@ const std::vector<std::string>& BridgeContractMethods() {
 
       // Captions (macOS-only feature; Windows answers "unavailable" with a
       // reason rather than letting the Flutter side see a missing handler).
+      //
+      // `previewSetCaptions` is listed with the other preview methods above,
+      // and `resolveExportSize` with export below: both are caption CONSUMERS
+      // rather than caption features, and both were absent from this list
+      // while unimplemented on Windows — which is exactly the drift this file
+      // exists to catch, so they are listed where a reader will look for them
+      // rather than grouped here by which feature first needed them.
       "captionsCapability",
       "generateCaptions",
       "cancelCaptions",

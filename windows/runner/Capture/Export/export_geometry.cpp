@@ -155,4 +155,18 @@ bool IsIdentityTransform(const std::string& layout,
   return layout_auto && resolution_auto;
 }
 
+PixelSize ResolveExportPixelSize(SizeF source, const std::string& layout,
+                                 const std::string& resolution,
+                                 const std::string& format,
+                                 const std::string& gif_size) {
+  // `format` / `gif_size` are intentionally unread. See the header: Windows
+  // renders a GIF at the full canvas, so there is no cap to apply and no
+  // branch to take. They stay in the signature because the Dart payload sends
+  // them and because a future Windows GIF size cap would land exactly here —
+  // next to the reasoning for why there isn't one today.
+  (void)format;
+  (void)gif_size;
+  return ToEvenPixelSize(ResolveTargetSize(source, layout, resolution));
+}
+
 }  // namespace clingfy::capture::export_

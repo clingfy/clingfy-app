@@ -714,6 +714,48 @@ void HandlePreviewSetColorGrade(
   reply::Null(*result);
 }
 
+// previewSetCaptions — captions are not ported to Windows, so the preview has
+// no caption layer to hand bitmaps to.
+//
+// Registered rather than left unhandled for the reason the misc_router caption
+// stubs give: an unhandled method throws MissingPluginException in Dart, and
+// this method is also missing from BridgeContractMethods() precisely because
+// nobody noticed it was unimplemented. Registering it puts it under the
+// contract test's drift detection.
+//
+// The reply discriminates, and that distinction is the useful part. CLEARING
+// captions (a null/empty directory with no cues) genuinely succeeds here —
+// there are none, so there is nothing to not-show, and Dart pushes exactly
+// that on every project switch and destination change. SETTING real cues
+// cannot be honoured, and saying Null to it would be a lie the caller has no
+// way to detect: the method returns void, so a false success is indis-
+// tinguishable from a real one until someone notices the preview never shows a
+// caption the export will burn in. When the Windows caption layer lands, this
+// handler is replaced rather than extended.
+void HandlePreviewSetCaptions(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  bool wants_captions = false;
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    if (!ReadString(*args, "bitmapDirectory").empty()) {
+      wants_captions = true;
+    }
+    const auto it = args->find(flutter::EncodableValue("cues"));
+    if (it != args->end()) {
+      if (const auto* cues = std::get_if<flutter::EncodableList>(&it->second)) {
+        wants_captions = wants_captions || !cues->empty();
+      }
+    }
+  }
+  if (wants_captions) {
+    result->Error("CAPTIONS_UNSUPPORTED",
+                  "Caption preview is not available on Windows.");
+    return;
+  }
+  reply::Null(*result);
+}
+
 // The EFFECTIVE zoom timeline from the Dart editor — auto segments minus the
 // ones the user overrode or deleted, plus the ones they authored. Dart does
 // that merge (see the previewSetZoomSegments contract in native_bridge.dart),
@@ -960,6 +1002,7 @@ void RegisterHandlers(HandlerTable& table) {
   // chain the export bakes with (Graphics/color_grade_effect), applied to
   // the preview video by preview_compositor. Video-only, like macOS preview.
   table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
+  table["previewSetCaptions"] = &HandlePreviewSetCaptions;
   table["previewSetCanvas"] = &HandlePreviewSetCanvas;
   table["canvasPresetThumbnail"] = &HandleCanvasPresetThumbnail;
   // Clip split/cut/trim/arrange (editing port step 4-1): the clip list is now
