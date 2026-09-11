@@ -11,7 +11,6 @@ feature, with platform status. Update this file whenever a release ships
   `docs/windows-port.md` and `docs/windows-beta-tester-guide.md`.
 - Engineering-level inventory (bridge methods, code locations):
   `docs/windows-port-inventory.md`.
-- Marketing scripts derived from this file: `docs/marketing/reels-series.md`.
 
 Status legend: ✅ shipped · 🚧 partial / with caveats · — not available yet ·
 n/a not applicable on that platform (the underlying problem does not exist
