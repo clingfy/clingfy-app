@@ -34,19 +34,29 @@ Use a release branch for:
 - version validation
 - final QA and release readiness work
 
-### `feature/*`
-Short-lived branches for new feature work.
+### Short-lived work branches
 
-Examples:
-- `feature/timeline-zoom-editor`
-- `feature/camera-overlay-squircle`
+Name a work branch `<type>/<short-description>`, where `<type>` is the same
+conventional-commit type the branch's commits will use. Keeping the two aligned
+means the branch name already says what the squashed commit will say.
 
-### `bugfix/*`
-Short-lived branches for normal development bug fixes.
+| Prefix | For | Example |
+|---|---|---|
+| `feat/` | New feature work | `feat/timeline-zoom-editor` |
+| `fix/` | Bug fixes in unreleased development work | `fix/timeline-scrub-jump` |
+| `docs/` | Documentation only | `docs/windows-port-inventory` |
+| `chore/` | Repo hygiene, tooling, dependencies | `chore/bump-flutter-3-44` |
+| `refactor/` | Behaviour-preserving restructuring | `refactor/editor-state` |
+| `test/` | Test-only work | `test/camera-export-parity` |
+| `ci/` | Pipeline and workflow changes | `ci/windows-path-filters` |
 
-Examples:
-- `bugfix/mic-monitor-collapse-state`
-- `bugfix/timeline-scrub-jump`
+Anything else conventional commits allows (`perf/`, `style/`, `revert/`) is fine
+on the same rule.
+
+`feature/` and `bugfix/` are the older long forms of `feat/` and `fix/`. Both
+appear in history and neither is wrong; new branches should use the short form
+so branch prefixes and commit types match. Do not rename existing branches to
+suit this — an open PR's branch name is not worth a force-push.
 
 ### `hotfix/*`
 Short-lived branches for production fixes after a release has already shipped.
@@ -63,7 +73,7 @@ Examples:
 Branch from `develop` and merge back into `develop`.
 
 ```text
-feature/my-feature -> develop
+feat/my-feature -> develop
 ````
 
 ### Release preparation
@@ -85,7 +95,7 @@ After the release branch is created:
 If a bug is found while preparing a release, fix it on the release branch.
 
 ```text
-bugfix/release-issue -> release/x.y.z
+fix/release-issue -> release/x.y.z
 ```
 
 ### Completing a release
@@ -118,8 +128,7 @@ Protected branches are expected to keep a linear history.
 
 Recommended merge methods:
 
-* `feature/* -> develop` → usually **Squash and merge**
-* `bugfix/* -> develop` → usually **Squash and merge**
+* any work branch (`feat/`, `fix/`, `docs/`, `chore/`, …) `-> develop` → usually **Squash and merge**
 * `release/x.y.z -> main` → usually **Rebase and merge**
 * `release/x.y.z -> develop` → usually **Rebase and merge**
 * `hotfix/* -> main` → usually **Rebase and merge**
@@ -133,32 +142,39 @@ If GitHub cannot rebase automatically because of conflicts, resolve the rebase l
 
 ### New feature?
 
-Branch from `develop`.
+Branch from `develop` as `feat/*`.
 
 ### Normal bug in unreleased development work?
 
-Branch from `develop`.
+Branch from `develop` as `fix/*`.
+
+### Docs, tooling, or repo hygiene?
+
+Branch from `develop` as `docs/*` or `chore/*`.
 
 ### Release blocker found before shipping?
 
-Branch from `release/x.y.z`.
+Branch from `release/x.y.z` as `fix/*`.
 
 ### Production bug found after shipping?
 
-Branch from `main`.
+Branch from `main` as `hotfix/*`. Never from `develop` — it may already carry
+unreleased work.
 
 ---
 
 ## Summary
 
 ```text
-feature/*  -> develop
-bugfix/*   -> develop
+feat/*   -> develop
+fix/*    -> develop
+docs/*   -> develop
+chore/*  -> develop
 
 develop -> release/x.y.z
 
 release-only fixes:
-bugfix/release-* -> release/x.y.z
+fix/release-* -> release/x.y.z
 
 release/x.y.z -> main
 release/x.y.z -> develop
