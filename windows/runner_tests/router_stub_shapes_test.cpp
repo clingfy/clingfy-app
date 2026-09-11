@@ -1267,5 +1267,229 @@ TEST(StubShapesTest, GetRecordingCapabilitiesReportsWindowsMfBackend) {
          "Windows engine name so diagnostics surface it.";
 }
 
+// === Caption stubs: pin what WINDOWS EMITS ==================================
+//
+// `misc_router.cpp` notes that the capability key trio "is pinned by tests on
+// both sides because renaming one silently disables captions rather than
+// failing loudly". That is true of the two sides it names — Dart parsing is
+// covered under test/app/home/post_processing/, and macOS has its own — but
+// neither pins the C++ that BUILDS the map. Dart tests prove Dart reads
+// `usesEmbeddedAudioOnly`; nothing proved Windows writes it.
+//
+// So the named failure was live: rename a key here and every Dart test stays
+// green while `CaptionsCapabilityInfo.fromMap` silently reads a missing key on
+// Windows. These tests close that, asserting the exact key strings rather than
+// round-tripping through a shared constant, because a shared constant renamed
+// in one place is precisely the drift being guarded against.
+//
+// Captions themselves are macOS-only and scheduled post-beta; these pin the
+// honest "not here" answers so the stubs cannot rot before the real ones land.
+
+TEST(StubShapesTest, CaptionsCapabilityEmitsTheFullKeySetAsUnavailable) {
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "captionsCapability");
+
+  ASSERT_TRUE(reply.success_called)
+      << "An unhandled captionsCapability throws MissingPluginException in "
+         "Dart, which reaches the user as a crash-shaped error.";
+  const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
+  ASSERT_NE(map, nullptr) << "captionsCapability must reply a map";
+
+  // Returns a pointer INTO the map, never into a temporary.
+  const auto find = [map](const char* key) -> const flutter::EncodableValue* {
+    const auto it = map->find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map->end()) << "missing key: " << key;
+    return it == map->end() ? nullptr : &it->second;
+  };
+
+  // `available: false` plus a reason Dart can localise is the whole contract:
+  // post_captions_section.dart gates purely on capability.available and has no
+  // platform check of its own, so this single false is what hides the panel.
+  const flutter::EncodableValue* available_v = find("available");
+  ASSERT_NE(available_v, nullptr);
+  const auto* available = std::get_if<bool>(available_v);
+  ASSERT_NE(available, nullptr) << "available must be a bool";
+  EXPECT_FALSE(*available);
+
+  const flutter::EncodableValue* reason_v = find("reason");
+  ASSERT_NE(reason_v, nullptr);
+  const auto* reason = std::get_if<std::string>(reason_v);
+  ASSERT_NE(reason, nullptr) << "reason must be a string";
+  EXPECT_EQ(*reason, "platformNotSupported")
+      << "Dart maps this exact spelling to a localised sentence; any other "
+         "value falls through to the unknown-reason path.";
+
+  for (const char* key :
+       {"hasMicAudio", "hasSystemAudio", "usesEmbeddedAudioOnly"}) {
+    const flutter::EncodableValue* flag_v = find(key);
+    ASSERT_NE(flag_v, nullptr) << key;
+    const auto* flag = std::get_if<bool>(flag_v);
+    ASSERT_NE(flag, nullptr) << key << " must be a bool";
+    EXPECT_FALSE(*flag) << key
+                        << " must be false while the engine is not ported — a "
+                           "true here claims audio the transcriber cannot use.";
+  }
+
+  EXPECT_EQ(map->size(), 5u)
+      << "Exactly the five keys CaptionsCapabilityInfo.fromMap reads. An extra "
+         "key is dead weight Dart ignores; a missing one reads as absent.";
+}
+
+TEST(StubShapesTest, CaptionModelInfoReportsNothingInstalledWithEveryKey) {
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "getCaptionModelInfo");
+
+  ASSERT_TRUE(reply.success_called)
+      << "A Null reply falls into the Dart map parse and reaches the storage "
+         "page as an error, where the honest answer is 'nothing downloaded'.";
+  const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
+  ASSERT_NE(map, nullptr);
+
+  const auto find = [map](const char* key) {
+    const auto it = map->find(flutter::EncodableValue(key));
+    EXPECT_NE(it, map->end()) << "missing key: " << key;
+    return it;
+  };
+
+  for (const char* key : {"installed", "busy", "loaded"}) {
+    const auto it = find(key);
+    if (it == map->end()) continue;
+    const auto* flag = std::get_if<bool>(&it->second);
+    ASSERT_NE(flag, nullptr) << key << " must be a bool";
+    EXPECT_FALSE(*flag);
+  }
+
+  // int64, not int32: Dart reads these as int and a model is ~600 MB-1.6 GB,
+  // which still fits int32 — but the type the codec carries must match what
+  // the real implementation will send, or this stub trains the wrong shape.
+  for (const char* key : {"modelBytes", "compiledCacheBytes"}) {
+    const auto it = find(key);
+    if (it == map->end()) continue;
+    const auto* bytes = std::get_if<std::int64_t>(&it->second);
+    ASSERT_NE(bytes, nullptr) << key << " must be an int64";
+    EXPECT_EQ(*bytes, 0);
+  }
+
+  for (const char* key : {"modelPath", "variant"}) {
+    const auto it = find(key);
+    if (it == map->end()) continue;
+    const auto* str = std::get_if<std::string>(&it->second);
+    ASSERT_NE(str, nullptr) << key << " must be a string";
+    EXPECT_TRUE(str->empty());
+  }
+
+  EXPECT_EQ(map->size(), 7u) << "The full key set, so the storage page renders "
+                                "'nothing downloaded' rather than an error.";
+}
+
+TEST(StubShapesTest, UnsupportedCaptionMethodsFailWithACodeNotAMissingHandler) {
+  MethodRouter router;
+  for (const char* method : {"generateCaptions", "deleteCaptionModel"}) {
+    const RecordedReply reply = Dispatch(router, method);
+    EXPECT_FALSE(reply.not_implemented_called)
+        << method
+        << " must be registered: an unhandled method is a "
+           "MissingPluginException, which is crash-shaped rather than an "
+           "explanation.";
+    EXPECT_TRUE(reply.error_called) << method << " must fail with a code";
+    EXPECT_EQ(reply.error_code, "CAPTIONS_UNSUPPORTED") << method;
+  }
+}
+
+TEST(StubShapesTest, CancelCaptionsIsANoOpSuccessBecauseCancellingNothingWorks) {
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "cancelCaptions");
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_TRUE(reply.success_value.IsNull())
+      << "There is no job to cancel, so cancelling succeeded. Erroring here "
+         "would make a teardown path noisy for no reason.";
+}
+
+// previewSetCaptions discriminates rather than blanket-succeeding, and the
+// distinction is the point: the method returns void, so a false success is
+// indistinguishable from a real one until someone notices the preview never
+// shows a caption the export will burn in.
+TEST(StubShapesTest, PreviewSetCaptionsClearSucceedsButSettingCuesRefuses) {
+  MethodRouter router;
+
+  // Clearing: no directory, no cues. Dart pushes exactly this on every project
+  // switch and destination change, and on Windows it is honest — there are no
+  // captions, so there are none to stop showing.
+  const RecordedReply cleared = DispatchWithArgs(
+      router, "previewSetCaptions",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("sessionId"), flutter::EncodableValue("s1")},
+          {flutter::EncodableValue("bitmapDirectory"),
+           flutter::EncodableValue()},
+          {flutter::EncodableValue("cues"),
+           flutter::EncodableValue(flutter::EncodableList{})},
+      });
+  EXPECT_TRUE(cleared.success_called);
+  EXPECT_TRUE(cleared.success_value.IsNull());
+
+  // Setting real cues: cannot be honoured, so it must not report success.
+  const RecordedReply requested = DispatchWithArgs(
+      router, "previewSetCaptions",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("sessionId"), flutter::EncodableValue("s1")},
+          {flutter::EncodableValue("bitmapDirectory"),
+           flutter::EncodableValue("C:/tmp/post/captions")},
+          {flutter::EncodableValue("cues"),
+           flutter::EncodableValue(flutter::EncodableList{
+               flutter::EncodableValue(flutter::EncodableMap{
+                   {flutter::EncodableValue("id"),
+                    flutter::EncodableValue("c1")},
+               })})},
+      });
+  EXPECT_FALSE(requested.success_called)
+      << "Replying success to 'here are cues' claims a preview layer that does "
+         "not exist.";
+  EXPECT_EQ(requested.error_code, "CAPTIONS_UNSUPPORTED");
+
+  // A bitmap directory with no cues still counts as asking for captions.
+  const RecordedReply dir_only = DispatchWithArgs(
+      router, "previewSetCaptions",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("bitmapDirectory"),
+           flutter::EncodableValue("C:/tmp/post/captions")},
+      });
+  EXPECT_EQ(dir_only.error_code, "CAPTIONS_UNSUPPORTED");
+}
+
+// resolveExportSize is a real handler, not a stub — but its FAILURE paths are
+// what protect the user. Dart maps any error to null and skips burn-in, so an
+// error is the safe answer and a fabricated size is the dangerous one.
+TEST(StubShapesTest, ResolveExportSizeRefusesRatherThanGuessingASize) {
+  MethodRouter router;
+
+  const RecordedReply no_args = Dispatch(router, "resolveExportSize");
+  EXPECT_FALSE(no_args.not_implemented_called)
+      << "resolveExportSize must be registered on Windows.";
+  EXPECT_TRUE(no_args.error_called);
+  EXPECT_EQ(no_args.error_code, error::kBadArgs);
+
+  const RecordedReply empty_path = DispatchWithArgs(
+      router, "resolveExportSize",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("projectPath"), flutter::EncodableValue("")},
+      });
+  EXPECT_TRUE(empty_path.error_called);
+  EXPECT_EQ(empty_path.error_code, error::kBadArgs);
+
+  // A path that is well-formed but not a project: the reader fails, and the
+  // reply must still be an error rather than a 1920x1080 fallback. Captions
+  // rasterised for a guessed canvas burn in permanently mis-sized.
+  const RecordedReply missing = DispatchWithArgs(
+      router, "resolveExportSize",
+      flutter::EncodableMap{
+          {flutter::EncodableValue("projectPath"),
+           flutter::EncodableValue("C:/nonexistent/not-a.clingfyproj")},
+      });
+  EXPECT_FALSE(missing.success_called)
+      << "A fabricated size is worse than no captions: Dart skips burn-in on "
+         "an error, but rasterises against whatever a success reports.";
+  EXPECT_EQ(missing.error_code, "SCENE_INPUT_MISSING");
+}
+
 }  // namespace
 }  // namespace clingfy::bridge
