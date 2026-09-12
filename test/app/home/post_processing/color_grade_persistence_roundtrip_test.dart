@@ -25,6 +25,7 @@ void main() {
 
   late Directory projectDir;
   late List<MethodCall> colorGradeCalls;
+  late List<MethodCall> canvasCalls;
 
   // A deliberately non-identity grade with every field distinct, so a dropped
   // or swapped field fails the assertion.
@@ -41,6 +42,7 @@ void main() {
     await installCommonNativeMocks();
     projectDir = await Directory.systemTemp.createTemp('clingfy_grade_rt_');
     colorGradeCalls = <MethodCall>[];
+    canvasCalls = <MethodCall>[];
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     // Replace the screen-recorder handler so we can capture the color-grade
@@ -49,6 +51,9 @@ void main() {
       switch (call.method) {
         case 'previewSetColorGrade':
           colorGradeCalls.add(call);
+          return null;
+        case 'previewSetCanvas':
+          canvasCalls.add(call);
           return null;
         case 'processVideo':
           return '${projectDir.path}${Platform.pathSeparator}preview.mov';
@@ -142,6 +147,43 @@ void main() {
     expect(grade['temperature'], -0.3);
     expect(grade['tint'], 0.05);
   });
+
+  // The canvas half of the same seam, and a regression test.
+  //
+  // `_pushCanvas` used to be reachable only from the five canvas MUTATORS, so
+  // opening a project restored padding / radius / background into the Dart
+  // fields and stopped there. Native kept a default canvas: the preview showed
+  // none of the saved framing, and — because the export short side rides this
+  // same payload — the camera bubble drew its border, shadow and min-side floor
+  // at export scale on the smaller preview texture (~1.5x too heavy at 1080p,
+  // ~3x at 4K). It corrected itself only when the user touched an unrelated
+  // canvas control. An empty `canvasCalls` here is that bug.
+  test(
+    'open pushes the restored canvas framing to the native preview',
+    () async {
+      // writeEditorStateJson persists padding 32 / cornerRadius 12.
+      await writeEditorStateJson(persistedGrade);
+
+      await attachController(projectDir.path);
+
+      expect(
+        canvasCalls,
+        isNotEmpty,
+        reason:
+            'opening a project must push the restored canvas, not wait for the '
+            'user to touch a canvas control',
+      );
+      final args = Map<String, dynamic>.from(
+        canvasCalls.last.arguments! as Map<dynamic, dynamic>,
+      );
+      expect(args['padding'], 32.0);
+      expect(args['cornerRadius'], 12.0);
+      // Native resolves the export canvas these lengths are normalised against
+      // from the two presets, so both must ride the open-time push as well.
+      expect(args['layoutPreset'], isNotNull);
+      expect(args['resolutionPreset'], isNotNull);
+    },
+  );
 
   test('editing + commit writes the grade to editor_state.json', () async {
     // Start with no persisted file — the grade begins neutral.

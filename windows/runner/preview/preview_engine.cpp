@@ -341,6 +341,26 @@ struct PreviewEngine::Impl {
   // thread while compositing.
   core::CanvasComposition canvas{};
 
+  // The raw framing `canvas` was resolved from, retained so it can be resolved
+  // AGAIN once the source dimensions are known.
+  //
+  // Dart pushes the canvas on project open, before any frame has decoded — and
+  // the resolve needs the source size, which only a decoded frame supplies. The
+  // early push therefore resolves to an unpadded canvas with
+  // `export_short_side == 0`, and without this retention that result was
+  // permanent: the raw payload was converted and dropped, so nothing could
+  // recompute it and the preview stayed wrong until an unrelated canvas edit
+  // pushed again. Keeping the payload makes the first frame self-healing.
+  //
+  // Same publish discipline as `canvas` above: render_mutex.
+  core::CanvasFramingArgs canvas_framing{};
+  bool has_canvas_framing = false;
+  // Source size `canvas` was resolved against; 0 means "not resolved yet", so a
+  // mismatch against the live dimensions is the re-resolve trigger. Comparing
+  // dimensions rather than a bool also covers a source whose size CHANGES.
+  UINT canvas_source_w = 0;
+  UINT canvas_source_h = 0;
+
   // ---- Last composed frame's timeline position (render_mutex) ----
   // Replayed verbatim by RepaintRetainedFrame so a settings change on a PAUSED
   // preview re-composites the frame that is already on screen: same timestamp,
@@ -1508,6 +1528,30 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // same proportion of the frame here as it does in the export, instead of ~3x
   // more (this texture is capped at kTextureWidth x kTextureHeight while the
   // export renders at the user's chosen resolution).
+  // Resolve the retained framing before the first read of `impl->canvas`.
+  //
+  // The canvas is normalised against the EXPORT canvas, which ResolveTargetSize
+  // derives from the SOURCE dimensions — unknown until a frame decodes. So the
+  // push Dart sends on project open necessarily lands unresolved, and so does
+  // any edit made before the first frame. Doing it here, at the single point
+  // that consumes the canvas, covers every push and every decode path at once.
+  //
+  // Without this the preview drew an unpadded canvas and a camera bubble whose
+  // border, shadow and min-side floor were export-canvas pixels on this smaller
+  // texture (~1.5x too heavy at 1080p, ~3x at 4K) until the user happened to
+  // touch an unrelated canvas control and trigger a second push.
+  const UINT source_w = impl->last_video_width.load();
+  const UINT source_h = impl->last_video_height.load();
+  if (core::CanvasNeedsReresolve(impl->has_canvas_framing,
+                                 impl->canvas_source_w, impl->canvas_source_h,
+                                 source_w, source_h)) {
+    impl->canvas = core::ResolveCanvasComposition(
+        impl->canvas_framing, static_cast<double>(source_w),
+        static_cast<double>(source_h));
+    impl->canvas_source_w = source_w;
+    impl->canvas_source_h = source_h;
+  }
+
   const double surface_short = std::min(static_cast<double>(texture_width_),
                                         static_cast<double>(texture_height_));
   const double padding_px = core::DenormalizeFromShortSide(
@@ -2834,37 +2878,23 @@ void PreviewEngine::SetCanvasComposition(
   // source plus layout/resolution preset becomes a canvas. Dart sends raw
   // export-output pixels; converting them against the export target is what
   // stops the preview from drawing ~3x the padding at 4K.
-  core::CanvasComposition canvas{};
-  canvas.background_argb = framing.background_argb;
-  canvas.background_image_path = framing.background_image_path;
-  canvas.preset = framing.preset;
-  canvas.has_preset = framing.has_preset;
-  if (source_w > 0 && source_h > 0) {
-    const capture::export_::SizeF target =
-        capture::export_::ResolveTargetSize(
-            capture::export_::SizeF{static_cast<double>(source_w),
-                                    static_cast<double>(source_h)},
-            framing.layout_preset, framing.resolution_preset);
-    const double export_short = std::min(target.width, target.height);
-    canvas.padding_fraction =
-        core::NormalizeToShortSide(framing.padding_px, export_short);
-    canvas.corner_radius_fraction =
-        core::NormalizeToShortSide(framing.corner_radius_px, export_short);
-    // Carried for the camera bubble, whose border/shadow/min-side floor are
-    // export-canvas lengths that cannot be expressed as canvas fractions (a
-    // shadow preset is an index, the floor is a constant). It rides this struct
-    // so it inherits the render_mutex publish below.
-    canvas.export_short_side = export_short;
-  }
+  const core::CanvasComposition canvas = core::ResolveCanvasComposition(
+      framing, static_cast<double>(source_w), static_cast<double>(source_h));
   // No frame yet => source dims unknown => fractions stay 0 and the canvas
-  // renders unpadded, which is what the preview shows today anyway. The next
-  // push after the first frame resolves properly.
+  // renders unpadded. The retained `framing` below is what lets the first
+  // composed frame resolve it, so this no longer waits on the user's next edit.
 
   {
     // The frame thread takes render_mutex -> mutex_ (never the reverse), so
     // publish under render_mutex ALONE, after mutex_ is released above.
     std::lock_guard<std::mutex> render_lock(impl->render_mutex);
     impl->canvas = canvas;
+    // Retain the payload and the size it was resolved against, so
+    // ComposeAndHandoffLocked can redo the resolve when the dimensions land.
+    impl->canvas_framing = framing;
+    impl->has_canvas_framing = true;
+    impl->canvas_source_w = source_w;
+    impl->canvas_source_h = source_h;
   }
   // Paused / ended preview: re-light the retained frame so the canvas edit is
   // visible immediately. No seek, no decode. While playing this is a no-op and
