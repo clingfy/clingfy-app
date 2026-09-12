@@ -16,6 +16,7 @@
 #include "Capture/Background/preset_thumbnail_cache.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Export/audio_sidecar_probe.h"
+#include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
 #include "Core/canvas_composition.h"
@@ -519,22 +520,34 @@ void HandlePreviewOpen(
     open_args.system_audio_path = *read.project->system_audio_path;
   }
   // Phase 9.6: composite the camera in the preview ONLY when the project has a
-  // usable, non-burned-in camera — raw.mov + camera.meta.json present-together
-  // (the reader guarantees this), the metadata parses, the live preview was NOT
-  // burned into screen.mov, and at least one frame was recorded. Mirrors the
-  // export's ShouldCompositeCamera gate so preview and export agree. Otherwise
-  // the preview stays camera-free (camera_path left empty).
-  if (read.project->camera_video_path.has_value() &&
-      read.project->camera_metadata_path.has_value()) {
-    if (const auto meta_json =
-            ReadFileUtf8(*read.project->camera_metadata_path)) {
-      if (const auto meta =
-              clingfy::capture::ParseCameraMetaJson(*meta_json);
-          meta.has_value() && !meta->preview_burned_in &&
-          meta->frames_written > 0) {
-        open_args.camera_path = *read.project->camera_video_path;
-        open_args.camera_start_offset_ms = meta->start_offset_ms;
-      }
+  // usable, non-burned-in camera. This used to re-implement the export's four
+  // asset conditions inline while claiming to "mirror" them — which is the
+  // drift this repo keeps getting bitten by, since adding a fifth condition to
+  // the export gate would have left the preview silently ungated. It now calls
+  // the same function.
+  //
+  // `camera_visible` is passed true rather than read here, and that is not a
+  // fudge: on the export leg visibility is known up front from the request, but
+  // the preview learns it later via `previewSetCameraPlacement` and the
+  // renderer honours it per frame. So this call answers only "does the project
+  // have a camera worth wiring up", and visibility stays the renderer's
+  // decision. Everything else — assets present, metadata parsed, not already
+  // burned into screen.mov, at least one frame recorded — is the shared gate's.
+  if (const auto meta_json =
+          read.project->camera_metadata_path.has_value()
+              ? ReadFileUtf8(*read.project->camera_metadata_path)
+              : std::nullopt) {
+    const auto meta = clingfy::capture::ParseCameraMetaJson(*meta_json);
+    const bool composite = clingfy::capture::export_::ShouldCompositeCamera(
+        /*camera_visible=*/true,
+        /*has_camera_assets=*/read.project->camera_video_path.has_value() &&
+            read.project->camera_metadata_path.has_value(),
+        /*meta_parsed=*/meta.has_value(),
+        /*preview_burned_in=*/meta.has_value() && meta->preview_burned_in,
+        /*frames_written=*/meta.has_value() ? meta->frames_written : 0);
+    if (composite) {
+      open_args.camera_path = *read.project->camera_video_path;
+      open_args.camera_start_offset_ms = meta->start_offset_ms;
     }
   }
 
