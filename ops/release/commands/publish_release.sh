@@ -260,15 +260,16 @@ if [[ "$RELEASE_STORAGE_PROVIDER" == "aws" ]]; then
   # invalidation a republished appcast stays stale at the edge for its full TTL while S3 already
   # holds the new bytes. The smoke test below reads through CloudFront, so it would catch that —
   # but only after burning its nine retries, and only on a republish.
-  if [[ -n "${AWS_CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
-    log_info "Invalidating CloudFront paths"
-    invalidate_cloudfront_paths \
-      "$AWS_CLOUDFRONT_DISTRIBUTION_ID" \
-      "/updates/${FEED_PATH}" \
-      "/updates/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
-  else
-    log_warn "AWS_CLOUDFRONT_DISTRIBUTION_ID unset; skipping invalidation (new paths still serve, a REPUBLISHED one may be stale)"
-  fi
+  #
+  # No unset branch: configure_storage_provider() now REQUIRES
+  # AWS_CLOUDFRONT_DISTRIBUTION_ID whenever the provider is aws, so reaching here without one
+  # is impossible. It used to warn and carry on, which meant the release still reported
+  # success while the edge kept serving the previous appcast.
+  log_info "Invalidating CloudFront paths"
+  invalidate_cloudfront_paths \
+    "$AWS_CLOUDFRONT_DISTRIBUTION_ID" \
+    "/updates/${FEED_PATH}" \
+    "/updates/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
 elif [[ -n "$AZ_FRONTDOOR_ENDPOINT_NAME" ]]; then
   log_info "Purging Azure Front Door cache"
   purge_frontdoor_paths \

@@ -152,6 +152,18 @@ configure_storage_provider() {
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)
       [[ -n "${AWS_RELEASES_BUCKET:-}" ]]         || die "RELEASE_STORAGE_PROVIDER=aws requires AWS_RELEASES_BUCKET (set it in .env.$APP_ENV)."
+      # Required, not optional. /updates/* is served by CloudFront with the managed
+      # CachingOptimized policy, and every feed this pipeline publishes is a REPUBLISHED
+      # path -- appcast.xml here, latest-windows.json on the Windows lane (replaced on
+      # every publish by design). Without an invalidation those keep serving the previous
+      # release from the edge for the full TTL while S3 already holds the new bytes.
+      #
+      # That is the same silent-success shape this provider switch exists to kill: the
+      # upload succeeds, nothing errors, and no installed app sees the release. Publishing
+      # to AWS without the means to invalidate is not a degraded release, it is a release
+      # nobody receives -- so it fails here, before any bytes move, rather than warning
+      # after the fact.
+      [[ -n "${AWS_CLOUDFRONT_DISTRIBUTION_ID:-}" ]] || die "RELEASE_STORAGE_PROVIDER=aws requires AWS_CLOUDFRONT_DISTRIBUTION_ID: /updates/* is cached by CloudFront and a republished feed stays stale at the edge without an invalidation (set it in .env.$APP_ENV)."
       ;;
     azure)
       [[ -n "${AZ_STORAGE_ACCOUNT:-}" ]]         || die "RELEASE_STORAGE_PROVIDER=azure requires AZ_STORAGE_ACCOUNT (set it in .env.$APP_ENV)."

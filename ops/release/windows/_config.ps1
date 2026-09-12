@@ -324,6 +324,19 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
         Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_RELEASES_BUCKET. " +
           "Set it in the environment or provide it in $($Context.EnvFile).")
       }
+      # Required, not optional, and this lane is the reason. latest-windows.json is replaced on
+      # EVERY publish by design, so it is always a republished path and always the cached one.
+      # Skipping the invalidation left every Windows tester's updater reading the previous release
+      # from the edge for the full CachingOptimized TTL, while the bucket already held the new
+      # installer. The upload succeeded, the script printed "Publish completed successfully", and
+      # nobody received the build — the exact silent-success shape the AWS switch was written to
+      # eliminate, surviving on this lane because it had no smoke test to catch it.
+      if (-not $Context.AwsCloudFrontDistributionId) {
+        Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_CLOUDFRONT_DISTRIBUTION_ID: " +
+          "/updates/* is cached by CloudFront and latest-windows.json is republished on every " +
+          "publish, so without an invalidation the feed stays stale at the edge and no installed " +
+          "app sees the release. Set it in the environment or provide it in $($Context.EnvFile).")
+      }
       $Context.PublicEndpoint = if ($env:RELEASE_PUBLIC_ENDPOINT) { $env:RELEASE_PUBLIC_ENDPOINT } else { $env:AWS_PUBLIC_ENDPOINT }
       if (-not $Context.PublicEndpoint) {
         Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_PUBLIC_ENDPOINT (host + path prefix the " +
@@ -334,9 +347,7 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
       Write-Info "Bucket:          $($Context.AwsReleasesBucket)"
       Write-Info "Served from:     https://$($Context.PublicEndpoint)/"
       Write-Info "Key prefix:      $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
-      if (-not $Context.AwsCloudFrontDistributionId) {
-        Write-Info 'CloudFront:      none set (invalidation will be skipped)'
-      }
+      Write-Info "CloudFront:      $($Context.AwsCloudFrontDistributionId)"
     }
     'azure' {
       $missing = $script:AzureRequiredKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
