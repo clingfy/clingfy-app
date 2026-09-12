@@ -103,6 +103,20 @@ Write-Info "feed:   $($Ctx.LatestJsonPath)"
 # --- Upload -------------------------------------------------------------------------
 # True when the blob already exists in the container.
 function Test-BlobExists([string]$BlobName) {
+  if ($Ctx.StorageProvider -eq 'aws') {
+    # head-object, not `s3 ls`: ls matches a PREFIX, and this bucket really does hold
+    # latest-windows.json.azure-bak-20260817-174816 next to latest-windows.json.
+    & aws s3api head-object `
+      --bucket $Ctx.AwsReleasesBucket `
+      --key "$($Ctx.AzContainer)/$BlobName" 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      # Missing OR unreadable. Same posture as the Azure branch: treat as absent and let the
+      # upload surface the real auth/network error rather than blocking a release on a probe.
+      return $false
+    }
+    return $true
+  }
+
   $exists = & az storage blob exists `
     --account-name $Ctx.AzStorageAccount `
     --container-name $Ctx.AzContainer `
@@ -115,6 +129,18 @@ function Test-BlobExists([string]$BlobName) {
     return $false
   }
   return ($exists -eq 'true')
+}
+
+# Content-Type must be explicit on S3: `aws s3 cp` guesses from the extension and would upload the
+# installer as binary/octet-stream where the objects already in the bucket are
+# application/x-msdownload. Matches lib/aws.sh on the macOS side.
+function Get-ContentTypeFor([string]$BlobName) {
+  switch -Wildcard ($BlobName) {
+    '*.exe'    { return 'application/x-msdownload' }
+    '*.sha256' { return 'text/plain' }
+    '*.json'   { return 'application/json' }
+    default    { return 'application/octet-stream' }
+  }
 }
 
 function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
@@ -132,6 +158,16 @@ function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
     }
   }
   Write-Info "uploading $BlobName"
+  if ($Ctx.StorageProvider -eq 'aws') {
+    & aws s3 cp $File "s3://$($Ctx.AwsReleasesBucket)/$($Ctx.AzContainer)/$BlobName" `
+      --content-type (Get-ContentTypeFor $BlobName) `
+      --only-show-errors | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Fail "aws s3 cp failed for $BlobName with exit code $LASTEXITCODE."
+    }
+    return
+  }
+
   & az storage blob upload `
     --account-name $Ctx.AzStorageAccount `
     --container-name $Ctx.AzContainer `
@@ -145,7 +181,12 @@ function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
   }
 }
 
-Write-Step "Uploading to $($Ctx.AzStorageAccount)/$($Ctx.AzContainer)"
+$uploadTarget = if ($Ctx.StorageProvider -eq 'aws') {
+  "s3://$($Ctx.AwsReleasesBucket)/$($Ctx.AzContainer)"
+} else {
+  "$($Ctx.AzStorageAccount)/$($Ctx.AzContainer)"
+}
+Write-Step "Uploading to $uploadTarget"
 $prefix = $Ctx.WindowsBlobPrefix
 Publish-Blob $Ctx.InstallerPath "$prefix/$($Ctx.InstallerName)"
 Publish-Blob $Ctx.Sha256Path "$prefix/$($Ctx.InstallerName).sha256"
@@ -160,7 +201,29 @@ Publish-Blob $Ctx.LatestJsonPath "$prefix/latest-windows.json" -IsPointer
 # Guarded on the endpoint name: dev and prod are blob-direct (no Front Door) as
 # of 2026-07, so there is no cache to purge. Mirrors the macOS lane's
 # publish_release.sh guard.
-if ($Ctx.AzFrontDoorEndpointName) {
+if ($Ctx.StorageProvider -eq 'aws') {
+  # CloudFront serves /updates/* with the managed CachingOptimized policy, so latest-windows.json —
+  # replaced on EVERY publish by design — would otherwise stay stale at the edge for its full TTL.
+  # The installer and .sha256 are new paths each release and need no invalidation, but they are
+  # included so a re-published build behaves the same as a first publish.
+  if ($Ctx.AwsCloudFrontDistributionId) {
+    Write-Step 'Invalidating CloudFront paths'
+    $invalidatePaths = @(
+      "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerName)",
+      "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerName).sha256",
+      "/$($Ctx.AzContainer)/$prefix/latest-windows.json"
+    )
+    & aws cloudfront create-invalidation `
+      --distribution-id $Ctx.AwsCloudFrontDistributionId `
+      --paths @($invalidatePaths) `
+      --query 'Invalidation.Id' --output text | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Warning "CloudFront invalidation failed with exit code $LASTEXITCODE. The new installer still serves; latest-windows.json may be stale at the edge until its TTL lapses."
+    }
+  } else {
+    Write-Info 'AWS_CLOUDFRONT_DISTRIBUTION_ID unset; skipping invalidation (latest-windows.json may be stale at the edge)'
+  }
+} elseif ($Ctx.AzFrontDoorEndpointName) {
   Write-Step 'Purging Azure Front Door cache'
   $purgePaths = @(
     "/$prefix/$($Ctx.InstallerName)",

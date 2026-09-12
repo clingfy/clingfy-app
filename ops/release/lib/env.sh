@@ -132,6 +132,67 @@ configure_azure_defaults() {
   export FEED_URL="https://${AZ_CDN_ENDPOINT}/${FEED_PATH}"
 }
 
+# Which cloud this channel publishes to.
+#
+# Azure was decommissioned on 2026-09-10 and clingfy.com/updates/* has served from the AWS releases
+# bucket since the 2026-08-17 cutover. Publishing prod to Azure therefore writes to a location
+# NOTHING READS: the upload succeeds, the smoke test below passes (it fetches FEED_URL, which is
+# built from AZ_CDN_ENDPOINT, so it verifies the copy it just wrote), and no installed app ever sees
+# the release. That silent-success shape is why this switch exists rather than a hard swap.
+#
+# dev deliberately stays on Azure: there is no dev releases bucket (infra/aws/releases.tf builds one
+# for prod only), so `clingfyreleasesdev` remains the dev updater's origin until that is rehomed.
+configure_storage_provider() {
+  case "${RELEASE_CHANNEL:-$APP_ENV}" in
+    prod) export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-aws}" ;;
+    *)    export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-azure}" ;;
+  esac
+
+  case "$RELEASE_STORAGE_PROVIDER" in
+    aws)
+      [[ -n "${AWS_RELEASES_BUCKET:-}" ]]         || die "RELEASE_STORAGE_PROVIDER=aws requires AWS_RELEASES_BUCKET (set it in .env.$APP_ENV)."
+      ;;
+    azure)
+      [[ -n "${AZ_STORAGE_ACCOUNT:-}" ]]         || die "RELEASE_STORAGE_PROVIDER=azure requires AZ_STORAGE_ACCOUNT (set it in .env.$APP_ENV)."
+      ;;
+    *)
+      die "RELEASE_STORAGE_PROVIDER must be \"aws\" or \"azure\", got \"$RELEASE_STORAGE_PROVIDER\"."
+      ;;
+  esac
+}
+
+# Single upload entry point. Both backends take (container, local_file, blob_name) and resolve the
+# account/bucket themselves, so call sites never branch on the provider.
+publish_upload() {
+  local container="$1"
+  local local_file="$2"
+  local blob_name="$3"
+
+  case "$RELEASE_STORAGE_PROVIDER" in
+    aws)   s3_upload_object "$AWS_RELEASES_BUCKET" "$container" "$local_file" "$blob_name" ;;
+    azure) az_upload_blob "$AZ_STORAGE_ACCOUNT" "$container" "$local_file" "$blob_name" ;;
+  esac
+}
+
+# Mirror of publish_upload for reads. Returns 1 when the object is absent, like its Azure original.
+publish_download_if_exists() {
+  local container="$1"
+  local blob_name="$2"
+  local output_file="$3"
+
+  case "$RELEASE_STORAGE_PROVIDER" in
+    aws)   s3_download_if_exists "$AWS_RELEASES_BUCKET" "$container" "$blob_name" "$output_file" ;;
+    azure) az_blob_download_if_exists "$AZ_STORAGE_ACCOUNT" "$container" "$blob_name" "$output_file" ;;
+  esac
+}
+
+require_release_storage_cli() {
+  case "$RELEASE_STORAGE_PROVIDER" in
+    aws)   require_aws_cli ;;
+    azure) require_azure_cli ;;
+  esac
+}
+
 
 
 load_release_context() {
@@ -145,4 +206,5 @@ load_release_context() {
   read_pubspec_version_info
   configure_paths
   configure_azure_defaults
+  configure_storage_provider
 }

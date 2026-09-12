@@ -13,6 +13,8 @@ source "$SCRIPT_ROOT/lib/env.sh"
 source "$SCRIPT_ROOT/lib/apple.sh"
 # shellcheck source=ops/release/lib/azure.sh
 source "$SCRIPT_ROOT/lib/azure.sh"
+# shellcheck source=ops/release/lib/aws.sh
+source "$SCRIPT_ROOT/lib/aws.sh"
 # shellcheck source=ops/release/lib/sparkle.sh
 source "$SCRIPT_ROOT/lib/sparkle.sh"
 
