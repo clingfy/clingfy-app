@@ -829,4 +829,43 @@ TEST(CameraPulseTest, PreviewAndExportAgreeOnPhaseForTheSameSegmentTime) {
   EXPECT_LT(shared_slope * per_click_slope, 0.0);
 }
 
+// --- CameraBubbleStyle: the default table, after the move off the painter ----
+
+// `CameraBubbleStyle` moved out of `CameraBubblePainter::Style` so the pure plan
+// builder can name a style without pulling d2d1_1.h. The move had to be exactly
+// verbatim, because these in-class defaults are load-bearing in three places
+// that only PARTIALLY initialise the struct: the live overlay style store, and
+// two of the border pixel tests. A default silently changed during the move
+// would show up as a thinner border or a missing shadow on the live bubble, not
+// as a compile error.
+//
+// The structured binding is the point of the test as much as the assertions
+// are: it names all eleven members, so adding a twelfth field fails to COMPILE
+// here until someone decides what its default is and whether the shared builder
+// must assign it.
+TEST(CameraBubbleStyle, TheDefaultTableSurvivedTheMove) {
+  const auto& [mirror, opacity, border_width, has_border_color, border_argb,
+               shadow_preset, effect_scale, chroma_enabled, chroma_strength,
+               has_chroma_color, chroma_argb] = CameraBubbleStyle{};
+
+  EXPECT_FALSE(mirror);
+  EXPECT_DOUBLE_EQ(opacity, 1.0);
+  EXPECT_DOUBLE_EQ(border_width, 0.0);
+  EXPECT_FALSE(has_border_color);
+  EXPECT_EQ(border_argb, 0u);
+  EXPECT_EQ(shadow_preset, 0);
+  // Identity: the export and the live overlay both rely on this, and neither
+  // assigns it today.
+  EXPECT_DOUBLE_EQ(effect_scale, 1.0);
+  EXPECT_FALSE(chroma_enabled);
+  // 0.0, NOT the wire default of 0.4. Both drawing legs assign chroma_strength
+  // explicitly, so the disagreement is latent — but it is the concrete reason
+  // the shared builder must assign every style field rather than leaning on
+  // this table: a field left unassigned would inherit the painter's number
+  // instead of the composition's, and 0.0 vs 0.4 is a visible chroma change.
+  EXPECT_DOUBLE_EQ(chroma_strength, 0.0);
+  EXPECT_FALSE(has_chroma_color);
+  EXPECT_EQ(chroma_argb, 0u);
+}
+
 }  // namespace clingfy::capture

@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <type_traits>
+
 namespace clingfy::capture {
 namespace {
 
@@ -40,6 +42,29 @@ TEST(ResolveOverlayBubbleStyle, DefaultsAreAPlainCoverBubble) {
   EXPECT_DOUBLE_EQ(r.style.border_width, 0.0);
   EXPECT_EQ(r.style.shadow_preset, 0);
   EXPECT_FALSE(r.style.chroma_enabled);
+  // The live overlay is the ONE leg that stays off the shared plan builder
+  // (its wire model clamps where the export path does not), so it keeps
+  // depending on the style's in-class `effect_scale = 1.0` rather than being
+  // handed a scale. Nothing asserted that, which made the default silently
+  // load-bearing: lower it and every live bubble's border and shadow thin out
+  // with no test failing anywhere.
+  EXPECT_DOUBLE_EQ(r.style.effect_scale, 1.0);
+}
+
+// `CameraBubblePainter::Style` is now an alias of `CameraBubbleStyle`, which
+// lives in the D2D-free camera_export_layout.h so the shared plan builder can
+// produce one without a GPU dependency. Pin that it is genuinely the SAME type
+// and not a parallel copy that could drift — a copy would compile everywhere
+// and diverge silently.
+//
+// This assertion lives here rather than in camera_export_layout_test.cpp on
+// purpose: naming `CameraBubblePainter::Style` requires including the painter,
+// which pulls d2d1_1.h, and keeping that out of the layout test is the whole
+// point of the move. This file already includes the painter transitively.
+TEST(ResolveOverlayBubbleStyle, ThePainterStyleAliasIsTheSharedType) {
+  static_assert(std::is_same_v<CameraBubblePainter::Style, CameraBubbleStyle>,
+                "CameraBubblePainter::Style must alias CameraBubbleStyle");
+  SUCCEED();
 }
 
 TEST(ResolveOverlayBubbleStyle, BorderOnlyWhenPresetSelectedAndWidthPositive) {
