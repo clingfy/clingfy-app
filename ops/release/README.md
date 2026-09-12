@@ -14,6 +14,12 @@
 > Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
 > would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
 > the azure branch, which is still live for dev.
+>
+> **Two vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go) and
+> `AWS_PUBLIC_ENDPOINT` (where they are SERVED from, e.g. `clingfy.com/updates`). They are separate
+> on purpose — the appcast bakes the public URL into every enclosure, so an endpoint left pointing at
+> Azure would publish a feed from clingfy.com whose downloads resolve to the retired storage account.
+> Both are validated at startup and abort the release if missing.
 
 
 

@@ -128,8 +128,9 @@ configure_azure_defaults() {
       ;;
   esac
 
-  export DOWNLOAD_BASE_URL="https://${AZ_CDN_ENDPOINT}/${AZ_BINARIES_FOLDER}/"
-  export FEED_URL="https://${AZ_CDN_ENDPOINT}/${FEED_PATH}"
+  # URL composition moved to configure_public_endpoint(), which runs after the storage provider is
+  # known. Composing them here from AZ_CDN_ENDPOINT was a bug: it put the bytes in S3 while the
+  # appcast it generated still pointed every enclosure at the Azure blob.
 }
 
 # Which cloud this channel publishes to.
@@ -186,6 +187,31 @@ publish_download_if_exists() {
   esac
 }
 
+# Public URL the artifacts are SERVED from. Distinct from where they are UPLOADED to, and the two
+# must move together — that is precisely what the first cut of this change got wrong.
+#
+# generate_appcast bakes DOWNLOAD_BASE_URL into every enclosure url= in the feed, so an endpoint
+# left pointing at Azure produces a feed served from clingfy.com whose downloads resolve to a
+# storage account that is being retired. The smoke test would eventually catch it (it fetches
+# FEED_URL and greps for the new DMG) but only after the upload had already happened, and with a
+# message about the feed rather than the endpoint.
+configure_public_endpoint() {
+  case "$RELEASE_STORAGE_PROVIDER" in
+    aws)
+      export RELEASE_PUBLIC_ENDPOINT="${RELEASE_PUBLIC_ENDPOINT:-${AWS_PUBLIC_ENDPOINT:-}}"
+      [[ -n "$RELEASE_PUBLIC_ENDPOINT" ]]         || die "RELEASE_STORAGE_PROVIDER=aws requires AWS_PUBLIC_ENDPOINT (host + path prefix the releases are served from, e.g. clingfy.com/updates). Set it in .env.$APP_ENV."
+      ;;
+    azure)
+      # Back-compat: the Azure lane has always composed URLs from AZ_CDN_ENDPOINT.
+      export RELEASE_PUBLIC_ENDPOINT="${RELEASE_PUBLIC_ENDPOINT:-${AZ_CDN_ENDPOINT:-}}"
+      [[ -n "$RELEASE_PUBLIC_ENDPOINT" ]]         || die "RELEASE_STORAGE_PROVIDER=azure requires AZ_CDN_ENDPOINT. Set it in .env.$APP_ENV."
+      ;;
+  esac
+
+  export DOWNLOAD_BASE_URL="https://${RELEASE_PUBLIC_ENDPOINT}/${AZ_BINARIES_FOLDER}/"
+  export FEED_URL="https://${RELEASE_PUBLIC_ENDPOINT}/${FEED_PATH}"
+}
+
 require_release_storage_cli() {
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)   require_aws_cli ;;
@@ -207,4 +233,5 @@ load_release_context() {
   configure_paths
   configure_azure_defaults
   configure_storage_provider
+  configure_public_endpoint
 }
