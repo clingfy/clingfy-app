@@ -310,6 +310,42 @@ class ShellResponsiveMetrics {
     return ShellDensity.minimal;
   }
 
+  /// Height thresholds, mirroring [densityForWidth] on the vertical axis.
+  ///
+  /// Derived from the shipping default window ([kDefaultDesktopWindowSize],
+  /// 1280x780) rather than invented: that size resolves to `compact` on width,
+  /// so 780 has to land in the compact band on height too, or the two axes
+  /// disagree about the window the app opens itself at. Scaling the width
+  /// thresholds by that window's 1280/780 aspect gives 853 / 731 / 609, rounded
+  /// here to 860 / 740 / 620.
+  static ShellDensity densityForHeight(double height) {
+    if (height >= 860) return ShellDensity.comfortable;
+    if (height >= 740) return ShellDensity.compact;
+    if (height >= 620) return ShellDensity.dense;
+    return ShellDensity.minimal;
+  }
+
+  /// The density both axes can afford — the tighter of width and height.
+  ///
+  /// Density was keyed off width alone, which is wrong for a window that is
+  /// wide but short, and that window is not exotic: a 1920x1080 display at
+  /// Windows' default 125% scaling gives the app 1536x816 logical pixels. Width
+  /// 1536 read as `comfortable` (scale 1.0) while 816 of height had to carry
+  /// toolbar + inspector + preview + timeline toolbar + ruler + lanes. The app
+  /// rendered ~9% LARGER chrome than it does in its own 1280x780 default window
+  /// while having proportionally less room for it, and the editor's clip lane
+  /// fell off the bottom of the screen: no cutting, trimming or reordering, with
+  /// nothing to scroll and no divider to drag.
+  ///
+  /// Taking the minimum means a short window steps down a band instead of
+  /// overflowing. A wide-and-tall window is unaffected — height only ever
+  /// constrains, never promotes.
+  static ShellDensity densityForSize(Size size) {
+    final byWidth = densityForWidth(size.width);
+    final byHeight = densityForHeight(size.height);
+    return byWidth.index >= byHeight.index ? byWidth : byHeight;
+  }
+
   static double scaleForDensity(ShellDensity density) {
     switch (density) {
       case ShellDensity.comfortable:
@@ -324,7 +360,7 @@ class ShellResponsiveMetrics {
   }
 
   factory ShellResponsiveMetrics.fromSize(Size size) {
-    final density = densityForWidth(size.width);
+    final density = densityForSize(size);
     final scale = scaleForDensity(density);
     final isMinimal = density == ShellDensity.minimal;
 

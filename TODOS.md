@@ -82,6 +82,41 @@ which are the only recorded numbers for this defect.
   under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
   and recorded in the CHANGELOG.
 
+## Editor - layout
+
+### The clips lane is below the fold in the editor, at every window height tested
+
+- **What:** open a recording, and the timeline toolbar and transport bar render but the
+  TimelineEditorViewport (ruler + clips/zoom lanes) sits below the bottom of the window.
+  No cutting, trimming, reordering or zoom editing is reachable.
+- **Measured 2026-09-12, Release AND Debug builds, project rec_1784676792947794 (26 s, 1 clip):**
+  - 1550x830 window on a 1536x864 display (1080p at Windows' default 125% scaling): lane not visible.
+  - 1550x830 after the density fix below (chrome ~8% smaller): still not visible.
+  - **2062x1118 window on a 2048x1152 display: STILL not visible** - the toolbar sits ~50 px from
+    the window bottom. That is what rules out "the window is just too short".
+- **Not a lane-visibility toggle.** `_showClipsLane = true` and `_showZoomLane = true` are the
+  defaults (`video_timeline.dart:101-105`), and the debug log confirms the lane is live:
+  `[ClipsLane] clip editor attached (1 clips, dur=26082ms)`.
+- **Not a RenderFlex overflow.** A Debug build produced ZERO overflow or constraint assertions
+  across the whole session, at both window sizes. Whatever clips the viewport is not a Flex
+  overflow, so the usual yellow-stripe signal never fires and Release clips silently.
+- **Structure, for whoever picks this up:** `home_shell.dart:600` is
+  `Column[ Expanded(pane row), SizedBox(innerGap), TimelineBar() ]`. The pane row carries
+  `ConstrainedBox(minHeight: HomeDesktopPaneDimensions.workspaceMinHeight = 520)`, which a tight
+  Expanded constraint should override. `TimelineBar` -> `VideoTimeline` builds
+  `Column[ TimelineToolbar, gap, TimelineTransportBar, gap, TimelineEditorViewport ]`
+  (`video_timeline.dart:~540-612`), and the viewport computes its own height as
+  `ruler + lanes*laneHeight + gaps` (`timeline_editor_viewport.cpp:155-160` / `:412-420`).
+  The toolbar and transport render; only the viewport does not.
+- **Next step:** dump the render tree (`debugDumpRenderTree()`) with a project open and find who
+  gives the viewport a zero/negative height box, or which ancestor clips it. Reading the widget
+  code did not settle it - three plausible theories were each disproved by measurement.
+- **Severity:** if this reproduces on a tester's machine it blocks the whole editor, which is the
+  half of the product that is not the recorder. Worth confirming on a second machine before the
+  beta invite, since it did not reproduce as a simple height problem.
+- **Effort:** unknown until the render tree is dumped; the investigation above cost ~1h and
+  disproved the obvious causes rather than finding the real one.
+
 ## Windows — capture exclusion
 
 ### The other four capture-excluded windows never re-verify WDA after a mutation
