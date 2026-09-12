@@ -7,7 +7,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_config.sh"
 
 log_step "STEP 5: Publishing release"
 
-require_azure_cli
+require_release_storage_cli
 require_sparkle_tool
 ensure_command curl
 ensure_command zip
@@ -200,18 +200,18 @@ python3 "$SCRIPT_ROOT/lib/prune_appcast_duplicates.py" "$APPCAST_XML" \
   || die "Appcast prune failed; refusing to publish a feed with stale items."
 
 log_info "Uploading DMG"
-az_upload_blob "$AZ_STORAGE_ACCOUNT" "$AZ_CONTAINER" "$release_dmg_path" "${AZ_BINARIES_FOLDER}/$FINAL_DMG_NAME"
+publish_upload "$AZ_CONTAINER" "$release_dmg_path" "${AZ_BINARIES_FOLDER}/$FINAL_DMG_NAME"
 
 log_info "Uploading appcast.xml"
-az_upload_blob "$AZ_STORAGE_ACCOUNT" "$AZ_CONTAINER" "$APPCAST_XML" "$APPCAST_BLOB_PATH"
+publish_upload "$AZ_CONTAINER" "$APPCAST_XML" "$APPCAST_BLOB_PATH"
 
 log_info "Uploading deltas"
 while IFS= read -r -d '' delta_path; do
   delta_name="$(basename "$delta_path")"
-  az_upload_blob "$AZ_STORAGE_ACCOUNT" "$AZ_CONTAINER" "$delta_path" "${AZ_BINARIES_FOLDER}/$delta_name"
+  publish_upload "$AZ_CONTAINER" "$delta_path" "${AZ_BINARIES_FOLDER}/$delta_name"
 done < <(find "$RELEASE_ARCHIVE" -type f -name "*.delta" -print0)
 
-log_info "Uploading dSYMs to Azure"
+log_info "Uploading dSYMs to $RELEASE_STORAGE_PROVIDER"
 if [[ -d "$ARCHIVE_PATH/dSYMs" ]]; then
   if (
     cd "$ARCHIVE_PATH/dSYMs"
@@ -220,14 +220,13 @@ if [[ -d "$ARCHIVE_PATH/dSYMs" ]]; then
     ((${#files[@]} > 0)) || exit 2
     zip -qry "$RELEASE_ARCHIVE/$DSYM_ZIP" "${files[@]}"
   ); then
-    az_upload_blob \
-      "$AZ_STORAGE_ACCOUNT" \
+    publish_upload \
       "$AZ_CONTAINER_SYMBOLS" \
       "$RELEASE_ARCHIVE/$DSYM_ZIP" \
       "${AZ_SYMBOLS_BLOB_PREFIX}${DSYM_ZIP}"
-    log_success "dSYMs uploaded to Azure"
+    log_success "dSYMs uploaded to $RELEASE_STORAGE_PROVIDER"
   else
-    log_warn "No .dSYM bundles found. Skipping Azure symbols upload."
+    log_warn "No .dSYM bundles found. Skipping symbols upload."
   fi
 else
   log_warn "dSYMs folder not found: $ARCHIVE_PATH/dSYMs"
@@ -256,7 +255,21 @@ else
   log_warn "Sentry env vars missing. Skipping Sentry upload."
 fi
 
-if [[ -n "$AZ_FRONTDOOR_ENDPOINT_NAME" ]]; then
+if [[ "$RELEASE_STORAGE_PROVIDER" == "aws" ]]; then
+  # CloudFront serves /updates/* with the managed CachingOptimized policy, so without an
+  # invalidation a republished appcast stays stale at the edge for its full TTL while S3 already
+  # holds the new bytes. The smoke test below reads through CloudFront, so it would catch that —
+  # but only after burning its nine retries, and only on a republish.
+  if [[ -n "${AWS_CLOUDFRONT_DISTRIBUTION_ID:-}" ]]; then
+    log_info "Invalidating CloudFront paths"
+    invalidate_cloudfront_paths \
+      "$AWS_CLOUDFRONT_DISTRIBUTION_ID" \
+      "/updates/${FEED_PATH}" \
+      "/updates/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+  else
+    log_warn "AWS_CLOUDFRONT_DISTRIBUTION_ID unset; skipping invalidation (new paths still serve, a REPUBLISHED one may be stale)"
+  fi
+elif [[ -n "$AZ_FRONTDOOR_ENDPOINT_NAME" ]]; then
   log_info "Purging Azure Front Door cache"
   purge_frontdoor_paths \
     "$AZ_RESOURCE_GROUP" \

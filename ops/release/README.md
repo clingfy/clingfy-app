@@ -1,5 +1,22 @@
 # Release Tooling
 
+> **⚠️ PUBLISH TARGET CHANGED 2026-09-12 — prod publishes to AWS S3, not Azure.**
+> Azure was decommissioned on 2026-09-10, and `clingfy.com/updates/*` has served from the AWS
+> releases bucket since the 2026-08-17 cutover. Publishing prod to Azure would have written to a
+> location nothing reads — the upload succeeds, the smoke test passes (it checks the copy it just
+> wrote), and no installed app ever sees the release.
+>
+> `RELEASE_STORAGE_PROVIDER` selects the backend and defaults per channel: **prod -> `aws`**,
+> everything else -> `azure`. Dev deliberately stays on Azure (`clingfyreleasesdev`) because there is
+> no dev releases bucket yet. The S3 key is `<container>/<blob name>`, identical to the Azure layout,
+> because the CloudFront `/updates/*` behaviour has no path rewrite.
+>
+> Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
+> would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
+> the azure branch, which is still live for dev.
+
+
+
 This directory contains the secret-free operational tooling used to build, sign, notarize, package, and publish Clingfy macOS releases. The Windows release lane lives in `windows/` (PowerShell, fully independent of the macOS scripts) — see `windows/README.md`.
 
 The scripts in this directory are public. Private credentials, signing assets, and hosted service configuration are intentionally kept outside the repository and injected through local environment files or CI secure files.
