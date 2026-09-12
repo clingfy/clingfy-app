@@ -107,10 +107,24 @@ double PreviewCameraEffectScale(double surface_short_side,
 // first decoded frame) must force a rebuild on its own, or the bubble keeps the
 // identity-scaled border and shadow for the rest of the session even though the
 // canvas never changed.
+//
+// `painter_ready` is the RETRY term, and it is the reason this predicate now
+// answers the question completely rather than partially. It used to sit at the
+// call site as `if (needs_rebuild || !painter_ready_)`, which meant the one
+// path that recovers from a failed painter build was the one path no test
+// could reach. A rebuild can fail (the bitmap or the D2D factory is
+// unavailable for a frame), and nothing else would ever ask again: the canvas
+// and the scale are unchanged, so every other term reads false forever and the
+// camera silently never draws for the rest of the session.
+//
+// It is deliberately the LAST parameter rather than sitting beside `dirty`: a
+// transposed argument next to another bool could invert two terms at once and
+// still compile.
 bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
                                double effect_scale, UINT prepared_canvas_w,
                                UINT prepared_canvas_h,
-                               double prepared_effect_scale);
+                               double prepared_effect_scale,
+                               bool painter_ready);
 
 // The surface-resolved geometry + style for one preview frame.
 struct PreviewCameraPlan {

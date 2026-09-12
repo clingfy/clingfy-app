@@ -72,18 +72,48 @@ TEST(PreviewCameraNeedsRebuildTest, ScaleOnlyChangeStillRebuilds) {
   // the painter keeps its identity-scaled border for the whole session.
   EXPECT_TRUE(PreviewCameraNeedsRebuild(/*dirty=*/false, 1280, 720,
                                         /*effect_scale=*/1.0 / 3.0, 1280, 720,
-                                        /*prepared_effect_scale=*/1.0));
+                                        /*prepared_effect_scale=*/1.0,
+                                        /*painter_ready=*/true));
 }
 
 TEST(PreviewCameraNeedsRebuildTest, SteadyStateDoesNotRebuild) {
+  // painter_ready MUST be true here: it is the only EXPECT_FALSE in this
+  // group, so passing false would invert the assertion and still compile.
   EXPECT_FALSE(PreviewCameraNeedsRebuild(false, 1280, 720, 1.0 / 3.0, 1280, 720,
-                                         1.0 / 3.0));
+                                         1.0 / 3.0, /*painter_ready=*/true));
 }
 
 TEST(PreviewCameraNeedsRebuildTest, DirtyOrCanvasChangeStillRebuilds) {
-  EXPECT_TRUE(PreviewCameraNeedsRebuild(true, 1280, 720, 1.0, 1280, 720, 1.0));
-  EXPECT_TRUE(PreviewCameraNeedsRebuild(false, 640, 720, 1.0, 1280, 720, 1.0));
-  EXPECT_TRUE(PreviewCameraNeedsRebuild(false, 1280, 360, 1.0, 1280, 720, 1.0));
+  EXPECT_TRUE(PreviewCameraNeedsRebuild(true, 1280, 720, 1.0, 1280, 720, 1.0,
+                                        /*painter_ready=*/true));
+  EXPECT_TRUE(PreviewCameraNeedsRebuild(false, 640, 720, 1.0, 1280, 720, 1.0,
+                                        /*painter_ready=*/true));
+  EXPECT_TRUE(PreviewCameraNeedsRebuild(false, 1280, 360, 1.0, 1280, 720, 1.0,
+                                        /*painter_ready=*/true));
+}
+
+// The retry path, which no test could reach while the term lived at the call
+// site. This is the exact post-failure state: the rebuild ran, the painter
+// failed to build, and the prepared_* values were recorded anyway — so dirty is
+// false, the canvas matches and the scale matches. Every other term reads
+// false. Only painter_ready asks for the retry, and without it the camera
+// silently never draws again for the rest of the session.
+TEST(PreviewCameraNeedsRebuildTest, NotReadyRetriesAfterAFailedRebuild) {
+  EXPECT_TRUE(PreviewCameraNeedsRebuild(/*dirty=*/false, 1280, 720,
+                                        /*effect_scale=*/1.0 / 3.0, 1280, 720,
+                                        /*prepared_effect_scale=*/1.0 / 3.0,
+                                        /*painter_ready=*/false));
+}
+
+// The other side of the same term: once the painter IS ready and nothing else
+// changed, the retry must stop. Otherwise the recovery path becomes an
+// every-frame shadow bake — the rebuild branch does SetTarget round-trips, so
+// re-entering it per frame is expensive, not merely redundant.
+TEST(PreviewCameraNeedsRebuildTest, ReadySteadyStateStopsRetrying) {
+  EXPECT_FALSE(PreviewCameraNeedsRebuild(/*dirty=*/false, 1280, 720,
+                                         /*effect_scale=*/1.0, 1280, 720,
+                                         /*prepared_effect_scale=*/1.0,
+                                         /*painter_ready=*/true));
 }
 
 namespace {

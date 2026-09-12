@@ -176,7 +176,14 @@ double PreviewCameraEffectScale(double surface_short_side,
 bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
                                double effect_scale, UINT prepared_canvas_w,
                                UINT prepared_canvas_h,
-                               double prepared_effect_scale) {
+                               double prepared_effect_scale,
+                               bool painter_ready) {
+  // The retry term. A painter build can fail for a frame, and the prepared_*
+  // values are recorded even when it does — so without this every other term
+  // reads false from then on and the camera never draws again.
+  if (!painter_ready) {
+    return true;
+  }
   if (dirty || canvas_w != prepared_canvas_w || canvas_h != prepared_canvas_h) {
     return true;
   }
@@ -229,10 +236,9 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   {
     std::lock_guard<std::mutex> lock(mutex_);
     comp = composition_;
-    needs_rebuild =
-        PreviewCameraNeedsRebuild(dirty_, canvas_w, canvas_h, effect_scale,
-                                  prepared_canvas_w_, prepared_canvas_h_,
-                                  prepared_effect_scale_);
+    needs_rebuild = PreviewCameraNeedsRebuild(
+        dirty_, canvas_w, canvas_h, effect_scale, prepared_canvas_w_,
+        prepared_canvas_h_, prepared_effect_scale_, painter_ready_);
     dirty_ = false;
   }
   composition_visible_ = comp.visible;
@@ -242,7 +248,7 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
 
   // (Re)build the painter when the composition or the canvas changed. Done here,
   // OUTSIDE the engine's BeginDraw (the shadow bake does SetTarget round-trips).
-  if (needs_rebuild || !painter_ready_) {
+  if (needs_rebuild) {
     ComPtr<ID2D1Factory> factory0;
     ctx->GetFactory(factory0.GetAddressOf());
     ComPtr<ID2D1Factory1> factory1;
