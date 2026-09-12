@@ -173,6 +173,44 @@ construction and by headless tests, but an on-device eyeball comparing an
 exported file against the editor at the same timestamp has not been done — CI
 cannot do it. Fold it into the camera on-device QA pass.
 
+### ~~Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)~~ — MEASURED 2026-09-11, latent not live
+
+- **Settled the way the item asked: by measuring, not by fixing.** The divergence
+  needs a non-zero container PTS base to exist. Windows recordings do not have one.
+- **The measurement.** Every `.clingfyproj` on the dev box — **36 screen videos** —
+  probed with `ffprobe -select_streams v:0 -show_entries stream=start_pts`:
+  **`start_pts=0` on 36 of 36**, `time_base=1/30000` throughout. Not one non-zero base.
+- **So the export's rebase is a no-op on these files.** `frame_ms =
+  (timestamp - first_video_hns) / 10000` with `first_video_hns` resolving to 0
+  is `timestamp / 10000`, which is exactly the container-relative clock the
+  preview's `CurrentPlaybackUs()` already reports. The two sides agree.
+- **The code already relies on this.** The reorder branch hardcodes
+  `first_video_hns = 0` and justifies it in its own comment: *"The recorder
+  writes from PTS 0"* (`export_pipeline.cpp`, the `if (reorder)` block). That
+  assertion was never measured; it is now.
+- **Durations do not split the two sides either.** 10 of the 36 have a video
+  stream duration differing from the container duration by more than 50 ms
+  (audio running longer). Both sides take the *container* duration — export from
+  `MF_PD_DURATION` on the presentation descriptor, preview from
+  `PlaybackSession().NaturalDuration()` — so the stream/container gap is the
+  same number on both and cannot desynchronise them.
+- **The one case still unmeasured: a macOS-produced bundle opened on Windows.**
+  `RecordingProject::platform` is explicitly `"windows" today; "macos" when read
+  from a Mac bundle`, so this is reachable, and AVAssetWriter is a different
+  writer with no measurement behind it here. No camera-bearing bundle existed on
+  the dev box to check (0 of 36 had `camera.mp4`/`camera.mov`). If a Mac
+  recording ever shows a non-zero base, the fix is the one this item always
+  proposed: rebase the preview clock the same way the export does, keeping one
+  definition of "clip time" instead of two.
+- **Do not "fix" the Windows path on this evidence.** Rebasing a clock whose base
+  is provably zero adds a term that is always zero and a second place to get it
+  wrong.
+- **Reproduce:** `ffprobe -v error -select_streams v:0 -show_entries
+  stream=start_pts,time_base -of csv=p=0 <bundle>/capture/screen.mov`
+
+<details>
+<summary>Original item (kept for the reasoning, which still applies to the macOS-bundle case)</summary>
+
 ### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)
 
 - **What:** On a clip with no cuts, the preview and the export derive the animation clock from different sources, so a fade-in / slide-out could start and finish at slightly different absolute times on each side. Trimmed projects are NOT affected — both sides use the edited position and edited duration there, which is the case the animation port was built and reasoned about.
@@ -180,8 +218,10 @@ cannot do it. Fold it into the camera on-device QA pass.
 - **Why the export bothers to rebase**, per its own comment: raw `MF_PD_DURATION` keeps the container's PTS base, and an unrebased duration pushes the outro window past the last reachable `frame_ms`, so the outro never completes. That is the failure this rebasing exists to prevent — which is the reason to suspect the un-rebased preview side rather than the export.
 - **Not observed, only derived.** Found by reading both clocks while wiring the preview animation (PR #419); no recording has been measured. Our own screen recordings may well have a zero PTS base, in which case the two agree today and this is latent rather than live. Do not "fix" it before measuring.
 - **How to settle it:** open a real untrimmed recording, log `first_video_hns` from the export path and `NaturalDuration` / position from the preview path for the same file, and compare. Zero base and equal durations → close this as a non-issue and record that. Non-zero → rebase the preview clock the same way the export does, which keeps one definition of "clip time" instead of two.
-- **Start at:** `windows/runner/preview/preview_engine.cpp:1434-1446` (where `emit_pos_ms` / `emit_dur_ms` are produced on the MediaPlayer path) and `windows/runner/Capture/Export/export_pipeline.cpp:1385-1394` (the rebasing it should match).
+- **Start at:** `windows/runner/preview/preview_engine.cpp` (where `emit_pos_ms` / `emit_dur_ms` are produced on the MediaPlayer path, around `CurrentPlaybackUs` / `NaturalDuration`) and the `first_video_hns` rebase in `windows/runner/Capture/Export/export_pipeline.cpp` (the rebasing it should match). Line numbers from the original item drifted out of date under #466–#473; search the identifiers instead.
 - **Effort:** human ~2h / CC ~30min, most of it the measurement.
+
+</details>
 
 ## Windows — bridge routers
 
