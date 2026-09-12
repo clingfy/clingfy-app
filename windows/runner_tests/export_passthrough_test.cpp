@@ -589,6 +589,49 @@ TEST(ShouldCompositeCameraTest, SkipsWhenZeroFrames) {
   EXPECT_FALSE(ShouldCompositeCamera(true, true, true, false, /*frames=*/0));
 }
 
+// ---- The PREVIEW leg calls this same gate ----------------------------------
+//
+// preview_router's previewOpen used to re-implement these asset conditions
+// inline while its comment claimed to "mirror" the export gate. Two copies of a
+// rule, one of them only claiming to match, is how this repo has been bitten
+// before — adding a sixth condition here would have left the preview silently
+// ungated. It now calls this function, and these pin the shape of that call.
+//
+// The difference from the export's usage is `camera_visible`, which the preview
+// passes as a literal true. That is deliberate and worth pinning so nobody
+// "fixes" it: on the export leg visibility is known up front from the request,
+// but at previewOpen time the user has not chosen it yet — it arrives later via
+// previewSetCameraPlacement and the renderer honours it per frame. So the
+// preview's question is only "does this project have a camera worth wiring up",
+// and every other term is the shared gate's.
+
+TEST(ShouldCompositeCameraTest, PreviewLegWiresUpCameraWhenAssetsAreUsable) {
+  // The preview's exact call shape: visible pinned true, everything else read
+  // from the project bundle.
+  EXPECT_TRUE(ShouldCompositeCamera(/*visible=*/true, /*assets=*/true,
+                                    /*meta_parsed=*/true,
+                                    /*preview_burned_in=*/false,
+                                    /*frames=*/900));
+}
+
+TEST(ShouldCompositeCameraTest, PreviewLegStillRefusesEveryUnusableProject) {
+  // Visibility is the one term the preview does not supply, so the gate has to
+  // carry the rest on its own. Each of the four project-derived conditions must
+  // independently keep the camera out of the preview.
+  EXPECT_FALSE(ShouldCompositeCamera(true, /*assets=*/false, true, false, 900))
+      << "No camera.mp4 / camera.meta.json: nothing to composite.";
+  EXPECT_FALSE(ShouldCompositeCamera(true, true, /*meta_parsed=*/false, false,
+                                     900))
+      << "Malformed camera.meta.json: start_offset_ms is unknown, so the "
+         "camera cannot be placed on the timeline at all.";
+  EXPECT_FALSE(ShouldCompositeCamera(true, true, true,
+                                     /*preview_burned_in=*/true, 900))
+      << "Already burned into screen.mov: compositing again doubles the "
+         "bubble in the preview exactly as it would in the export.";
+  EXPECT_FALSE(ShouldCompositeCamera(true, true, true, false, /*frames=*/0))
+      << "Camera opened but never produced a frame.";
+}
+
 // ---- Phase 10.4 disk-full preflight (pure helpers) --------------------------
 //
 // The decision + estimate are pure so the EXPORT_DISK_FULL path can be pinned
