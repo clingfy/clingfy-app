@@ -176,7 +176,9 @@ $script:AzurePurgeKeys = @(
 $script:StorageProviderKeys = @(
   'RELEASE_STORAGE_PROVIDER',
   'AWS_RELEASES_BUCKET',
-  'AWS_CLOUDFRONT_DISTRIBUTION_ID'
+  'AWS_CLOUDFRONT_DISTRIBUTION_ID',
+  'AWS_PUBLIC_ENDPOINT',
+  'RELEASE_PUBLIC_ENDPOINT'
 )
 
 function Initialize-WindowsReleaseContext {
@@ -283,6 +285,10 @@ function Initialize-WindowsReleaseContext {
     StorageProvider  = $null
     AwsReleasesBucket = $null
     AwsCloudFrontDistributionId = $null
+    # Public host + path prefix the artifacts are SERVED from. Distinct from the upload target and
+    # must move with it: latest-windows.json embeds a url built from this, so an endpoint left on
+    # Azure would ship a feed pointing at a storage account being retired.
+    PublicEndpoint   = $null
   }
 
   Write-Info "Channel:   $($context.Channel) ($($context.AppDisplayName))"
@@ -318,8 +324,15 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
         Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_RELEASES_BUCKET. " +
           "Set it in the environment or provide it in $($Context.EnvFile).")
       }
+      $Context.PublicEndpoint = if ($env:RELEASE_PUBLIC_ENDPOINT) { $env:RELEASE_PUBLIC_ENDPOINT } else { $env:AWS_PUBLIC_ENDPOINT }
+      if (-not $Context.PublicEndpoint) {
+        Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_PUBLIC_ENDPOINT (host + path prefix the " +
+          "releases are served from, e.g. clingfy.com/updates). " +
+          "Set it in the environment or provide it in $($Context.EnvFile).")
+      }
       Write-Info "Provider:        aws"
       Write-Info "Bucket:          $($Context.AwsReleasesBucket)"
+      Write-Info "Served from:     https://$($Context.PublicEndpoint)/"
       Write-Info "Key prefix:      $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
       if (-not $Context.AwsCloudFrontDistributionId) {
         Write-Info 'CloudFront:      none set (invalidation will be skipped)'
@@ -336,6 +349,7 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
       $Context.AzCdnProfile = $env:AZ_CDN_PROFILE
       $Context.AzCdnEndpoint = $env:AZ_CDN_ENDPOINT
       $Context.AzFrontDoorEndpointName = $env:AZ_FRONTDOOR_ENDPOINT_NAME
+      $Context.PublicEndpoint = if ($env:RELEASE_PUBLIC_ENDPOINT) { $env:RELEASE_PUBLIC_ENDPOINT } else { $env:AZ_CDN_ENDPOINT }
       Write-Info "Provider:        azure"
       Write-Info "Storage account: $($Context.AzStorageAccount)"
       Write-Info "Blob path:       $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
@@ -352,8 +366,11 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
 # Public download base for published Windows artifacts, e.g.
 # https://<front-door-host>/downloads/windows/
 function Get-WindowsDownloadBaseUrl([pscustomobject]$Context) {
-  if (-not $Context.AzCdnEndpoint) {
+  # PublicEndpoint, not AzCdnEndpoint: on the aws provider AzCdnEndpoint is never set, so keying off
+  # it made this fail with a misleading "requires Import-AzurePublishSettings first" even though the
+  # settings had loaded correctly.
+  if (-not $Context.PublicEndpoint) {
     Fail 'Get-WindowsDownloadBaseUrl requires Import-AzurePublishSettings first.'
   }
-  return "https://$($Context.AzCdnEndpoint)/$($Context.WindowsBlobPrefix)/"
+  return "https://$($Context.PublicEndpoint)/$($Context.WindowsBlobPrefix)/"
 }
