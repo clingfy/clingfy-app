@@ -137,6 +137,45 @@ CanvasComposition MakeCanvasComposition(
     std::optional<std::int64_t> background_argb,
     std::wstring background_image_path = {});
 
+// Resolve a raw Dart framing payload against the SOURCE video dimensions.
+//
+// The payload's lengths are export-output pixels, but the export canvas they
+// are measured against is not in the payload — it falls out of the source size
+// plus the layout/resolution presets via `ResolveTargetSize`. So the resolve
+// cannot happen until the source dimensions are known, which on the preview
+// side means "until a frame has decoded".
+//
+// A non-positive source size yields the UNRESOLVED composition: background
+// fields pass through (they need no reference) while `padding_fraction`,
+// `corner_radius_fraction` and `export_short_side` stay 0. That is a legitimate
+// intermediate state, not an error — but the caller owes a second call once the
+// dimensions land, or the canvas renders unpadded and the camera bubble draws
+// its border, shadow and min-side floor at export scale on a smaller surface.
+// `PreviewEngine::ComposeAndHandoffLocked` does that re-resolve; keep
+// `export_short_side == 0.0` as the "still owed" signal.
+//
+// Pure, so both the first resolve and the re-resolve are pinned by
+// `canvas_composition_test.cpp` without a decoder or a GPU.
+CanvasComposition ResolveCanvasComposition(const CanvasFramingArgs& framing,
+                                           double source_w, double source_h);
+
+// Whether a retained framing must be resolved again before the canvas is read.
+//
+// Pure for the same reason `PreviewCameraNeedsRebuild` is: the frame thread's
+// re-resolve runs under `render_mutex` on a path that needs a decoder and a GPU,
+// so the DECISION is pinned here instead of only through a pixel test.
+//
+// True when a framing has been pushed and the size it was resolved against is
+// not the size now in hand. That covers both cases with one comparison: the
+// first resolve (`resolved_*` still 0 because no frame had decoded when Dart
+// pushed) and a source whose dimensions later change. False with no framing —
+// there is nothing to resolve, and re-resolving a default would overwrite
+// nothing with nothing.
+bool CanvasNeedsReresolve(bool has_framing, unsigned int resolved_source_w,
+                          unsigned int resolved_source_h,
+                          unsigned int live_source_w,
+                          unsigned int live_source_h);
+
 }  // namespace clingfy::core
 
 #endif  // RUNNER_CORE_CANVAS_COMPOSITION_H_

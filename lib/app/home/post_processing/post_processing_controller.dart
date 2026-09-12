@@ -1684,6 +1684,19 @@ class PostProcessingController extends ChangeNotifier {
       // pushes this recording's grade onto a different one.
       if (_projectPath == projectPath) {
         _pushPreviewColorGrade();
+        // Same reasoning as the grade, for the canvas. [_pushCanvas] was only
+        // ever called from the five canvas MUTATORS, so on open the native
+        // preview held a default canvas: the restored padding / radius /
+        // background never arrived, and neither did the export short side that
+        // the camera bubble's border, shadow and min-side floor resolve
+        // against — so the bubble drew those at export scale on the smaller
+        // preview texture (~1.5x too heavy at 1080p, ~3x at 4K) until the user
+        // happened to touch an unrelated canvas control.
+        //
+        // Safe to push before any frame has decoded: native retains the
+        // payload and re-resolves it once the source dimensions land (see
+        // `ResolveCanvasComposition` in Core/canvas_composition.h).
+        _pushCanvas();
       }
       notifyListeners();
       await applyProcessing();

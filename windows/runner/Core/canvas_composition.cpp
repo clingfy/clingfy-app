@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "Capture/Export/export_geometry.h"
+
 namespace clingfy::core {
 
 double NormalizeToShortSide(double pixels, double reference_short_side) {
@@ -37,6 +39,49 @@ CanvasComposition MakeCanvasComposition(
   out.background_argb = background_argb;
   out.background_image_path = std::move(background_image_path);
   return out;
+}
+
+CanvasComposition ResolveCanvasComposition(const CanvasFramingArgs& framing,
+                                           double source_w, double source_h) {
+  CanvasComposition out{};
+  // Backgrounds carry no length, so they resolve with or without a source.
+  // Publishing them even while unresolved is what keeps the background visible
+  // on the very first frame instead of one push behind.
+  out.background_argb = framing.background_argb;
+  out.background_image_path = framing.background_image_path;
+  out.preset = framing.preset;
+  out.has_preset = framing.has_preset;
+  if (!(source_w > 0.0) || !(source_h > 0.0)) {
+    // Source unknown: leave the lengths at 0 rather than normalising against a
+    // guess. Re-resolving later is cheap; a wrong canvas baked into the first
+    // frames is not.
+    return out;
+  }
+  // ResolveTargetSize is the single source of truth for how a source plus
+  // layout/resolution presets becomes an export canvas — the same function the
+  // export itself calls, so the preview normalises against the canvas the
+  // export will actually produce.
+  const capture::export_::SizeF target = capture::export_::ResolveTargetSize(
+      capture::export_::SizeF{source_w, source_h}, framing.layout_preset,
+      framing.resolution_preset);
+  const double export_short = std::min(target.width, target.height);
+  out.padding_fraction =
+      NormalizeToShortSide(framing.padding_px, export_short);
+  out.corner_radius_fraction =
+      NormalizeToShortSide(framing.corner_radius_px, export_short);
+  out.export_short_side = export_short > 0.0 ? export_short : 0.0;
+  return out;
+}
+
+bool CanvasNeedsReresolve(bool has_framing, unsigned int resolved_source_w,
+                          unsigned int resolved_source_h,
+                          unsigned int live_source_w,
+                          unsigned int live_source_h) {
+  if (!has_framing) {
+    return false;
+  }
+  return resolved_source_w != live_source_w ||
+         resolved_source_h != live_source_h;
 }
 
 }  // namespace clingfy::core
