@@ -278,10 +278,16 @@ void main() {
         ShellResponsiveMetrics.densityForHeight(859.99),
         ShellDensity.compact,
       );
-      expect(ShellResponsiveMetrics.densityForHeight(740), ShellDensity.compact);
+      expect(
+        ShellResponsiveMetrics.densityForHeight(740),
+        ShellDensity.compact,
+      );
       expect(ShellResponsiveMetrics.densityForHeight(739), ShellDensity.dense);
       expect(ShellResponsiveMetrics.densityForHeight(620), ShellDensity.dense);
-      expect(ShellResponsiveMetrics.densityForHeight(619), ShellDensity.minimal);
+      expect(
+        ShellResponsiveMetrics.densityForHeight(619),
+        ShellDensity.minimal,
+      );
     });
 
     // The bug this axis exists for. A 1920x1080 display at Windows' default
