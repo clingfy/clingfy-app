@@ -268,6 +268,92 @@ void main() {
       expect(ShellResponsiveMetrics.densityForWidth(1000), ShellDensity.dense);
       expect(ShellResponsiveMetrics.densityForWidth(999), ShellDensity.minimal);
     });
+
+    test('height boundary is half-open, same as width', () {
+      expect(
+        ShellResponsiveMetrics.densityForHeight(860),
+        ShellDensity.comfortable,
+      );
+      expect(
+        ShellResponsiveMetrics.densityForHeight(859.99),
+        ShellDensity.compact,
+      );
+      expect(ShellResponsiveMetrics.densityForHeight(740), ShellDensity.compact);
+      expect(ShellResponsiveMetrics.densityForHeight(739), ShellDensity.dense);
+      expect(ShellResponsiveMetrics.densityForHeight(620), ShellDensity.dense);
+      expect(ShellResponsiveMetrics.densityForHeight(619), ShellDensity.minimal);
+    });
+
+    // The bug this axis exists for. A 1920x1080 display at Windows' default
+    // 125% scaling hands the app 1536x816 logical pixels. Keyed off width
+    // alone that read as `comfortable` — FULL-SIZE chrome, larger than the app
+    // uses in its own 1280x780 default window — while 816px of height had to
+    // fit toolbar, inspector, preview, timeline toolbar, ruler and lanes. The
+    // clip lane landed below the bottom of the screen, with nothing to scroll
+    // and no divider to drag, so cutting and trimming were unreachable.
+    test('a 1080p display at 125% scaling does not get comfortable chrome', () {
+      const dpiScaled1080p = Size(1536, 816);
+      expect(
+        ShellResponsiveMetrics.densityForWidth(dpiScaled1080p.width),
+        ShellDensity.comfortable,
+        reason: 'width alone still reads as comfortable — that was the trap',
+      );
+      final m = ShellResponsiveMetrics.fromSize(dpiScaled1080p);
+      expect(m.density, ShellDensity.compact);
+      expect(m.scale, 0.92);
+    });
+
+    test('density is the tighter of the two axes, never the looser', () {
+      // Wide but short: height constrains.
+      expect(
+        ShellResponsiveMetrics.densityForSize(const Size(1600, 700)),
+        ShellDensity.dense,
+      );
+      // Tall but narrow: width constrains, exactly as before this axis existed.
+      expect(
+        ShellResponsiveMetrics.densityForSize(const Size(900, 1200)),
+        ShellDensity.minimal,
+      );
+      // Both roomy: unaffected.
+      expect(
+        ShellResponsiveMetrics.densityForSize(const Size(1600, 900)),
+        ShellDensity.comfortable,
+      );
+    });
+
+    // Height must only ever constrain. If it could promote, a tall window would
+    // get bigger chrome than its width can carry and overflow sideways instead
+    // — the same bug rotated 90 degrees.
+    test('height never promotes a width-constrained window', () {
+      for (final width in const <double>[900, 1100, 1300, 1500]) {
+        final byWidth = ShellResponsiveMetrics.densityForWidth(width);
+        final huge = ShellResponsiveMetrics.densityForSize(Size(width, 4000));
+        expect(
+          huge.index,
+          greaterThanOrEqualTo(byWidth.index),
+          reason: 'width $width with unlimited height must not loosen',
+        );
+        expect(huge, byWidth);
+      }
+    });
+
+    test('the default window size resolves the same on both axes', () {
+      // kDefaultDesktopWindowSize is 1280x780. The height thresholds are
+      // derived from it, so if either axis disagrees the derivation drifted.
+      const defaultWindow = Size(1280, 780);
+      expect(
+        ShellResponsiveMetrics.densityForWidth(defaultWindow.width),
+        ShellDensity.compact,
+      );
+      expect(
+        ShellResponsiveMetrics.densityForHeight(defaultWindow.height),
+        ShellDensity.compact,
+      );
+      expect(
+        ShellResponsiveMetrics.fromSize(defaultWindow).density,
+        ShellDensity.compact,
+      );
+    });
   });
 
   group('ResponsiveShellScope', () {
