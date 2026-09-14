@@ -47,11 +47,17 @@ const double _innerGap = 4;
 
 /// A real window height the editor is used at, and the one the clips-lane
 /// investigation measured against.
-const double _shellHeight = 830;
-const Size _surface = Size(1550, _shellHeight);
+const double _windowHeight = 830;
+const Size _surface = Size(1550, _windowHeight);
+
+/// The shell box is the window minus home_shell.dart's two outer paddings
+/// (`EdgeInsets.all(2)` at :495 and `EdgeInsets.all(6)` at :503) = 16px.
+/// Modelled below rather than hardcoded, but named here for the assertions.
+const double _outerPadding = 16;
+const double _shellHeight = _windowHeight - _outerPadding;
 
 /// Comfortably below the toolbar height at which the Expanded preview area
-/// collapses to zero (measured threshold: 547.2 at this shell height).
+/// collapses to zero (measured threshold: 531.2 at this shell height).
 const double _toolbarHeight = 46;
 
 void main() {
@@ -134,24 +140,30 @@ void main() {
             child: ResponsiveShellScope(
               metrics: ShellResponsiveMetrics.fromSize(_surface),
               child: Scaffold(
-                body: SizedBox(
-                  height: _shellHeight,
-                  child: DesktopSplitLayout(
-                    controller: paneController,
-                    gap: _innerGap,
-                    minHeight: 592,
-                    panes: [
-                      DesktopPaneSlot(
-                        spec: const DesktopPaneSpec(
-                          id: DesktopPaneId.homeWorkspaceColumn,
-                          defaultWidth: 1040,
-                          minWidth: 760,
-                          autoCollapseAllowed: false,
-                          flex: true,
-                        ),
-                        builder: (context, _) => workspaceColumn,
+                body: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: SizedBox(
+                      height: _shellHeight,
+                      child: DesktopSplitLayout(
+                        controller: paneController,
+                        gap: _innerGap,
+                        minHeight: 592,
+                        panes: [
+                          DesktopPaneSlot(
+                            spec: const DesktopPaneSpec(
+                              id: DesktopPaneId.homeWorkspaceColumn,
+                              defaultWidth: 1040,
+                              minWidth: 760,
+                              autoCollapseAllowed: false,
+                              flex: true,
+                            ),
+                            builder: (context, _) => workspaceColumn,
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ),
@@ -258,7 +270,7 @@ void main() {
       'timeline silently', (tester) async {
     // The escape hatch that makes the above trustworthy: when the preview area
     // really is squeezed to zero, this chain DOES raise. Measured threshold at
-    // this shell height is a toolbar above 547.2px.
+    // this shell height is a toolbar above 531.2px.
     await pumpChain(tester, platform: PlatformKind.windows, toolbarHeight: 600);
 
     final error = tester.takeException();
