@@ -2425,13 +2425,18 @@ TEST(ExportPipelineTest, CameraBubbleTracksSourceTimeUnderReorder) {
   r.draw_camera = true;
   r.camera_video_path = fs::u8path(camera).wstring();
   r.camera_start_offset_ms = 0;  // camera time == screen source time
-  r.camera_has_center = true;
-  r.camera_center_x = 0.80;
-  r.camera_center_y = 0.80;
-  r.camera_size_factor = 0.45;   // a big bubble so its center is easy to sample
-  r.camera_shape = "circle";     // center is camera content for any convex shape
-  r.camera_content_mode = "fill";
-  r.camera_opacity = 1.0;
+  // draw_camera above stays loose and is the gate; these seven moved under
+  // .camera when the request started embedding the parser own spec. Note
+  // r.camera.visible is deliberately NOT set here and stays false while the
+  // camera renders -- the opposite of production, where the assignment is
+  // gated so visible and draw_camera agree. Gate on draw_camera.
+  r.camera.has_center = true;
+  r.camera.center_x = 0.80;
+  r.camera.center_y = 0.80;
+  r.camera.size_factor = 0.45;  // a big bubble so its center is easy to sample
+  r.camera.shape = "circle";    // center is camera content for any convex shape
+  r.camera.content_mode = "fill";
+  r.camera.opacity = 1.0;
 
   const RenderResult result = RenderComposedExport(r);
   ASSERT_TRUE(result.ok) << result.message;

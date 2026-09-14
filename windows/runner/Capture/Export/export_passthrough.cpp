@@ -339,7 +339,7 @@ PassthroughResult ExportPassthroughCopy(
     }
   }
   const bool wants_camera = ShouldCompositeCamera(
-      input.camera_visible, has_camera_assets, camera_meta.has_value(),
+      input.camera.visible, has_camera_assets, camera_meta.has_value(),
       camera_meta.has_value() && camera_meta->preview_burned_in,
       camera_meta.has_value() ? camera_meta->frames_written : 0u);
 
@@ -616,31 +616,15 @@ PassthroughResult ExportPassthroughCopy(
       render.draw_camera = true;
       render.camera_video_path = *read.project->camera_video_path;
       render.camera_start_offset_ms = camera_meta->start_offset_ms;
-      render.camera_has_center = input.camera_has_center;
-      render.camera_center_x = input.camera_center_x;
-      render.camera_center_y = input.camera_center_y;
-      render.camera_layout_preset = input.camera_layout_preset;
-      render.camera_size_factor = input.camera_size_factor;
-      render.camera_shape = input.camera_shape;
-      render.camera_corner_radius = input.camera_corner_radius;
-      render.camera_content_mode = input.camera_content_mode;
-      render.camera_mirror = input.camera_mirror;
-      render.camera_opacity = input.camera_opacity;
-      render.camera_border_width = input.camera_border_width;
-      render.camera_border_color_argb = input.camera_border_color_argb;
-      render.camera_shadow_preset = input.camera_shadow_preset;
-      render.camera_chroma_enabled = input.camera_chroma_enabled;
-      render.camera_chroma_strength = input.camera_chroma_strength;
-      render.camera_chroma_color_argb = input.camera_chroma_color_argb;
-      render.camera_intro_preset = input.camera_intro_preset;
-      render.camera_outro_preset = input.camera_outro_preset;
-      render.camera_intro_duration_ms = input.camera_intro_duration_ms;
-      render.camera_outro_duration_ms = input.camera_outro_duration_ms;
-      render.camera_zoom_behavior = input.camera_zoom_behavior;
-      render.camera_zoom_scale_multiplier = input.camera_zoom_scale_multiplier;
-      render.camera_zoom_emphasis_preset = input.camera_zoom_emphasis_preset;
-      render.camera_zoom_emphasis_strength =
-          input.camera_zoom_emphasis_strength;
+      // One assignment where 24 identity copies used to be. A field added to
+      // CameraRenderSpec now reaches the export by existing.
+      //
+      // KEEP THIS INSIDE `if (wants_camera)`. Hoisting it looks harmless —
+      // composition data is inert when draw_camera is false — but it would
+      // make render.camera.visible the raw user toggle instead of something
+      // that is true only when the full gate passed, and the next reader who
+      // notices camera.visible == draw_camera would then be wrong.
+      render.camera = input.camera;
     }
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;

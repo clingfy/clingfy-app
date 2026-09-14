@@ -590,10 +590,10 @@ void HandleExportVideo(
     // list that agreed with the shared parser only by coincidence, and that
     // coincidence had already failed twice (missing chroma in the 9.7 review,
     // then the four intro/outro keys reaching the export but never the
-    // preview). ApplyCameraCompositionToExport carries every field across, and
-    // a test fails if a new one is added without extending it.
-    clingfy::bridge::ApplyCameraCompositionToExport(
-        clingfy::bridge::ReadCameraComposition(*args), input);
+    // preview). The export now carries the parser's own struct, so a new
+    // field reaches this path by existing, not by someone remembering to add
+    // a line to a mapper.
+    input.camera = clingfy::bridge::ReadCameraComposition(*args);
     // Editing port: the nested `colorGrade` map and the `clips` list, each
     // parsed by the shared helper both routers use (one wire shape, one
     // parser — the camera-parsing duplication hid a bug once). Absent /
