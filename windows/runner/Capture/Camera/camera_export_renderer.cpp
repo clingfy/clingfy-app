@@ -78,29 +78,12 @@ std::unique_ptr<CameraExportRenderer> CameraExportRenderer::Create(
 
 bool CameraExportRenderer::Prepare(ID2D1Factory1* factory,
                                    ID2D1DeviceContext* ctx,
-                                   const CameraBubbleRect& bubble,
-                                   const std::string& shape,
-                                   double corner_radius,
-                                   const std::string& content_mode,
-                                   const Style& style,
-                                   const CameraAnimationParams& anim,
-                                   double canvas_w, double canvas_h,
-                                   CameraSlideEdge slide_edge,
-                                   const std::string& zoom_behavior,
-                                   double zoom_scale_multiplier,
-                                   const std::string& layout_preset) {
+                                   const CameraRenderPlan& plan) {
   if (factory == nullptr || ctx == nullptr || cam_w_ == 0 || cam_h_ == 0) {
     return false;
   }
 
-  anim_params_ = anim;
-  bubble_ = bubble;
-  canvas_w_ = canvas_w;
-  canvas_h_ = canvas_h;
-  slide_edge_ = slide_edge;
-  zoom_behavior_ = zoom_behavior;
-  zoom_scale_multiplier_ = zoom_scale_multiplier;
-  layout_preset_ = layout_preset;
+  plan_ = plan;
 
   // Source bitmap holds the latest decoded camera frame (system-memory upload).
   const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -111,8 +94,9 @@ bool CameraExportRenderer::Prepare(ID2D1Factory1* factory,
     return false;
   }
 
-  if (!painter_.Prepare(factory, ctx, bubble, shape, corner_radius,
-                        content_mode, style, cam_w_, cam_h_)) {
+  if (!painter_.Prepare(factory, ctx, plan_.bubble, plan_.shape,
+                        plan_.corner_radius, plan_.content_mode, plan_.style,
+                        cam_w_, cam_h_)) {
     return false;
   }
 
@@ -211,16 +195,13 @@ void CameraExportRenderer::Draw(ID2D1DeviceContext* ctx,
   if (!ready_ || !has_held_frame_) {
     return;
   }
-  CameraAnimationParams params = anim_params_;
-  params.zoom_scale = ResolveCameraZoomScale(
-      zoom_behavior_, zoom_scale_multiplier_, screen_zoom, layout_preset_);
-  params.zoom_in_segment = zoom_in_segment;
-  params.zoom_local_seconds =
-      static_cast<double>(std::max<std::int64_t>(0, zoom_segment_local_ms)) /
-      1000.0;
-  const CameraAnimationOutput a =
-      ResolveCameraAnimation(params, frame_ms, total_duration_ms, bubble_,
-                             canvas_w_, canvas_h_, slide_edge_);
+  // The same per-frame resolver the inline preview calls. The nine lines that
+  // used to live here were duplicated verbatim on that leg.
+  const CameraAnimationOutput a = ResolveCameraRenderFrame(
+      plan_, /*frame_ms=*/frame_ms,
+      /*total_duration_ms=*/total_duration_ms, /*screen_zoom=*/screen_zoom,
+      /*zoom_in_segment=*/zoom_in_segment,
+      /*zoom_segment_local_ms=*/zoom_segment_local_ms);
   CameraBubblePainter::Frame frame;
   frame.opacity_mul = a.opacity;
   frame.scale = a.scale;

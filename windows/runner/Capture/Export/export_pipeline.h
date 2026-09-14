@@ -253,6 +253,19 @@ bool IsDeviceRemovedHresult(HRESULT hr);
 // output and leaves NO file at the destination — Phase 10.4). Never throws —
 // all Media Foundation / Direct2D failures are reported through
 // `RenderResult::ok` + `message`.
+// The export leg's camera plan, as a pure function of the request and the
+// canvas. Exists as a named free function rather than inline in
+// RenderComposedExport for one reason: it is the only way to assert what the
+// export passes as `effect_scale` without a D3D11 device. Every camera test
+// in export_pipeline_test.cpp GTEST_SKIPs without one, so they score as
+// passes while proving nothing about this.
+//
+// The export paints ON the export canvas, so kExportCameraEffectScale (1.0)
+// is the whole of it — the authored lengths are already in this surface's
+// pixels. The inline preview is the leg that passes anything else.
+clingfy::capture::CameraRenderPlan CameraPlanForExportRequest(
+    const RenderRequest& request, double canvas_w, double canvas_h);
+
 RenderResult RenderComposedExport(const RenderRequest& request);
 
 }  // namespace clingfy::capture::export_
