@@ -270,3 +270,4 @@ urgency), which is not part of this ADR's presenter work.
 - Layered-window failure class: robmikh/Win32CaptureSample #51, Godot #76167, Electron #29085/#31340/#47834
 - macOS reference: `macos/Runner/Overlays/Camera/CameraOverlay.swift` (layer stack, glow math, effect padding, drag reporting)
 - Windows painter + hosts: `windows/runner/Capture/Camera/camera_bubble_painter.{h,cpp}`, `preview/preview_camera_renderer.cpp`, `preview/preview_engine.cpp:985-1008`
+- Shared pure derivation (2026-09-14): `windows/runner/Capture/Camera/camera_render_plan.{h,cpp}` — one `BuildCameraRenderPlan` / `ResolveCameraRenderFrame` behind both drawing legs. The inline preview consumes it; the export renderer does not yet.

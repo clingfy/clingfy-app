@@ -13,7 +13,7 @@
 #include <vector>
 
 #include "Capture/Camera/camera_bubble_painter.h"
-#include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Camera/camera_render_plan.h"
 
 // Phase 9.6 — composites `camera/raw.mov` into the post-record inline preview as
 // the SAME styled bubble the export draws (shared CameraBubblePainter → WYSIWYG).
@@ -45,49 +45,12 @@ inline constexpr std::int64_t kPreviewCameraSeekThresholdHns = 10'000'000;  // 1
 bool PreviewCameraShouldSeek(std::int64_t camera_hns, std::int64_t held_pts_hns,
                              bool has_held_frame);
 
-struct PreviewCameraComposition {
-  bool visible = false;
-  bool has_center = false;
-  double center_x = 0.0;
-  double center_y = 0.0;
-  std::string layout_preset;
-  double size_factor = 0.18;
-  std::string shape;
-  double corner_radius = 0.0;
-  std::string content_mode;
-  bool mirror = false;
-  double opacity = 1.0;
-  double border_width = 0.0;
-  bool has_border_color = false;
-  std::uint32_t border_argb = 0;
-  int shadow_preset = 0;
-  // Phase 9.7 chroma key, mirrored into the inline preview for WYSIWYG with the
-  // export.
-  bool chroma_enabled = false;
-  double chroma_strength = 0.4;
-  bool has_chroma_color = false;
-  std::uint32_t chroma_argb = 0;
-  // Phase 9.7 intro/outro animations, also previewed (macOS parity: its inline
-  // preview runs CameraAnimationTimelineBuilder.resolvePresentation too). The
-  // player DOES have a timeline — the engine already carries the edited
-  // position + edited duration to the draw call, which is the clock the export
-  // animates on. Empty preset / 0 ms parse to "no animation", matching the
-  // export request parser; see camera_composition_args.h for why these must not
-  // default to the CameraEditorSeed values.
-  std::string intro_preset;
-  std::string outro_preset;
-  int intro_duration_ms = 0;
-  int outro_duration_ms = 0;
-  // Scale-with-screen-zoom. Empty behaviour / 0 multiplier = a fixed bubble,
-  // matching the export parser's fallbacks.
-  std::string zoom_behavior;
-  double zoom_scale_multiplier = 0.0;
-  // Zoom emphasis (the pulse). Empty / unknown preset = "none", so an absent
-  // key leaves the bubble resting — the same soft-fail the animation presets
-  // take. Strength is the raw wire value; ResolveCameraPulseScale clamps it.
-  std::string zoom_emphasis_preset;
-  double zoom_emphasis_strength = 0.0;
-};
+// The authored camera composition. An alias of the shared spec: the body used
+// to live here and was field-for-field identical to the one the export parsed
+// into, which is how an effect_scale defect could exist on one leg and not the
+// other. The name stays so the bridge parser, the routers and the engine read
+// unchanged; see camera_render_plan.h for the fields and their wire defaults.
+using PreviewCameraComposition = clingfy::capture::CameraRenderSpec;
 
 // Ratio that converts an EXPORT-canvas length into a length on the preview
 // surface: short_side(surface) / short_side(export).
@@ -126,21 +89,10 @@ bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
                                double prepared_effect_scale,
                                bool painter_ready);
 
-// The surface-resolved geometry + style for one preview frame.
-struct PreviewCameraPlan {
-  clingfy::capture::CameraBubbleRect bubble;
-  clingfy::capture::CameraBubblePainter::Style style;
-};
-
-// Pure: resolve `comp` onto a `canvas_w` x `canvas_h` preview surface whose
-// export-relative scale is `effect_scale`.
-//
-// This exists as a free function so the scaling can be asserted without a D2D
-// device — `PrepareAndAdvance` needs a real camera file and a GPU, so wiring
-// bugs there would otherwise only be catchable by the pixel test.
-PreviewCameraPlan ResolvePreviewCameraPlan(const PreviewCameraComposition& comp,
-                                           double canvas_w, double canvas_h,
-                                           double effect_scale);
+// The surface-resolved geometry + style for one preview frame, plus the
+// animation invariants and the zoom inputs Draw needs. An alias, not a type:
+// there is ONE plan and one builder, shared with the export leg.
+using PreviewCameraPlan = clingfy::capture::CameraRenderPlan;
 
 class PreviewCameraRenderer {
  public:
@@ -219,22 +171,18 @@ class PreviewCameraRenderer {
   double prepared_effect_scale_ = 1.0;
   bool composition_visible_ = false;  // snapshot used by Draw
 
-  // Animation context, resolved alongside the painter rebuild and consumed by
-  // Draw — the same state CameraExportRenderer::Prepare caches. It must be
-  // recomputed in the rebuild branch rather than once at construction: the
+  // The loop-invariant render plan, built alongside the painter rebuild and
+  // consumed by Draw — the same state CameraExportRenderer::Prepare caches. It
+  // must be rebuilt in the rebuild branch rather than once at construction: the
   // bubble rect and the slide edge both depend on the live placement, so
   // dragging the bubble from the right edge to the left would otherwise keep
   // sliding it out the right.
-  clingfy::capture::CameraAnimationParams anim_params_;
-  clingfy::capture::CameraBubbleRect bubble_;
-  double canvas_w_ = 0.0;
-  double canvas_h_ = 0.0;
-  clingfy::capture::CameraSlideEdge slide_edge_ =
-      clingfy::capture::CameraSlideEdge::kRight;
-  // Scale-with-screen-zoom inputs; the scale itself is per-frame in Draw.
-  std::string zoom_behavior_;
-  double zoom_scale_multiplier_ = 0.0;
-  std::string layout_preset_;
+  //
+  // This replaced eight separate cached members (the params, the bubble, the
+  // canvas pair, the slide edge and the zoom trio). They were the export leg's
+  // Prepare-time cache, spelled a second time; one plan is the point of the
+  // shared builder.
+  clingfy::capture::CameraRenderPlan plan_;
 
   // Decode cursor (frame-server thread only). A pending sample buffer (like the
   // export renderer) parks a peeked future frame so normal forward playback

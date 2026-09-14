@@ -196,7 +196,8 @@ TEST(ReadCameraComposition, DefaultsMatchTheOnesTheExportParseUsed) {
 TEST(ApplyCameraCompositionToExport, CarriesEveryFieldToTheExportRequest) {
   // THE regression guard. Every field is set to a distinctive NON-default, so
   // any field the mapper forgets shows up as a default on the export side and
-  // fails here. Add a field to PreviewCameraComposition without extending
+  // fails here. Add a field to the composition (capture::CameraRenderSpec, of
+  // which PreviewCameraComposition is now an alias) without extending
   // ApplyCameraCompositionToExport and this test tells you — which is exactly
   // what nothing did when the four intro/outro keys reached the export but
   // never the preview.

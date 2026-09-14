@@ -3,7 +3,6 @@
 #include <mfapi.h>
 #include <mferror.h>
 
-#include <algorithm>
 #include <cmath>
 #include <utility>
 
@@ -194,34 +193,6 @@ bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
   return std::abs(effect_scale - prepared_effect_scale) > 1e-6;
 }
 
-PreviewCameraPlan ResolvePreviewCameraPlan(const PreviewCameraComposition& comp,
-                                           double canvas_w, double canvas_h,
-                                           double effect_scale) {
-  const double scale = effect_scale > 0.0 ? effect_scale : 1.0;
-  PreviewCameraPlan plan;
-  // The floor is the one non-proportional term in ComputeCameraBubbleRect, so
-  // it is the one that has to be resolved onto this surface. Everything else in
-  // there is a fraction of the canvas and is already correct.
-  plan.bubble = clingfy::capture::ComputeCameraBubbleRect(
-      canvas_w, canvas_h, comp.has_center, comp.center_x, comp.center_y,
-      comp.layout_preset, comp.size_factor,
-      clingfy::capture::kCameraBubbleMinSidePx * scale);
-  plan.style.mirror = comp.mirror;
-  plan.style.opacity = comp.opacity;
-  plan.style.border_width = comp.border_width;
-  plan.style.has_border_color = comp.has_border_color;
-  plan.style.border_argb = comp.border_argb;
-  plan.style.shadow_preset = comp.shadow_preset;
-  // Border width and the shadow table are export-canvas lengths; the painter
-  // resolves both through this one field.
-  plan.style.effect_scale = scale;
-  plan.style.chroma_enabled = comp.chroma_enabled;
-  plan.style.chroma_strength = comp.chroma_strength;
-  plan.style.has_chroma_color = comp.has_chroma_color;
-  plan.style.chroma_argb = comp.chroma_argb;
-  return plan;
-}
-
 void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
                                               UINT canvas_w, UINT canvas_h,
                                               std::int64_t playback_us,
@@ -247,8 +218,35 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   }
 
   // (Re)build the painter when the composition or the canvas changed. Done here,
-  // OUTSIDE the engine's BeginDraw (the shadow bake does SetTarget round-trips).
   if (needs_rebuild) {
+    // painter_ready_ and the prepared_* trio are written FIRST and
+    // unconditionally: !painter_ready_ is the sole retry term (see
+    // PreviewCameraNeedsRebuild), so recording the attempt up front is what
+    // makes a FAILED BUILD ask again next frame instead of every other term
+    // reading false forever.
+    //
+    // That is a guarantee about failed builds only, not a total one. A
+    // composition that arrives while the camera is hidden still consumes
+    // dirty_ above and returns before this branch — that path self-heals
+    // because PreviewEngine::SetCameraComposition re-dirties and repaints, not
+    // because of anything here.
+    painter_ready_ = false;
+    prepared_canvas_w_ = canvas_w;
+    prepared_canvas_h_ = canvas_h;
+    prepared_effect_scale_ = effect_scale;
+
+    // Built OUTSIDE the factory/bitmap guard: the plan is pure, cheap and
+    // device-free, and hoisting it keeps the one derivation in one place
+    // rather than half inside a D2D availability check. Under a permanent
+    // bitmap-creation failure this now runs once per frame where it used to
+    // run zero times — the success steady state does not enter this branch at
+    // all. Draw still short-circuits on !painter_ready_, so a plan whose
+    // painter failed to build is never drawn from.
+    plan_ = clingfy::capture::BuildCameraRenderPlan(
+        comp, /*canvas_w=*/static_cast<double>(canvas_w),
+        /*canvas_h=*/static_cast<double>(canvas_h),
+        /*effect_scale=*/effect_scale);
+
     ComPtr<ID2D1Factory> factory0;
     ctx->GetFactory(factory0.GetAddressOf());
     ComPtr<ID2D1Factory1> factory1;
@@ -262,43 +260,12 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
       ctx->CreateBitmap(D2D1::SizeU(cam_w_, cam_h_), nullptr, 0, props,
                         frame_bitmap_.GetAddressOf());
     }
-    painter_ready_ = false;
     if (factory1 != nullptr && frame_bitmap_ != nullptr) {
-      const PreviewCameraPlan plan = ResolvePreviewCameraPlan(
-          comp, static_cast<double>(canvas_w), static_cast<double>(canvas_h),
-          effect_scale);
-      const clingfy::capture::CameraBubbleRect bubble = plan.bubble;
-      painter_ready_ =
-          painter_.Prepare(factory1.Get(), ctx, bubble, comp.shape,
-                           comp.corner_radius, comp.content_mode, plan.style,
-                           cam_w_, cam_h_);
-      // Cache the animation context for Draw, the way
-      // CameraExportRenderer::Prepare does. The slide edge is derived from the
-      // COMPUTED bubble rect (already D2D y-DOWN, because
-      // ComputeCameraBubbleRect flips a manual y-UP center) — never from
-      // comp.center_y, which would double-flip and slide the bubble out of the
-      // wrong edge.
-      anim_params_.intro =
-          clingfy::capture::ParseCameraIntroKind(comp.intro_preset);
-      anim_params_.outro =
-          clingfy::capture::ParseCameraOutroKind(comp.outro_preset);
-      anim_params_.intro_duration_ms = comp.intro_duration_ms;
-      anim_params_.outro_duration_ms = comp.outro_duration_ms;
-      anim_params_.emphasis = clingfy::capture::ParseCameraZoomEmphasisKind(
-          comp.zoom_emphasis_preset);
-      anim_params_.emphasis_strength = comp.zoom_emphasis_strength;
-      bubble_ = bubble;
-      canvas_w_ = static_cast<double>(canvas_w);
-      canvas_h_ = static_cast<double>(canvas_h);
-      slide_edge_ = clingfy::capture::ResolveCameraSlideEdge(
-          comp.layout_preset, comp.has_center, bubble_, canvas_w_, canvas_h_);
-      zoom_behavior_ = comp.zoom_behavior;
-      zoom_scale_multiplier_ = comp.zoom_scale_multiplier;
-      layout_preset_ = comp.layout_preset;
+      painter_ready_ = painter_.Prepare(factory1.Get(), ctx, plan_.bubble,
+                                        plan_.shape, plan_.corner_radius,
+                                        plan_.content_mode, plan_.style,
+                                        cam_w_, cam_h_);
     }
-    prepared_canvas_w_ = canvas_w;
-    prepared_canvas_h_ = canvas_h;
-    prepared_effect_scale_ = effect_scale;
   }
 
   // Advance the held camera frame to the playback position.
@@ -330,22 +297,19 @@ void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx,
   if (!composition_visible_ || !painter_ready_ || !has_held_frame_) {
     return;
   }
-  anim_params_.zoom_scale = clingfy::capture::ResolveCameraZoomScale(
-      zoom_behavior_, zoom_scale_multiplier_, screen_zoom, layout_preset_);
-  anim_params_.zoom_in_segment = zoom_in_segment;
-  anim_params_.zoom_local_seconds =
-      static_cast<double>(std::max<std::int64_t>(0, zoom_segment_local_ms)) /
-      1000.0;
-  // Same nine lines as CameraExportRenderer::Draw, on the same shared painter.
-  // ResolveCameraAnimation returns identity when no preset is set or the
-  // duration is not known yet, and the painter's Draw falls through to the
-  // byte-identical static path on an identity Frame — so an un-animated preview
-  // renders exactly as before.
+
+  // The per-frame half, shared with CameraExportRenderer::Draw. The plan is
+  // const here: the zoom scale and the segment clock are arguments, not cached
+  // state, so two frames cannot leak into each other. ResolveCameraRenderFrame
+  // returns identity when no preset is set or the duration is not known yet,
+  // and the painter falls through to the byte-identical static path on an
+  // identity Frame — so an un-animated preview renders exactly as before.
   const clingfy::capture::CameraAnimationOutput a =
-      clingfy::capture::ResolveCameraAnimation(anim_params_, frame_ms,
-                                               total_duration_ms, bubble_,
-                                               canvas_w_, canvas_h_,
-                                               slide_edge_);
+      clingfy::capture::ResolveCameraRenderFrame(
+          plan_, /*frame_ms=*/frame_ms,
+          /*total_duration_ms=*/total_duration_ms, /*screen_zoom=*/screen_zoom,
+          /*zoom_in_segment=*/zoom_in_segment,
+          /*zoom_segment_local_ms=*/zoom_segment_local_ms);
   clingfy::capture::CameraBubblePainter::Frame frame;
   frame.opacity_mul = a.opacity;
   frame.scale = a.scale;

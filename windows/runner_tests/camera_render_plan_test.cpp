@@ -9,8 +9,9 @@
 namespace clingfy::capture {
 namespace {
 
-// The migrated fixture from ResolvePreviewCameraPlanTest: a composition with a
-// border and a shadow, so the style terms are observable.
+// The fixture migrated from the preview's old ResolvePreviewCameraPlanTest,
+// which no longer exists: a composition with a border and a shadow, so the
+// style terms are observable.
 CameraRenderSpec StyledSpec() {
   CameraRenderSpec s;
   s.visible = true;
