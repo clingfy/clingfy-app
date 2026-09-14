@@ -647,51 +647,57 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     camera_renderer = CameraExportRenderer::Create(
         request.camera_video_path, request.camera_start_offset_ms);
     if (camera_renderer != nullptr) {
+      // NOTE: this block is the export's own hand-rolled copy of what
+      // BuildCameraRenderPlan already does, and it is deliberately NOT
+      // replaced here — only re-spelled onto `request.camera`. Adopting the
+      // shared builder makes effect_scale and the bubble's min-side floor
+      // explicit on this leg for the first time, which is a behaviour-adjacent
+      // change that belongs in its own commit rather than buried in a field
+      // move.
+      const CameraRenderSpec& cam = request.camera;
       const CameraBubbleRect bubble = ComputeCameraBubbleRect(
           static_cast<double>(canvas.width), static_cast<double>(canvas.height),
-          request.camera_has_center, request.camera_center_x,
-          request.camera_center_y, request.camera_layout_preset,
-          request.camera_size_factor);
+          cam.has_center, cam.center_x, cam.center_y, cam.layout_preset,
+          cam.size_factor);
       CameraExportRenderer::Style cam_style;
-      cam_style.mirror = request.camera_mirror;
-      cam_style.opacity = request.camera_opacity;
-      cam_style.border_width = request.camera_border_width;
-      cam_style.has_border_color = request.camera_border_color_argb.has_value();
-      cam_style.border_argb = static_cast<std::uint32_t>(
-          request.camera_border_color_argb.value_or(0));
-      cam_style.shadow_preset = request.camera_shadow_preset;
+      cam_style.mirror = cam.mirror;
+      cam_style.opacity = cam.opacity;
+      cam_style.border_width = cam.border_width;
+      // The nullable colours arrive already flat. This used to unwrap a
+      // std::optional<std::int64_t> that the bridge had wrapped from these
+      // very fields; both hops are gone. The int64 -> uint32 narrowing now
+      // happens once, at parse time, and truncates an out-of-range wire value
+      // identically to before — just sooner.
+      cam_style.has_border_color = cam.has_border_color;
+      cam_style.border_argb = cam.border_argb;
+      cam_style.shadow_preset = cam.shadow_preset;
       // Phase 9.7 chroma key.
-      cam_style.chroma_enabled = request.camera_chroma_enabled;
-      cam_style.chroma_strength = request.camera_chroma_strength;
-      cam_style.has_chroma_color =
-          request.camera_chroma_color_argb.has_value();
-      cam_style.chroma_argb = static_cast<std::uint32_t>(
-          request.camera_chroma_color_argb.value_or(0));
+      cam_style.chroma_enabled = cam.chroma_enabled;
+      cam_style.chroma_strength = cam.chroma_strength;
+      cam_style.has_chroma_color = cam.has_chroma_color;
+      cam_style.chroma_argb = cam.chroma_argb;
       // Phase 9.7 intro/outro animation. Edge resolved once from the (loop-
       // invariant) placement; unknown presets parse to kNone (static bubble).
       CameraAnimationParams cam_anim;
-      cam_anim.intro = ParseCameraIntroKind(request.camera_intro_preset);
-      cam_anim.outro = ParseCameraOutroKind(request.camera_outro_preset);
-      cam_anim.intro_duration_ms = request.camera_intro_duration_ms;
-      cam_anim.outro_duration_ms = request.camera_outro_duration_ms;
+      cam_anim.intro = ParseCameraIntroKind(cam.intro_preset);
+      cam_anim.outro = ParseCameraOutroKind(cam.outro_preset);
+      cam_anim.intro_duration_ms = cam.intro_duration_ms;
+      cam_anim.outro_duration_ms = cam.outro_duration_ms;
       // Loop-invariant half of the pulse; the per-frame segment state rides on
       // the Draw call below, off the same ZoomExportController frame that
       // drives the screen zoom.
-      cam_anim.emphasis =
-          ParseCameraZoomEmphasisKind(request.camera_zoom_emphasis_preset);
-      cam_anim.emphasis_strength = request.camera_zoom_emphasis_strength;
+      cam_anim.emphasis = ParseCameraZoomEmphasisKind(cam.zoom_emphasis_preset);
+      cam_anim.emphasis_strength = cam.zoom_emphasis_strength;
       const CameraSlideEdge cam_edge = ResolveCameraSlideEdge(
-          request.camera_layout_preset, request.camera_has_center, bubble,
+          cam.layout_preset, cam.has_center, bubble,
           static_cast<double>(canvas.width),
           static_cast<double>(canvas.height));
       if (!camera_renderer->Prepare(
-              d2d_factory.Get(), d2d_ctx.Get(), bubble, request.camera_shape,
-              request.camera_corner_radius, request.camera_content_mode,
-              cam_style, cam_anim, static_cast<double>(canvas.width),
-              static_cast<double>(canvas.height), cam_edge,
-              request.camera_zoom_behavior,
-              request.camera_zoom_scale_multiplier,
-              request.camera_layout_preset)) {
+              d2d_factory.Get(), d2d_ctx.Get(), bubble, cam.shape,
+              cam.corner_radius, cam.content_mode, cam_style, cam_anim,
+              static_cast<double>(canvas.width),
+              static_cast<double>(canvas.height), cam_edge, cam.zoom_behavior,
+              cam.zoom_scale_multiplier, cam.layout_preset)) {
         camera_renderer.reset();
       }
     }

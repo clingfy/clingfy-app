@@ -169,17 +169,28 @@ it with macOS in scope rather than diverging one platform at a time.
 
 ### Camera render-plan extraction (make derivation parity structural, not just tested)
 
-> **STATUS 2026-09-14 — HALF LANDED. The PREVIEW leg is on the shared builder; the EXPORT leg is not.**
+> **STATUS 2026-09-14 — STEPS 1-5 LANDED. One step left: the export's own derivation.**
 > Done: the style moved into the D2D-free header and the painter retry term became testable (#486);
-> `Capture/Camera/camera_render_plan.{h,cpp}` landed with 16 headless tests (#487); the preview leg now
-> calls `BuildCameraRenderPlan` / `ResolveCameraRenderFrame` and its eight cached members collapsed to one
-> `plan_`.
-> **Remaining, and this is the open risk:** `CameraExportRenderer` still declares the same eight members and
-> hand-rolls the identical derivation (`camera_export_renderer.h:102-110`), so the duplication is now
-> ASYMMETRIC and nothing in the suite pins that the two legs still agree. A change to `BuildCameraRenderPlan`
-> moves the preview and not the export — the exact WYSIWYG drift this seam exists to prevent. Land the
-> remaining steps (embed `CameraRenderSpec` in both export carriers, then move `CameraExportRenderer::Prepare`
-> from 14 parameters to 3) rather than leaving it here.
+> `Capture/Camera/camera_render_plan.{h,cpp}` landed with 16 headless tests (#487); the preview leg calls
+> `BuildCameraRenderPlan` / `ResolveCameraRenderFrame` and its eight cached members collapsed to one
+> `plan_` (#488); and both export carriers now embed `CameraRenderSpec`, so the bridge mapper and the
+> 24-line PassthroughInput→RenderRequest copy are both gone (step 5).
+>
+> **Step 6, the last one:** `export_pipeline.cpp` still hand-builds `CameraExportRenderer::Style` +
+> `CameraAnimationParams` from ~20 `request.camera.*` reads, and `CameraExportRenderer` still declares the
+> eight cached members the preview collapsed (`camera_export_renderer.h:102-110`). Until that lands, a
+> change to `BuildCameraRenderPlan` moves the preview and not the export — the WYSIWYG drift this seam
+> exists to prevent.
+>
+> **MEASURED COVERAGE GAP on the export path, worth fixing on its own.** Deleting
+> `render.camera = input.camera;` outright — so the export receives NO camera composition at all — still
+> passes all 1513 native tests. The hop runs inside `ExportPassthroughCopy`, whose `PassthroughResult`
+> does not expose the `RenderRequest`, so nothing headless can observe it; the one test that covers the
+> fields (`ExportPipelineTest.CameraBubbleTracksSourceTimeUnderReorder`) `GTEST_SKIP`s at four separate
+> points without a D3D11 device, and the file's only anti-skip canary arms the colour-grade tests, not the
+> camera one. Two ways out, either acceptable: extract the gate-and-fill into a pure helper that a headless
+> test can call, or widen the canary to cover the camera path. Do NOT read a green local `ctest` as
+> evidence here.
 
 - **What:** Both surfaces independently derive the same five things from their parsed composition — bubble rect, painter `Style`, `CameraAnimationParams`, slide edge, and the shape/radius/content-mode passed to `painter_.Prepare`. The derivations are currently line-for-line equivalent (audited field by field), but that equivalence is maintained by hand in two files.
 - **Proposed seam — CORRECTED 2026-09-12 after an audit of both legs. The signature first written here was not a pure refactor; it was a behaviour change on both surfaces.** Two fixes are mandatory before any code moves:

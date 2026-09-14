@@ -96,6 +96,11 @@ TEST(ReadCameraComposition, ReadsTheFullStylePayload) {
   EXPECT_TRUE(c.chroma_enabled);
   EXPECT_DOUBLE_EQ(c.chroma_strength, 0.55);
   EXPECT_TRUE(c.has_chroma_color);
+  // The VALUE, not just the presence bit. Nothing pinned this on either
+  // side before: the export asserted only has_value(), and this commit
+  // deletes the cast that was the last code to touch it. A parser bug that
+  // read the key into the wrong variable would have passed everything.
+  EXPECT_EQ(c.chroma_argb, 0xFF00FF00u);
 }
 
 TEST(ReadCameraComposition, ReadsTheNestedNormalizedCenter) {
@@ -193,52 +198,21 @@ TEST(ReadCameraComposition, DefaultsMatchTheOnesTheExportParseUsed) {
   EXPECT_FALSE(c.has_center);
 }
 
-TEST(ApplyCameraCompositionToExport, CarriesEveryFieldToTheExportRequest) {
-  // THE regression guard. Every field is set to a distinctive NON-default, so
-  // any field the mapper forgets shows up as a default on the export side and
-  // fails here. Add a field to the composition (capture::CameraRenderSpec, of
-  // which PreviewCameraComposition is now an alias) without extending
-  // ApplyCameraCompositionToExport and this test tells you — which is exactly
-  // what nothing did when the four intro/outro keys reached the export but
-  // never the preview.
-  const auto c = ReadCameraComposition(FullArgs());
-  capture::export_::PassthroughInput input;
-  ApplyCameraCompositionToExport(c, input);
-
-  EXPECT_TRUE(input.camera_visible);
-  EXPECT_EQ(input.camera_layout_preset, "overlayTopLeft");
-  EXPECT_DOUBLE_EQ(input.camera_size_factor, 0.25);
-  EXPECT_EQ(input.camera_shape, "squircle");
-  EXPECT_DOUBLE_EQ(input.camera_corner_radius, 0.3);
-  EXPECT_EQ(input.camera_content_mode, "fill");
-  EXPECT_TRUE(input.camera_mirror);
-  EXPECT_DOUBLE_EQ(input.camera_opacity, 0.8);
-  EXPECT_DOUBLE_EQ(input.camera_border_width, 4.0);
-  ASSERT_TRUE(input.camera_border_color_argb.has_value());
-  EXPECT_EQ(*input.camera_border_color_argb,
-            static_cast<std::int64_t>(0xFF00FF00));
-  EXPECT_EQ(input.camera_shadow_preset, 2);
-  EXPECT_TRUE(input.camera_chroma_enabled);
-  EXPECT_DOUBLE_EQ(input.camera_chroma_strength, 0.55);
-  ASSERT_TRUE(input.camera_chroma_color_argb.has_value());
-  EXPECT_EQ(input.camera_intro_preset, "pop");
-  EXPECT_EQ(input.camera_outro_preset, "slide");
-  EXPECT_EQ(input.camera_intro_duration_ms, 300);
-  EXPECT_EQ(input.camera_outro_duration_ms, 260);
-  EXPECT_TRUE(input.camera_has_center);
-  EXPECT_DOUBLE_EQ(input.camera_center_x, 0.7);
-  EXPECT_DOUBLE_EQ(input.camera_center_y, 0.9);
-}
-
-TEST(ApplyCameraCompositionToExport, CarriesTheZoomBehaviourFields) {
+TEST(ReadCameraComposition, ReadsTheZoomBehaviourKeys) {
+  // Moved off the deleted export mapper onto the parser, and it must KEEP
+  // these two key literals: this is the only place on the READ path where
+  // "cameraZoomBehavior" and "cameraZoomScaleMultiplier" are spelled out.
+  // DefaultsMatchTheOnesTheExportParseUsed already pins the ABSENT-key
+  // defaults; what needs a test is a PRESENT key being read. Drop the
+  // literals and a typo in the parser passes the whole suite while
+  // scale-with-screen-zoom silently dies on both legs.
   auto args = FullArgs();
   args[Key("cameraZoomBehavior")] =
       EncodableValue(std::string("scaleWithScreenZoom"));
   args[Key("cameraZoomScaleMultiplier")] = EncodableValue(0.6);
-  capture::export_::PassthroughInput input;
-  ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
-  EXPECT_EQ(input.camera_zoom_behavior, "scaleWithScreenZoom");
-  EXPECT_DOUBLE_EQ(input.camera_zoom_scale_multiplier, 0.6);
+  const auto c = ReadCameraComposition(args);
+  EXPECT_EQ(c.zoom_behavior, "scaleWithScreenZoom");
+  EXPECT_DOUBLE_EQ(c.zoom_scale_multiplier, 0.6);
 }
 
 TEST(ReadCameraComposition, ReadsTheZoomEmphasisKeys) {
@@ -259,31 +233,6 @@ TEST(ReadCameraComposition, AbsentZoomEmphasisRestsTheBubble) {
   EXPECT_DOUBLE_EQ(c.zoom_emphasis_strength, 0.0);
   EXPECT_EQ(capture::ParseCameraZoomEmphasisKind(c.zoom_emphasis_preset),
             capture::CameraZoomEmphasisKind::kNone);
-}
-
-TEST(ApplyCameraCompositionToExport, CarriesTheZoomEmphasisFields) {
-  // Same guard as CarriesEveryFieldToTheExportRequest, for the pair that would
-  // otherwise pulse in the editor and not in the exported file.
-  auto args = FullArgs();
-  args[Key("cameraZoomEmphasisPreset")] = EncodableValue(std::string("pulse"));
-  args[Key("cameraZoomEmphasisStrength")] = EncodableValue(0.18);
-  capture::export_::PassthroughInput input;
-  ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
-  EXPECT_EQ(input.camera_zoom_emphasis_preset, "pulse");
-  EXPECT_DOUBLE_EQ(input.camera_zoom_emphasis_strength, 0.18);
-}
-
-TEST(ApplyCameraCompositionToExport, AbsentColoursStayNulloptNotZero) {
-  // The export keeps nullable colours as optionals while the preview flattens
-  // them at parse time. Converting a "no colour" into an explicit 0 would paint
-  // an opaque black border on the export only.
-  auto args = FullArgs();
-  args.erase(Key("cameraBorderColorArgb"));
-  args.erase(Key("cameraChromaKeyColorArgb"));
-  capture::export_::PassthroughInput input;
-  ApplyCameraCompositionToExport(ReadCameraComposition(args), input);
-  EXPECT_FALSE(input.camera_border_color_argb.has_value());
-  EXPECT_FALSE(input.camera_chroma_color_argb.has_value());
 }
 
 }  // namespace

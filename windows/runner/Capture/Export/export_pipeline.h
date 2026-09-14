@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Camera/camera_render_plan.h"
 #include "Capture/Background/canvas_preset_renderer.h"
 #include "Capture/Export/color_grade.h"
 
@@ -184,52 +185,25 @@ struct RenderRequest {
   // Recording-relative ms of the camera's first frame (camera.meta.json sync
   // key): the camera frame for screen-time `tMs` is at `tMs - startOffsetMs`.
   std::int64_t camera_start_offset_ms = 0;
-  // Bubble placement, from the Dart `camera*` export args. `has_center` true
-  // uses the manual normalized center; otherwise the layout preset's default
-  // corner is used. size_factor is the fraction of the shorter canvas side.
-  bool camera_has_center = false;
-  double camera_center_x = 0.0;
-  double camera_center_y = 0.0;
-  std::string camera_layout_preset;
-  double camera_size_factor = 0.18;
-  // Shape ("circle" / "roundedRect" / "square" / "squircle"), corner radius
-  // (Dart 0..0.5 fraction), and content mode ("fill" cover / "fit" contain).
-  std::string camera_shape;
-  double camera_corner_radius = 0.0;
-  std::string camera_content_mode;
-  // Phase 9.5 styling. mirror flips the camera content horizontally; opacity
-  // (0..1) fades it; border_width (px) + border_color_argb (0xAARRGGBB, nullopt
-  // = no border) stroke the bubble; shadow_preset (0 none, 1/2/3) drops a
-  // blurred shadow. Unsupported/malformed values soft-fail (no styling), never a
-  // failed export.
-  bool camera_mirror = false;
-  double camera_opacity = 1.0;
-  double camera_border_width = 0.0;
-  std::optional<std::int64_t> camera_border_color_argb;
-  int camera_shadow_preset = 0;
-  // Phase 9.7 chroma key. enabled → the camera content's key color (argb, nullopt
-  // = default green) within `strength` tolerance (0..1) is keyed transparent.
-  // Applies to the camera layer only; border/shadow are unaffected. Soft-fails to
-  // an unkeyed camera on any effect failure, never a failed export.
-  bool camera_chroma_enabled = false;
-  double camera_chroma_strength = 0.4;
-  std::optional<std::int64_t> camera_chroma_color_argb;
-  // Phase 9.7 intro/outro animation preset names ("none"/"fade"/"pop"/"slide",
-  // "shrink") + durations (ms). Unknown names soft-fail to a static bubble.
-  std::string camera_intro_preset;
-  std::string camera_outro_preset;
-  int camera_intro_duration_ms = 0;
-  int camera_outro_duration_ms = 0;
-  // Scale-with-screen-zoom: the CameraZoomBehavior enum name and the 0..1
-  // fraction of the zoom's excess the bubble adopts. Default "" behaves as
-  // fixed, so an old payload renders exactly as before.
-  std::string camera_zoom_behavior;
-  double camera_zoom_scale_multiplier = 0.0;
-  // Zoom emphasis: the CameraZoomEmphasisPreset enum name ("none"/"pulse") and
-  // the 0..0.20 throb amplitude. Default "" is "none", so an old payload
-  // renders exactly as before.
-  std::string camera_zoom_emphasis_preset;
-  double camera_zoom_emphasis_strength = 0.0;
+  // HOW to draw the bubble — the same authored spec the bridge parsed and the
+  // inline preview draws from, assigned across from PassthroughInput whole.
+  // See Capture/Camera/camera_render_plan.h for the fields and wire defaults.
+  //
+  // `camera.visible` is carried but NEVER READ on this path. `draw_camera`
+  // above is the export's only gate, and the two are NOT interchangeable:
+  // draw_camera is the RESOLVED verdict (assets present together, meta
+  // parsed, previewBurnedIn false, frames > 0); camera.visible is only the
+  // raw user toggle.
+  //
+  // They LOOK interchangeable in production, and that is the trap. The
+  // assignment that fills this field sits inside `if (wants_camera)` in
+  // ExportPassthroughCopy, and ShouldCompositeCamera requires camera_visible,
+  // so today camera.visible is true exactly when draw_camera is. You can
+  // convince yourself they are the same by reading the production path and
+  // be wrong: substituting it for draw_camera silently drops the other four
+  // guards, and the one test that would catch it GTEST_SKIPs without a D3D11
+  // device. Gate on draw_camera, and keep that assignment gated.
+  clingfy::capture::CameraRenderSpec camera;
 };
 
 struct RenderResult {

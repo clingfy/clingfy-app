@@ -1,10 +1,17 @@
 // The ONE wire parser for the Dart `CameraCompositionState.toMap()` payload.
 //
 // Three call sites spread that map into their arguments and all three feed the
-// SAME live preview composition:
+// SAME composition struct:
+//   * `exportVideo`                 (export_router) — the burned-in export.
 //   * `processVideo`                (export_router) — preview open + every
 //                                    layout/styling change in the editor.
 //   * `previewSetCameraPlacement`   (preview_router) — placement drags.
+//
+// `exportVideo` used to go through a hand-written mapper that copied the
+// parsed composition field by field into the export request's own flat
+// `camera_*` block — a third field list, kept in step by a guard test. The
+// export request now embeds this very struct, so that mapper and its guard
+// are gone: a new field reaches the export by existing.
 // Until this file existed they were two hand-duplicated parse blocks, and the
 // drift was not theoretical: it hid a missing-chroma bug in the 9.7 review, and
 // again left intro/outro animations parsed on the export path only, so the
@@ -28,7 +35,6 @@
 
 #include <flutter/encodable_value.h>
 
-#include "Capture/Export/export_passthrough.h"
 #include "preview/preview_camera_renderer.h"
 
 namespace clingfy::bridge {
@@ -38,35 +44,6 @@ namespace clingfy::bridge {
 // soft-fails to "no animation" rather than erroring.
 preview::PreviewCameraComposition ReadCameraComposition(
     const flutter::EncodableMap& args);
-
-// Copy a parsed composition into the export request's flat `camera_*` fields.
-//
-// `exportVideo` was the THIRD parse of this payload — a hand-written copy of
-// the same 21 keys with its own default literals. It read the same values as
-// the shared parser, but only by coincidence of two people writing the same
-// list twice, and that coincidence had already failed twice (chroma in the 9.7
-// review, then the four intro/outro keys). Routing the export through
-// ReadCameraComposition + this mapper leaves ONE parser for all three call
-// sites.
-//
-// Every field must be carried. `CarriesEveryFieldToTheExportRequest` in the
-// tests sets a distinctive non-default and fails if the export field comes out
-// at its default — so adding a field to the composition without extending this
-// mapper breaks the build's tests rather than silently dropping the value on
-// the export path only, which is exactly how the intro/outro bug shipped.
-//
-// Two corrections to what this comment used to claim. It named a test
-// `ExportCameraFieldsAreComplete` that has never existed in this tree. And the
-// real guard is NOT total: it asserts 21 fields and none of the four zoom ones,
-// which are covered separately by CarriesTheZoomBehaviourFields and
-// CarriesTheZoomEmphasisFields. Extend the matching test, not just this one.
-//
-// The composition itself is `clingfy::capture::CameraRenderSpec`, in
-// Capture/Camera/camera_render_plan.h — `preview::PreviewCameraComposition` is
-// an alias of it. Add the field THERE.
-void ApplyCameraCompositionToExport(
-    const preview::PreviewCameraComposition& composition,
-    capture::export_::PassthroughInput& input);
 
 }  // namespace clingfy::bridge
 

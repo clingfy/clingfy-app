@@ -47,6 +47,7 @@
 #include <vector>
 
 #include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Camera/camera_render_plan.h"
 #include "Capture/Background/canvas_preset_renderer.h"
 #include "Capture/Export/color_grade.h"
 
@@ -166,46 +167,20 @@ struct PassthroughInput {
   // `CameraCompositionState.toMap()` keys). These describe HOW to draw the
   // camera; WHETHER to draw it also depends on the project assets + the
   // camera.meta.json `previewBurnedIn` flag, resolved in ExportPassthroughCopy.
-  //   camera_visible        — `cameraVisible`; user toggle. False → no camera.
-  //   camera_has_center     — true when `cameraNormalizedCenter` is a {x,y} map.
-  //   camera_center_x/y     — that manual normalized center (0..1).
-  //   camera_layout_preset  — `cameraLayoutPreset` enum name (preset corner).
-  //   camera_size_factor    — `cameraSizeFactor` (0.08..0.45 of the short side).
-  //   camera_shape          — `cameraShape` enum name.
-  //   camera_corner_radius  — `cameraCornerRadius` (0..0.5 fraction).
-  //   camera_content_mode   — `cameraContentMode` ("fill" / "fit").
-  bool camera_visible = false;
-  bool camera_has_center = false;
-  double camera_center_x = 0.0;
-  double camera_center_y = 0.0;
-  std::string camera_layout_preset;
-  double camera_size_factor = 0.18;
-  std::string camera_shape;
-  double camera_corner_radius = 0.0;
-  std::string camera_content_mode;
-  // Phase 9.5 styling (Dart cameraMirror / cameraOpacity / cameraBorderWidth /
-  // cameraBorderColorArgb [nullable] / cameraShadowPreset). Soft-failed at the
-  // renderer; an absent/invalid value just means that style is off.
-  bool camera_mirror = false;
-  double camera_opacity = 1.0;
-  double camera_border_width = 0.0;
-  std::optional<std::int64_t> camera_border_color_argb;
-  int camera_shadow_preset = 0;
-  // Phase 9.7 chroma key + intro/outro animation (Dart cameraChromaKeyEnabled /
-  // cameraChromaKeyStrength / cameraChromaKeyColorArgb [nullable] +
-  // cameraIntro/OutroPreset / cameraIntro/OutroDurationMs). Soft-failed
-  // downstream; an absent/invalid value just means that effect is off.
-  bool camera_chroma_enabled = false;
-  double camera_chroma_strength = 0.4;
-  std::optional<std::int64_t> camera_chroma_color_argb;
-  std::string camera_intro_preset;
-  std::string camera_outro_preset;
-  int camera_intro_duration_ms = 0;
-  int camera_outro_duration_ms = 0;
-  std::string camera_zoom_behavior;
-  double camera_zoom_scale_multiplier = 0.0;
-  std::string camera_zoom_emphasis_preset;
-  double camera_zoom_emphasis_strength = 0.0;
+  //
+  // ONE embedded spec, not 25 loose `camera_*` fields. It is the same struct
+  // the bridge parser produces and the inline preview draws from, so the hop
+  // to RenderRequest is a whole-struct assignment and a field cannot be
+  // dropped in transit — which is what a 21-field guard test used to check by
+  // hand. See Capture/Camera/camera_render_plan.h for the fields and their
+  // wire defaults.
+  //
+  // The two nullable colours are FLAT here (`has_*_color` + `*_argb`) rather
+  // than std::optional. The optional form was only ever built from the flat
+  // one at the bridge and torn back apart at the export, so carrying the flat
+  // form end to end deletes both conversions. The nullopt-vs-explicit-0
+  // distinction the wire contract needs is preserved by the bools.
+  clingfy::capture::CameraRenderSpec camera;
 
   // Editing port (color): the `colorGrade` map from the `exportVideo` args,
   // parsed by Bridge/Routers/color_grade_args. A non-identity grade forces
