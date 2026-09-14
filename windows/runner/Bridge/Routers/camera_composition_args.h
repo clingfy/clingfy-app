@@ -49,12 +49,21 @@ preview::PreviewCameraComposition ReadCameraComposition(
 // ReadCameraComposition + this mapper leaves ONE parser for all three call
 // sites.
 //
-// Every field must be carried. `ExportCameraFieldsAreComplete` in the tests
-// sets a distinctive non-default on every composition field and fails if any
-// export field comes out at its default — so adding a field to
-// PreviewCameraComposition without extending this mapper breaks the build's
-// tests rather than silently dropping the value on the export path only, which
-// is exactly how the intro/outro bug shipped.
+// Every field must be carried. `CarriesEveryFieldToTheExportRequest` in the
+// tests sets a distinctive non-default and fails if the export field comes out
+// at its default — so adding a field to the composition without extending this
+// mapper breaks the build's tests rather than silently dropping the value on
+// the export path only, which is exactly how the intro/outro bug shipped.
+//
+// Two corrections to what this comment used to claim. It named a test
+// `ExportCameraFieldsAreComplete` that has never existed in this tree. And the
+// real guard is NOT total: it asserts 21 fields and none of the four zoom ones,
+// which are covered separately by CarriesTheZoomBehaviourFields and
+// CarriesTheZoomEmphasisFields. Extend the matching test, not just this one.
+//
+// The composition itself is `clingfy::capture::CameraRenderSpec`, in
+// Capture/Camera/camera_render_plan.h — `preview::PreviewCameraComposition` is
+// an alias of it. Add the field THERE.
 void ApplyCameraCompositionToExport(
     const preview::PreviewCameraComposition& composition,
     capture::export_::PassthroughInput& input);
