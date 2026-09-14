@@ -169,28 +169,27 @@ it with macOS in scope rather than diverging one platform at a time.
 
 ### Camera render-plan extraction (make derivation parity structural, not just tested)
 
-> **STATUS 2026-09-14 — STEPS 1-5 LANDED. One step left: the export's own derivation.**
-> Done: the style moved into the D2D-free header and the painter retry term became testable (#486);
-> `Capture/Camera/camera_render_plan.{h,cpp}` landed with 16 headless tests (#487); the preview leg calls
-> `BuildCameraRenderPlan` / `ResolveCameraRenderFrame` and its eight cached members collapsed to one
-> `plan_` (#488); and both export carriers now embed `CameraRenderSpec`, so the bridge mapper and the
-> 24-line PassthroughInput→RenderRequest copy are both gone (step 5).
+> **STATUS 2026-09-14 — DONE. All six steps landed; both legs share one derivation.**
+> #486 moved the style into the D2D-free header and made the painter retry term testable. #487 added
+> `Capture/Camera/camera_render_plan.{h,cpp}` with 16 headless tests. #488 moved the preview leg onto it.
+> #489 embedded `CameraRenderSpec` in both export carriers, deleting the bridge mapper and the 24-line
+> copy hop. The final step moved the export leg on: `CameraExportRenderer::Prepare` went from 14
+> parameters to 3, its eight cached members collapsed to one plan, and the pipeline's ~45-line
+> hand-rolled derivation became one `CameraPlanForExportRequest` call.
 >
-> **Step 6, the last one:** `export_pipeline.cpp` still hand-builds `CameraExportRenderer::Style` +
-> `CameraAnimationParams` from ~20 `request.camera.*` reads, and `CameraExportRenderer` still declares the
-> eight cached members the preview collapsed (`camera_export_renderer.h:102-110`). Until that lands, a
-> change to `BuildCameraRenderPlan` moves the preview and not the export — the WYSIWYG drift this seam
-> exists to prevent.
+> The two legs can no longer drift, because there is ONE derivation rather than two that agree.
+> `CameraExportRenderer::Style` no longer appears anywhere under `Capture/Export/`.
 >
-> **MEASURED COVERAGE GAP on the export path, worth fixing on its own.** Deleting
-> `render.camera = input.camera;` outright — so the export receives NO camera composition at all — still
-> passes all 1513 native tests. The hop runs inside `ExportPassthroughCopy`, whose `PassthroughResult`
-> does not expose the `RenderRequest`, so nothing headless can observe it; the one test that covers the
-> fields (`ExportPipelineTest.CameraBubbleTracksSourceTimeUnderReorder`) `GTEST_SKIP`s at four separate
-> points without a D3D11 device, and the file's only anti-skip canary arms the colour-grade tests, not the
-> camera one. Two ways out, either acceptable: extract the gate-and-fill into a pure helper that a headless
-> test can call, or widen the canary to cover the camera path. Do NOT read a green local `ctest` as
-> evidence here.
+> **Still open, and NOT closed by this work.** Deleting `render.camera = input.camera;` in
+> `ExportPassthroughCopy` still passes the whole suite: that hop runs inside a function whose
+> `PassthroughResult` does not expose the `RenderRequest`, so nothing headless observes it. Fix by
+> extracting the gate-and-fill into a pure helper, or by widening the export pixel canary to cover the
+> camera path.
+>
+> **Unclosed by design:** the macOS clamp divergence — macOS `clampPresentationFrame` shrinks to fit and
+> insets by a border/shadow outset, while `camera_export_layout.cpp` only translates — and the live DComp
+> overlay, which stays off the shared builder deliberately because it derives from a different wire model
+> and clamps where this path does not.
 
 - **What:** Both surfaces independently derive the same five things from their parsed composition — bubble rect, painter `Style`, `CameraAnimationParams`, slide edge, and the shape/radius/content-mode passed to `painter_.Prepare`. The derivations are currently line-for-line equivalent (audited field by field), but that equivalence is maintained by hand in two files.
 - **Proposed seam — CORRECTED 2026-09-12 after an audit of both legs. The signature first written here was not a pure refactor; it was a behaviour change on both surfaces.** Two fixes are mandatory before any code moves:

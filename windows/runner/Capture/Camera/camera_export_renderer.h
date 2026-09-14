@@ -15,6 +15,7 @@
 
 #include "Capture/Camera/camera_bubble_painter.h"
 #include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Camera/camera_render_plan.h"
 
 // Phase 9.4/9.5 — composites the recorded `camera/raw.mov` into the export as an
 // editable, styled bubble.
@@ -37,13 +38,18 @@ class CameraExportRenderer {
   static std::unique_ptr<CameraExportRenderer> Create(
       const std::wstring& camera_path, std::int64_t start_offset_ms);
 
+  // THREE arguments, where there were fourteen. Everything the renderer used
+  // to be handed piecemeal now arrives as one plan, built by the same
+  // BuildCameraRenderPlan the inline preview uses — which is the point: the
+  // two legs can no longer derive the bubble differently, because there is
+  // only one derivation left.
+  //
+  // Source-incompatible with the old signature on purpose. There is exactly
+  // one production caller and no test constructs this class, so a silent
+  // mis-ordering of the old positional arguments is not a risk worth keeping
+  // a compatibility overload for.
   bool Prepare(ID2D1Factory1* factory, ID2D1DeviceContext* ctx,
-               const CameraBubbleRect& bubble, const std::string& shape,
-               double corner_radius, const std::string& content_mode,
-               const Style& style, const CameraAnimationParams& anim,
-               double canvas_w, double canvas_h, CameraSlideEdge slide_edge,
-               const std::string& zoom_behavior, double zoom_scale_multiplier,
-               const std::string& layout_preset);
+               const CameraRenderPlan& plan);
 
   // Advance the held camera frame forward to `frame_ms - startOffsetMs`, decoding
   // + uploading the new frame. Call OUTSIDE BeginDraw/EndDraw. No-op before the
@@ -96,18 +102,11 @@ class CameraExportRenderer {
   UINT cam_h_ = 0;
   std::int64_t start_offset_ms_ = 0;
 
-  // Phase 9.7 animation context, resolved once at Prepare. `anim_params_`'s
-  // zoom_scale is the one field that is NOT loop-invariant — it is recomputed
-  // per frame in Draw from the live screen zoom.
-  CameraAnimationParams anim_params_{};
-  // Scale-with-screen-zoom inputs, captured at Prepare alongside the rest.
-  std::string zoom_behavior_;
-  double zoom_scale_multiplier_ = 0.0;
-  std::string layout_preset_;
-  CameraBubbleRect bubble_{};
-  double canvas_w_ = 0.0;
-  double canvas_h_ = 0.0;
-  CameraSlideEdge slide_edge_ = CameraSlideEdge::kRight;
+  // The loop-invariant plan, resolved once at Prepare. This replaced eight
+  // separate cached members; the inline preview collapsed the identical eight
+  // in the same way, which is what makes the two legs structurally the same
+  // rather than the same by hand-audit.
+  CameraRenderPlan plan_{};
 
   Microsoft::WRL::ComPtr<IMFSample> pending_sample_;
   std::int64_t pending_pts_hns_ = 0;
