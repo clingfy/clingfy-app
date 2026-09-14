@@ -57,7 +57,7 @@ preview::PreviewCameraComposition ReadCameraComposition(
 //
 // Two corrections to what this comment used to claim. It named a test
 // `ExportCameraFieldsAreComplete` that has never existed in this tree. And the
-// real guard is NOT total: it asserts 20 fields and none of the four zoom ones,
+// real guard is NOT total: it asserts 21 fields and none of the four zoom ones,
 // which are covered separately by CarriesTheZoomBehaviourFields and
 // CarriesTheZoomEmphasisFields. Extend the matching test, not just this one.
 //
