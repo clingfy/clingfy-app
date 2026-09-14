@@ -194,7 +194,9 @@ Key semantic decisions:
   `export_progress_publisher.cpp`).
 - **Painter obligations for the new host** (all already modeled by existing hosts):
   context-affine, no internal locking → mutex+dirty+snapshot wrapper per
-  `preview_camera_renderer.h:108-111`; `Prepare` outside `BeginDraw` + target re-bind;
+  `PreviewCameraNeedsRebuild` in `preview_camera_renderer.h` (named rather than
+  line-cited: the previous `:108-111` range had already rotted by two
+  revisions); `Prepare` outside `BeginDraw` + target re-bind;
   device-lost recovery = rebuild device/context/swapchain/bitmaps + re-`Prepare`
   (painter `Reset()`s its COM resources cleanly on re-Prepare).
 - **Shape gaps closed (P5).** The painter now renders hexagon/star as sharp

@@ -83,6 +83,51 @@ struct CameraShadowStyle {
 // a disabled-geometry shadow rather than producing a negative blur.
 CameraShadowStyle ResolveCameraShadowStyle(int preset, double scale = 1.0);
 
+// The bubble's authored appearance, as both drawing surfaces receive it.
+//
+// Lives HERE rather than on the painter for the same reason CameraShadowStyle
+// does: this header is D2D-free, and every field below is a bool/double/int/
+// uint32_t. Keeping it out of `camera_bubble_painter.h` (which pulls d2d1_1.h,
+// mfidl.h and mfreadwrite.h) is what lets the shared, pure plan builder name a
+// style without dragging a GPU dependency into every test translation unit.
+// `CameraBubblePainter::Style` is an alias of this type, so the painter's own
+// call sites read unchanged.
+struct CameraBubbleStyle {
+  bool mirror = false;
+  double opacity = 1.0;
+  double border_width = 0.0;
+  bool has_border_color = false;
+  std::uint32_t border_argb = 0;
+  int shadow_preset = 0;
+  // THE RULE FOR THIS STRUCT: every length in `CameraBubbleStyle` is measured
+  // in EXPORT canvas pixels. `effect_scale` converts them onto the surface
+  // actually being painted — 1.0 for the export and the live overlay, and
+  // short_side(surface)/short_side(export) for the inline preview, whose
+  // texture is capped at 1280x720 while the export renders at up to 4K.
+  //
+  // Without it the same authored 4 px border covers 1.03% of a 4K export
+  // bubble and 3.09% of the preview's, i.e. the preview reads ~3x too thick —
+  // the identical defect `Core/canvas_composition.h` documents for canvas
+  // padding, and the reason that contract carries fractions. Any length added
+  // to this struct in future must be multiplied by it too.
+  double effect_scale = 1.0;
+  // Phase 9.7 chroma key. When enabled, a D2D ChromaKey effect turns the key
+  // color (default green when has_chroma_color is false) transparent on the
+  // camera content only — border and shadow are drawn from the bubble shape,
+  // not the keyed pixels, so they are never keyed out. chroma_strength (0..1)
+  // is the effect tolerance.
+  //
+  // NOTE the default below is 0.0, while the WIRE default for the same value is
+  // 0.4 (see the camera spec and the export request headers). Both drawing legs
+  // assign this field explicitly, so the disagreement is latent — but anything
+  // that leaves a field here unassigned inherits THIS table, not the
+  // composition's. Pinned by `CameraBubbleStyle.TheDefaultTableSurvivedTheMove`.
+  bool chroma_enabled = false;
+  double chroma_strength = 0.0;
+  bool has_chroma_color = false;
+  std::uint32_t chroma_argb = 0;
+};
+
 // Index of the camera frame to HOLD at camera-file time `camera_ms`: the latest
 // frame whose timestamp is <= `camera_ms`, or -1 when `camera_ms` is negative or
 // before the first frame. `frame_ms_list` must be ascending. This is the pure
@@ -95,20 +140,18 @@ int SelectHeldCameraFrameIndex(std::int64_t camera_ms,
 //
 // Parity with macOS `CameraAnimationTimelineBuilder`.
 //
-// The zoom-emphasis "pulse" preset is still NOT ported. Read the reason
-// carefully, because the older wording here invited the wrong fix: the camera
-// sitting OUTSIDE the smart-zoom transform is correct and deliberate — macOS
-// keeps its camera outside the zoom transform too, and a bubble that magnified
-// and panned with the screen would be wrong. Do not "fix" that. The screen zoom
-// reaches the camera as a scalar instead (ResolveCameraZoomScale above), which
-// is how scale-with-zoom ships.
+// The camera sits OUTSIDE the smart-zoom transform, and that is correct and
+// deliberate — macOS keeps its camera outside the zoom transform too, and a
+// bubble that magnified and panned with the screen would be wrong. Do not
+// "fix" that. The screen zoom reaches the camera as a scalar instead
+// (ResolveCameraZoomScale above), which is how scale-with-zoom ships.
 //
-// What the pulse actually lacks is a zoom-LOCAL clock: it needs the time since
-// the active zoom SEGMENT began. The export is close to having one
-// (ZoomExportController already resolves the active segment and its start_ms);
-// the preview has no segment concept at all, so porting the pulse means
-// converging the preview's zoom activation with the export's. Tracked in
-// TODOS.md under "Windows — preview/export parity".
+// The zoom-emphasis "pulse" preset IS ported: it needed a zoom-LOCAL clock (the
+// time since the active zoom SEGMENT began), both legs now supply one, and
+// `ResolveCameraPulseScale` below composes it multiplicatively. Earlier
+// revisions of this comment said it was unported long after it shipped, which
+// is exactly the kind of comment-over-code drift that costs a reader an hour —
+// the pulse is wired at one site, in ResolveCameraAnimation.
 
 // Intro presets. fade/pop/slide all ramp opacity 0→1 over introDurationMs; only
 // `pop` additionally scales 0.90→1.0 (easeOutCubic) and only `slide` translates
