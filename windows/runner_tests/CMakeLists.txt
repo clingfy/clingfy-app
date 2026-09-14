@@ -56,6 +56,7 @@ add_executable(runner_tests
   "camera_composition_args_test.cpp"
   "camera_dcomp_device_loss_test.cpp"
   "camera_export_layout_test.cpp"
+  "camera_render_plan_test.cpp"
   "camera_format_test.cpp"
   "camera_meta_test.cpp"
   "camera_nudge_plan_test.cpp"
