@@ -141,12 +141,19 @@ configure_azure_defaults() {
 # built from AZ_CDN_ENDPOINT, so it verifies the copy it just wrote), and no installed app ever sees
 # the release. That silent-success shape is why this switch exists rather than a hard swap.
 #
-# dev deliberately stays on Azure: there is no dev releases bucket (infra/aws/releases.tf builds one
-# for prod only), so `clingfyreleasesdev` remains the dev updater's origin until that is rehomed.
+# dev used to stay on Azure because there was no dev releases bucket. There is one now
+# (`clingfy-labs-dev-releases-<account>`, clingfy-labs PR #209, applied 2026-09-15), it has been
+# seeded from the `clingfyreleasesdev` updates container with the enclosure hosts rewritten to
+# dev.clingfy.com, and `dev.clingfy.com/updates/*` is served from it rather than 302'd into Azure.
+# `clingfyreleases` (prod) was deleted on 2026-09-15 and `clingfyreleasesdev` follows once this
+# lands — at which point publishing ANY channel to Azure writes to an account that no longer exists.
+#
+# `local` is left on azure only so the case arm still has a meaning; a local publish has no
+# credentials for either cloud and fails at require_release_storage_cli long before it matters.
 configure_storage_provider() {
   case "${RELEASE_CHANNEL:-$APP_ENV}" in
-    prod) export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-aws}" ;;
-    *)    export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-azure}" ;;
+    prod|dev) export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-aws}" ;;
+    *)        export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-azure}" ;;
   esac
 
   case "$RELEASE_STORAGE_PROVIDER" in

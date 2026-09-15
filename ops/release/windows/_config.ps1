@@ -309,10 +309,12 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
     ($script:AzureRequiredKeys + $script:AzurePurgeKeys + $script:StorageProviderKeys)
 
   # Provider first: it decides WHICH settings are required. Default mirrors the macOS pipeline —
-  # prod publishes to AWS, every other channel stays on Azure.
+  # prod and dev publish to AWS; only a local publish falls through to Azure, and it has no
+  # credentials for either cloud anyway. Both Azure release accounts are being deleted (prod's on
+  # 2026-09-15, dev's right after this lands), so an Azure default here would write to nothing.
   $provider = $env:RELEASE_STORAGE_PROVIDER
   if (-not $provider) {
-    $provider = if ($Context.Channel -eq 'prod') { 'aws' } else { 'azure' }
+    $provider = if ($Context.Channel -eq 'prod' -or $Context.Channel -eq 'dev') { 'aws' } else { 'azure' }
   }
   $Context.StorageProvider = $provider
 
