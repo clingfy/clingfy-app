@@ -765,6 +765,21 @@ class PreviewEngine {
   // the stale-session no-op contract.
   std::string active_session_id_;
 
+  // The last canvas framing Dart pushed, held at ENGINE level so it outlives
+  // any one `Impl`.
+  //
+  // `Impl` owns the retained copy that ComposeAndHandoffLocked re-resolves, but
+  // `Open` builds a brand new `Impl` whose `has_canvas_framing` defaults to
+  // false. On project open Dart pushes the restored canvas and the preview then
+  // opens, so that push landed on the outgoing `Impl` and died with it: the
+  // preview drew an unpadded canvas, and the camera bubble's border/shadow/
+  // min-side floor stayed at export scale, until the user happened to touch a
+  // canvas control and trigger a second push. Seeding each new `Impl` from
+  // these covers the push-then-Open order; the `Impl` copy still covers
+  // Open-then-push.
+  core::CanvasFramingArgs last_canvas_framing_{};
+  bool has_last_canvas_framing_ = false;
+
   // Step 5.5.3: project path echoed back to Dart in the workflow
   // lifecycle events. Set in Open; cleared in Close. Empty is
   // tolerated — Dart falls back to its own state's previewPath.

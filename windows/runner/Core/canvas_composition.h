@@ -176,6 +176,21 @@ bool CanvasNeedsReresolve(bool has_framing, unsigned int resolved_source_w,
                           unsigned int live_source_w,
                           unsigned int live_source_h);
 
+// Whether a `previewSetCanvas` push should be RETAINED for the next preview
+// Open, independent of whether it can be applied right now.
+//
+// On project open Dart restores the canvas and pushes it BEFORE the preview
+// exists. At that moment the engine has no active session and no Impl, so the
+// stale-session guard (`session_id != active_session_id_`) rejected the push
+// and the framing was lost — the preview opened unpadded, with the camera
+// bubble's border, shadow and min-side floor still at export scale, until the
+// user happened to touch a canvas control and push again.
+//
+// "No session is open" is EARLY, not stale. A push naming a different LIVE
+// session is stale and must not clobber the pending framing.
+bool ShouldRetainCanvasFraming(const std::string& session_id,
+                               const std::string& active_session_id);
+
 }  // namespace clingfy::core
 
 #endif  // RUNNER_CORE_CANVAS_COMPOSITION_H_
