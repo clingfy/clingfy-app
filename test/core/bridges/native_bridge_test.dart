@@ -6,6 +6,7 @@ import 'package:clingfy/core/recording/models/audio_output_route.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../test_helpers/native_test_setup.dart';
@@ -89,6 +90,107 @@ void main() {
         '/tmp/first.clingfyproj',
         '/tmp/second.clingfyproj',
       ]);
+    },
+  );
+
+  test(
+    'buffered project opens are not delivered on the registering call stack',
+    () async {
+      final bridge = NativeBridge.instance;
+      final openedProjects = <String>[];
+
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/buffered.clingfyproj',
+      });
+
+      bridge.setOnProjectOpenRequested(openedProjects.add);
+
+      // The callback is attached from `_HomePageState.didChangeDependencies`,
+      // which runs during build — so anything delivered synchronously here
+      // mutates controllers mid-build. See the widget test below for the
+      // failure that produced.
+      expect(
+        openedProjects,
+        isEmpty,
+        reason: 'the drain must happen after the attaching stack unwinds',
+      );
+
+      await Future<void>.delayed(Duration.zero);
+
+      expect(openedProjects, ['/tmp/buffered.clingfyproj']);
+    },
+  );
+
+  test(
+    'a callback detached before the drain leaves the request queued',
+    () async {
+      final bridge = NativeBridge.instance;
+      final firstListener = <String>[];
+      final secondListener = <String>[];
+
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/kept.clingfyproj',
+      });
+
+      bridge.setOnProjectOpenRequested(firstListener.add);
+      bridge.setOnProjectOpenRequested(null);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(firstListener, isEmpty);
+
+      bridge.setOnProjectOpenRequested(secondListener.add);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        secondListener,
+        ['/tmp/kept.clingfyproj'],
+        reason: 'deferring the drain must not drop a cold-start open',
+      );
+    },
+  );
+
+  testWidgets(
+    'attaching during build does not mutate a listening ancestor mid-build',
+    (tester) async {
+      final bridge = NativeBridge.instance;
+      final opened = ValueNotifier<String?>(null);
+      addTearDown(opened.dispose);
+
+      await _emitWorkflowEvent({
+        'type': 'openProjectRequest',
+        'projectPath': '/tmp/cold-start.clingfyproj',
+      });
+
+      // Mirrors the real shape: `_HomePageState.didChangeDependencies` attaches
+      // the callback during build, and the callback mutates state that an
+      // ancestor is already listening to (in the app, the provider scopes above
+      // HomePage).
+      //
+      // In the app a synchronous drain throws "setState() or markNeedsBuild()
+      // called during build" — five of them, one per dependent provider scope.
+      // This harness trips the same defect one assertion earlier, as
+      // `'!_dirty': is not true` from framework.dart, because the listening
+      // ancestor here is the element that is mid-rebuild. Either way the
+      // framework rejects the mutation, so `takeException` is the regression
+      // signal: without the deferred drain this test fails, with it there is
+      // no exception at all.
+      await tester.pumpWidget(
+        ValueListenableBuilder<String?>(
+          valueListenable: opened,
+          builder: (context, value, _) => _AttachOnBuild(
+            attach: () => bridge.setOnProjectOpenRequested((projectPath) {
+              opened.value = projectPath;
+            }),
+            child: Text(value ?? 'idle', textDirection: TextDirection.ltr),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(opened.value, '/tmp/cold-start.clingfyproj');
     },
   );
 
@@ -640,4 +742,28 @@ void main() {
       expect(result.snapshot, isNull);
     });
   });
+}
+
+/// Attaches a callback from `didChangeDependencies`, the way
+/// `_HomePageState` attaches `HomeBindings`. That runs during the build phase,
+/// which is what makes a synchronous drain unsafe.
+class _AttachOnBuild extends StatefulWidget {
+  const _AttachOnBuild({required this.attach, required this.child});
+
+  final VoidCallback attach;
+  final Widget child;
+
+  @override
+  State<_AttachOnBuild> createState() => _AttachOnBuildState();
+}
+
+class _AttachOnBuildState extends State<_AttachOnBuild> {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    widget.attach();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
