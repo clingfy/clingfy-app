@@ -187,7 +187,17 @@ publish_upload() {
   esac
 }
 
-# Mirror of publish_upload for reads. Returns 1 when the object is absent, like its Azure original.
+# Mirror of publish_upload for reads.
+#
+# RETURN CONTRACT, shared with publish_object_exists() and both backends:
+#   0  the object is present (and, for the download form, has been written to $output_file)
+#   1  the object is genuinely absent — the store answered, and the answer was "no"
+#   2  could not determine — credentials, network, permissions, a wrong bucket/account
+#
+# 1 and 2 are NOT interchangeable. Callers act on absence (restore_release_history.sh treats it as
+# "first release" and regenerates the appcast from scratch; the overwrite guard treats it as "this
+# version is not published yet"), so reporting a failure as absence produces a confident wrong
+# answer in both. Every caller must handle 2 explicitly, and the safe handling is to stop.
 publish_download_if_exists() {
   local container="$1"
   local blob_name="$2"
@@ -196,6 +206,21 @@ publish_download_if_exists() {
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)   s3_download_if_exists "$AWS_RELEASES_BUCKET" "$container" "$blob_name" "$output_file" ;;
     azure) az_blob_download_if_exists "$AZ_STORAGE_ACCOUNT" "$container" "$blob_name" "$output_file" ;;
+  esac
+}
+
+# Existence probe that does not transfer the object. Same three-state contract as
+# publish_download_if_exists(). This exists so the prod overwrite guard can stop hardcoding
+# `az storage blob exists` against AZ_STORAGE_ACCOUNT: with RELEASE_STORAGE_PROVIDER=aws that
+# guard was interrogating a store nothing publishes to, so it answered "not published" for every
+# version and silently permitted an overwrite it was written to prevent.
+publish_object_exists() {
+  local container="$1"
+  local blob_name="$2"
+
+  case "$RELEASE_STORAGE_PROVIDER" in
+    aws)   s3_object_exists "$AWS_RELEASES_BUCKET" "$container" "$blob_name" ;;
+    azure) az_blob_exists "$AZ_STORAGE_ACCOUNT" "$container" "$blob_name" ;;
   esac
 }
 
