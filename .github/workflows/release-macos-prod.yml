@@ -9,9 +9,18 @@ name: Release - macOS production
 #   1. Manual dispatch only. There is no push trigger, as with `trigger: none`.
 #   2. The job refuses to run unless the ref is a release/* branch, and
 #      00_version_guard.sh separately ties that branch name to pubspec's semver.
-#   3. The `production` GitHub Environment, whose required reviewer must approve
-#      the run before any step executes. This replaces nothing in the Azure lane
-#      -- it is new, and it is what keeps a public repo's release lane safe.
+#   3. The `production` GitHub Environment, which scopes the AWS OIDC token's
+#      `sub` and holds ENV_PROD_B64 plus the Apple secrets.
+#
+#      WARNING: it is NOT currently a reviewer gate. Verified 2026-09-15,
+#      `gh api repos/clingfy/clingfy-app/environments` returns NOTHING -- this
+#      repo has no environments at all, so GitHub auto-creates `production`
+#      unprotected on first use. An earlier version of this comment claimed a
+#      "required reviewer must approve the run" and called that "what keeps a
+#      public repo's release lane safe". That was never true. Required reviewers
+#      ARE free on a public repo, so turning one on is worth doing; until then
+#      the real restrictions are (1), (2), and the AWS role's trust policy, which
+#      pins this workflow file AND a release/* ref and grants no delete.
 #
 # Do not enable this before the dev lanes (Phases A and B) have run green
 # repeatedly and a GitHub-built app has been compared against an Azure-built one.
@@ -120,12 +129,21 @@ jobs:
             echo "BUILD_NUMBER_OVERRIDE=$CANDIDATE"
           } >> "$GITHUB_ENV"
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      # Was `azure/login@v2`. Both Azure release storage accounts were DELETED on 2026-09-15, and
+      # #492/#494 repointed every publish path at S3, so an Azure login now authenticates to nothing
+      # and every `aws` call in the lane below had no credentials at all. Measured before this
+      # change: 0 aws-credential steps across all four release lanes.
+      #
+      # The role is publish-only by construction — no s3:DeleteObject — and its trust policy pins
+      # both this workflow file and a `release/*` ref. See infra/aws/desktop-release-oidc.tf in
+      # clingfy-labs for the full threat model, which is NOT the same as that repo's own deploy role
+      # because this repository is public.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-release-macos-prod-${{ github.run_id }}
 
       - name: "Step 0: Restore prod release history"
         run: ./ops/release/00_restore_history.sh
@@ -238,14 +256,14 @@ jobs:
           echo "---"
           xcrun stapler validate "$APP" 2>&1
 
-      - name: Re-authenticate to Azure before publishing
-        # See the note in release-macos-dev.yml: the OIDC client assertion lives
-        # five minutes, and by this point in a notarized build it expired long ago.
-        uses: azure/login@v2
+      - name: Re-authenticate to AWS before publishing
+        # See the note in release-macos-dev.yml. Same reason as the Azure step this replaces, for a
+        # different credential: notarization alone can take longer than the session.
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-publish-macos-prod-${{ github.run_id }}
 
       - name: "Step 5: Publish release"
         run: ./ops/release/05_publish_azure.sh

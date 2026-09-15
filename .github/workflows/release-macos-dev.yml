@@ -43,6 +43,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 120
     if: vars.GH_RELEASE_LANES_ENABLED == 'true'
+    # Declared so the OIDC token's `sub` is `repo:clingfy/clingfy-app:environment:development`,
+    # which is what the dev publish role's trust policy matches on. Without it `sub` carries the
+    # ref instead and the assume-role fails with a message that says nothing about environments.
+    environment: development
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -86,12 +90,16 @@ jobs:
           APP_VERSION="${VERSION_LINE%%+*}"
           CANDIDATE=$(( GITHUB_RUN_NUMBER + MACOS_DEV_BUILD_SEED ))
 
-          # Read only the endpoint. Sourcing .env.dev would pull every token in
-          # it into this step's environment for no reason.
-          CDN="$(grep -E '^AZ_CDN_ENDPOINT=' .env.dev | tail -1 | cut -d= -f2- | tr -d '"'"'"'\r ')"
+          # Was reading AZ_CDN_ENDPOINT from .env.dev — the Azure CDN, whose storage account was
+          # DELETED on 2026-09-15. A baseline that can no longer move makes the monotonicity guard
+          # below pass no matter what the dev channel actually advertises. Same defect the prod lane
+          # carried, same fix: FEED_URL is provider-aware (configure_public_endpoint), so it names
+          # whichever feed is really being served.
+          source ./ops/release/_config.sh
           PUBLISHED=""
-          if [ -n "$CDN" ]; then
-            PUBLISHED="$(curl -fsS --max-time 30 "https://${CDN}/appcast.xml" 2>/dev/null \
+          if [ -n "${FEED_URL:-}" ]; then
+            echo "Reading the published build number from ${FEED_URL}"
+            PUBLISHED="$(curl -fsS --max-time 30 "$FEED_URL" 2>/dev/null \
               | grep -o '<sparkle:version>[0-9]*' \
               | grep -o '[0-9]*' | sort -n | tail -1 || true)"
           fi
@@ -113,12 +121,15 @@ jobs:
             echo "BUILD_NUMBER_OVERRIDE=$CANDIDATE"
           } >> "$GITHUB_ENV"
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      # Was `azure/login@v2` — see the equivalent note in release-macos-prod.yml. The dev Azure
+      # account (`clingfyreleasesdev`) was deleted on 2026-09-15 and the dev channel now publishes to
+      # the dev releases bucket, so this lane had no working credentials for its publish target.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-release-macos-dev-${{ github.run_id }}
 
       - name: "Step 0: Restore dev release history"
         run: ./ops/release/00_restore_history.sh
@@ -218,18 +229,19 @@ jobs:
           echo "---"
           xcrun stapler validate "$APP" 2>&1
 
-      - name: Re-authenticate to Azure before publishing
-        # The GitHub OIDC client assertion is valid for FIVE MINUTES. The ARM
-        # token cached by the first login lasts about an hour, but `az storage
-        # --auth-mode login` needs a token for a different resource, which means
-        # a fresh assertion exchange -- and by now the original is long dead.
-        # It fails as AADSTS700024 and reads exactly like a permissions problem.
-        # azure/login mints a new assertion on each invocation.
-        uses: azure/login@v2
+      - name: Re-authenticate to AWS before publishing
+        # The credential from the step near the top of this job is STS, and
+        # configure-aws-credentials requests a ONE HOUR session by default. A
+        # signed + notarized macOS build routinely takes longer than that, so by
+        # the time Step 5 runs `aws s3 cp` the session can already be dead. It
+        # surfaces as ExpiredToken on the upload and reads exactly like a
+        # permissions problem -- the same trap the Azure AADSTS700024 note this
+        # replaces was written for. Minting a fresh one here costs nothing.
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-publish-macos-dev-${{ github.run_id }}
 
       - name: "Step 5: Publish dev release"
         run: ./ops/release/05_publish_azure.sh
