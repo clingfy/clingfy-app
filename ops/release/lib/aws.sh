@@ -49,14 +49,56 @@ s3_download_if_exists() {
 
   local key="${container}/${blob_name}"
 
-  # head-object is the existence probe: it exits non-zero for a missing key, and unlike `s3 ls` it
-  # cannot match a PREFIX by accident (`s3 ls .../appcast.xml` also matches appcast.xml.bak-20260702,
-  # and this bucket really does carry those .bak objects).
-  if ! aws s3api head-object --bucket "$bucket" --key "$key" >/dev/null 2>&1; then
+  s3_object_exists "$bucket" "$container" "$blob_name"
+  local probe=$?
+  # 1 = genuinely absent, 2 = could not determine. Propagate both verbatim; collapsing 2 into 1
+  # here is what made a credentials failure read as "first release" upstream.
+  ((probe == 0)) || return "$probe"
+
+  aws s3 cp "s3://${bucket}/${key}" "$output_file" --only-show-errors >/dev/null
+}
+
+# Existence probe with a THREE-state result. See the contract note in lib/env.sh:
+#   0 = present, 1 = genuinely absent, 2 = could not determine.
+#
+# The two-state version of this was the highest-damage bug in the release path. `aws s3api
+# head-object` exits non-zero for a missing key AND for expired credentials, a wrong bucket, a
+# denied policy and a network failure alike; returning 1 for all of them told
+# restore_release_history.sh "no appcast exists, this is the first release", which regenerates a
+# feed containing only the new build. Every installed Mac would then be offered a feed with
+# 1.0.0-1.0.7 erased from its update history. The distinction below is the whole point:
+# only a genuine 404/NoSuchKey is absence, everything else is an error.
+#
+# head-object is also the right probe rather than `s3 ls`: `s3 ls .../appcast.xml` matches by
+# PREFIX and would also hit appcast.xml.bak-20260702, which this bucket really does carry.
+s3_object_exists() {
+  local bucket="$1"
+  local container="$2"
+  local blob_name="$3"
+
+  local key="${container}/${blob_name}"
+  local err
+  err="$(aws s3api head-object --bucket "$bucket" --key "$key" 2>&1 >/dev/null)" && return 0
+
+  # The CLI reports a missing key as `An error occurred (404) when calling the HeadObject
+  # operation: Not Found`. NoSuchKey appears on some paths/endpoints, so accept either.
+  if printf '%s' "$err" | grep -qE '\(404\)|NoSuchKey|Not Found'; then
+    # A MISSING BUCKET ALSO ANSWERS 404 with the same wording, so the 404 alone does not mean the
+    # key is absent — it can equally mean AWS_RELEASES_BUCKET is misspelled or points at a bucket
+    # that was never created. Those must not be reported as absence: upstream, absence of the
+    # appcast means "first release, regenerate from scratch", so a typo in one variable would
+    # publish a feed with the whole update history gone. Confirm the bucket itself answers before
+    # believing the 404. (Caught by a probe test on 2026-09-15, which expected 2 and got 1.)
+    local bucket_err
+    if ! bucket_err="$(aws s3api head-bucket --bucket "$bucket" 2>&1 >/dev/null)"; then
+      log_warn "Could not confirm the bucket s3://${bucket} itself is reachable, so the 404 on ${key} is not evidence the object is absent: ${bucket_err}"
+      return 2
+    fi
     return 1
   fi
 
-  aws s3 cp "s3://${bucket}/${key}" "$output_file" --only-show-errors >/dev/null
+  log_warn "Could not determine whether s3://${bucket}/${key} exists: ${err}"
+  return 2
 }
 
 s3_upload_object() {

@@ -89,10 +89,16 @@ jobs:
           APP_VERSION="${VERSION_LINE%%+*}"
           CANDIDATE=$(( GITHUB_RUN_NUMBER + MACOS_PROD_BUILD_SEED ))
 
-          CDN="$(grep -E '^AZ_CDN_ENDPOINT=' .env.prod | tail -1 | cut -d= -f2- | tr -d '"'"'"'\r ')"
+          # Was reading AZ_CDN_ENDPOINT straight out of .env.prod. That endpoint is the Azure CDN,
+          # whose feed has been frozen since the 2026-08-17 cutover — so the "live" baseline this
+          # check compared against was a snapshot that can no longer move, and the guard would go
+          # on passing no matter what prod actually advertises. FEED_URL is provider-aware
+          # (configure_public_endpoint), so it names whichever feed is really being served.
+          source ./ops/release/_config.sh
           PUBLISHED=""
-          if [ -n "$CDN" ]; then
-            PUBLISHED="$(curl -fsS --max-time 30 "https://${CDN}/appcast.xml" 2>/dev/null \
+          if [ -n "${FEED_URL:-}" ]; then
+            echo "Reading the published build number from ${FEED_URL}"
+            PUBLISHED="$(curl -fsS --max-time 30 "$FEED_URL" 2>/dev/null \
               | grep -o '<sparkle:version>[0-9]*' \
               | grep -o '[0-9]*' | sort -n | tail -1 || true)"
           fi
@@ -140,18 +146,23 @@ jobs:
           source ./ops/release/_config.sh
 
           EXPECTED_BLOB="${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
-          echo "Checking Azure blob: ${EXPECTED_BLOB}"
+          echo "Checking ${RELEASE_STORAGE_PROVIDER} store for: ${AZ_CONTAINER}/${EXPECTED_BLOB}"
 
-          EXISTS="$(
-            az storage blob exists \
-              --account-name "$AZ_STORAGE_ACCOUNT" \
-              --container-name "$AZ_CONTAINER" \
-              --name "$EXPECTED_BLOB" \
-              --auth-mode login \
-              --query exists -o tsv | tr '[:upper:]' '[:lower:]' | tr -d '\r\n '
-          )"
+          # Was hardcoded to `az storage blob exists` against AZ_STORAGE_ACCOUNT. With
+          # RELEASE_STORAGE_PROVIDER=aws that asked a store nothing publishes to, so it answered
+          # "not published" for every version and waved through the exact overwrite it exists to
+          # block. Route it through the same seam the publish step uses.
+          PROBE=0
+          publish_object_exists "$AZ_CONTAINER" "$EXPECTED_BLOB" || PROBE=$?
 
-          if [ "$EXISTS" = "true" ]; then
+          # A guard that cannot read its store has not passed, it has failed to run. Reporting
+          # "not published" here would let an overwrite through on a credentials error.
+          if [ "$PROBE" = "2" ]; then
+            echo "::error::Overwrite guard could not read ${AZ_CONTAINER}/${EXPECTED_BLOB} from the ${RELEASE_STORAGE_PROVIDER} store. Not treating an unreadable store as an unpublished version."
+            exit 1
+          fi
+
+          if [ "$PROBE" = "0" ]; then
             if [ "${ALLOW_OVERWRITE:-false}" = "true" ]; then
               echo "::warning::Version ${APP_VERSION} already exists at ${EXPECTED_BLOB}; overwriting because allow_overwrite was set for this run."
             else

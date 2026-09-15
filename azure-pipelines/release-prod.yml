@@ -112,18 +112,22 @@ stages:
                 source ./ops/release/_config.sh
 
                 EXPECTED_BLOB="${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
-                echo "Checking Azure blob: ${EXPECTED_BLOB}"
+                echo "Checking ${RELEASE_STORAGE_PROVIDER} store for: ${AZ_CONTAINER}/${EXPECTED_BLOB}"
 
-                EXISTS="$(
-                  az storage blob exists \
-                    --account-name "$AZ_STORAGE_ACCOUNT" \
-                    --container-name "$AZ_CONTAINER" \
-                    --name "$EXPECTED_BLOB" \
-                    --auth-mode login \
-                    --query exists -o tsv | tr '[:upper:]' '[:lower:]' | tr -d '\r\n '
-                )"
+                # Was hardcoded to `az storage blob exists` against AZ_STORAGE_ACCOUNT. With
+                # RELEASE_STORAGE_PROVIDER=aws that asked a store nothing publishes to, so it
+                # answered "not published" for every version and waved through the exact overwrite
+                # it exists to block. Route it through the same seam the publish step uses.
+                PROBE=0
+                publish_object_exists "$AZ_CONTAINER" "$EXPECTED_BLOB" || PROBE=$?
 
-                if [ "$EXISTS" = "true" ]; then
+                # A guard that cannot read its store has not passed, it has failed to run.
+                if [ "$PROBE" = "2" ]; then
+                  echo "##vso[task.logissue type=error]Overwrite guard could not read ${AZ_CONTAINER}/${EXPECTED_BLOB} from the ${RELEASE_STORAGE_PROVIDER} store. Not treating an unreadable store as an unpublished version."
+                  exit 1
+                fi
+
+                if [ "$PROBE" = "0" ]; then
                   if [ "${ALLOW_OVERWRITE:-false}" = "true" ]; then
                     echo "ALLOW_OVERWRITE is true; resetting it after this run"
 
