@@ -129,4 +129,14 @@ std::vector<ZoomSegment> BuildZoomSegments(
   return result;
 }
 
+ZoomSegmentState ZoomSegmentStateAt(const std::vector<ZoomSegment>& segments,
+                                    std::int64_t source_ms) {
+  for (const auto& seg : segments) {
+    if (source_ms >= seg.start_ms && source_ms < seg.end_ms) {
+      return {true, source_ms - seg.start_ms};
+    }
+  }
+  return {};
+}
+
 }  // namespace clingfy::capture

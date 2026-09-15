@@ -335,5 +335,101 @@ TEST(IsIdentityTransformTest, AnyLayoutOrResolutionChangeIsNotIdentity) {
   EXPECT_FALSE(IsIdentityTransform("square11", ""));
 }
 
+// ---- ResolveExportPixelSize: the answer resolveExportSize hands Flutter -----
+//
+// This is what caption bitmaps get rasterized against, so the load-bearing
+// property is not any single number — it is that this function and the
+// exporter cannot disagree. `export_pipeline` computes its canvas as
+// `ToEvenPixelSize(ResolveTargetSize(source, layout, resolution))`; every case
+// below pins that this returns the identical value.
+
+TEST(ResolveExportPixelSizeTest, MatchesTheExporterCanvasForEveryPreset) {
+  const SizeF source{1920.0, 1080.0};
+  const std::string layouts[] = {"auto", "classic43", "square11", "youtube169",
+                                 "reel916"};
+  const std::string resolutions[] = {"auto", "p1080", "p1440", "p2160",
+                                     "p4320"};
+  for (const auto& layout : layouts) {
+    for (const auto& resolution : resolutions) {
+      // The exact expression export_pipeline.cpp uses for `canvas`.
+      const PixelSize exporter =
+          ToEvenPixelSize(ResolveTargetSize(source, layout, resolution));
+      const PixelSize resolver =
+          ResolveExportPixelSize(source, layout, resolution, "mp4", "");
+      EXPECT_EQ(resolver.width, exporter.width)
+          << "layout=" << layout << " resolution=" << resolution;
+      EXPECT_EQ(resolver.height, exporter.height)
+          << "layout=" << layout << " resolution=" << resolution;
+    }
+  }
+}
+
+// Windows encodes GIF through WIC at the full canvas — export_pipeline hands
+// the GIF encoder `canvas.width/height`, the same canvas every other format
+// gets, and gif_export_policy is purely temporal. macOS caps its GIF
+// intermediate's long edge and therefore reports a SMALLER size for gif; if
+// anyone ports that cap here without also capping the Windows encoder,
+// captions get rasterized for a canvas Windows never renders and are drawn
+// ~1.8x too wide. This test is the tripwire for that.
+TEST(ResolveExportPixelSizeTest, GifIsNotCappedBecauseWindowsRendersItUncapped) {
+  const SizeF source{3840.0, 2160.0};
+  const PixelSize mp4 =
+      ResolveExportPixelSize(source, "youtube169", "p2160", "mp4", "");
+  const PixelSize gif =
+      ResolveExportPixelSize(source, "youtube169", "p2160", "gif", "large");
+  EXPECT_EQ(gif.width, mp4.width);
+  EXPECT_EQ(gif.height, mp4.height);
+  EXPECT_EQ(gif.width, 3840u);
+  EXPECT_EQ(gif.height, 2160u);
+}
+
+TEST(ResolveExportPixelSizeTest, FormatAndGifSizeNeverChangeTheAnswer) {
+  const SizeF source{1920.0, 1080.0};
+  const PixelSize baseline =
+      ResolveExportPixelSize(source, "auto", "auto", "", "");
+  const std::string formats[] = {"", "mp4", "mov", "gif", "GIF", "webm"};
+  const std::string gif_sizes[] = {"", "small", "medium", "large", "nonsense"};
+  for (const auto& format : formats) {
+    for (const auto& gif_size : gif_sizes) {
+      const PixelSize out =
+          ResolveExportPixelSize(source, "auto", "auto", format, gif_size);
+      EXPECT_EQ(out.width, baseline.width)
+          << "format=" << format << " gifSize=" << gif_size;
+      EXPECT_EQ(out.height, baseline.height)
+          << "format=" << format << " gifSize=" << gif_size;
+    }
+  }
+}
+
+// An odd source must not reach the encoder odd, and must not reach Flutter
+// odd either: a caption bitmap rasterized for 1921 px drawn on a 1922 px frame
+// is a 1 px seam on every cue.
+TEST(ResolveExportPixelSizeTest, OddSourceIsEvenRoundedLikeTheEncoderNeeds) {
+  const PixelSize out =
+      ResolveExportPixelSize({1921.0, 1081.0}, "auto", "auto", "mp4", "");
+  EXPECT_EQ(out.width % 2u, 0u);
+  EXPECT_EQ(out.height % 2u, 0u);
+  EXPECT_EQ(out.width, ToEvenPixelSize({1921.0, 1081.0}).width);
+  EXPECT_EQ(out.height, ToEvenPixelSize({1921.0, 1081.0}).height);
+}
+
+TEST(ResolveExportPixelSizeTest, PortraitSourceKeepsItsAxes) {
+  // A 9:16 recording under "auto" is its own size, not a landscape guess.
+  const PixelSize out =
+      ResolveExportPixelSize({1080.0, 1920.0}, "auto", "auto", "mp4", "");
+  EXPECT_EQ(out.width, 1080u);
+  EXPECT_EQ(out.height, 1920u);
+}
+
+TEST(ResolveExportPixelSizeTest, UnknownPresetsFallThroughLikeResolveTargetSize) {
+  const SizeF source{1920.0, 1080.0};
+  const PixelSize unknown =
+      ResolveExportPixelSize(source, "cinemascope", "p9999", "mp4", "");
+  const PixelSize expected =
+      ToEvenPixelSize(ResolveTargetSize(source, "cinemascope", "p9999"));
+  EXPECT_EQ(unknown.width, expected.width);
+  EXPECT_EQ(unknown.height, expected.height);
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_

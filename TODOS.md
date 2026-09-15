@@ -23,32 +23,351 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 - **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (`onHoverSeek`/`previewPeekTo` wiring), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart`.
 - **Depends on:** Scissors-split cut layer (shares the cut-hover state).
 
+## Editor — captions
+
+### Word-level caption editing (click a word to edit, drag to retime)
+
+- **What:** Click an individual word in a caption to edit just that word, and drag
+  a word's boundary to retime it, rather than editing the whole cue as one string.
+- **Why:** `CaptionWord` (`lib/core/timeline/model/edit_track.dart:201-222`) exists
+  and its own doc comment says it "powers click-to-edit and reflow-on-split."
+  Half of that shipped: reflow-on-split uses the timings when a cue's audio is cut
+  in half. The click-to-edit half did not. Without this entry, the next person
+  reads that comment and assumes the feature exists.
+- **Context:** Deferred in the 2026-08-04 eng review (scope reduction R2). v1 ships
+  cue-level text editing, which satisfies the actual need — fixing a
+  mis-transcribed product name — at a fraction of the UI. Per-word timings are
+  stored by ASR regardless, so this is additive later, not a rewrite. The reason to
+  wait is that nobody has seen real transcription quality on real Clingfy
+  recordings yet; if Whisper turns out to be accurate enough that people rarely
+  edit, this is UI nobody wanted.
+- **Pros:** Precise corrections without retyping a sentence; retiming without
+  touching text.
+- **Cons:** Substantially more interaction surface (per-word hit targets, drag
+  handles inside a text run, RTL word order), and it fights the cue-level editor
+  you would already have shipped.
+- **Start at:** `lib/app/home/post_processing/widgets/post_captions_section.dart`
+  (once it exists), `CaptionWord` in `edit_track.dart:201`.
+- **Depends on:** the cue-level caption editing UI shipping first.
+- **Gate:** Only build on real user demand, same rule as the persistent-scissors
+  item above.
+- **Effort:** human ~2d / CC ~2h.
+
 ## Export — colour
 
-### Exported video does not match the inline preview's colour
+### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 
-- **What:** The same frame is visibly different between the inline preview and the exported file. Reported 2026-07-28 with a matched pair of screenshots one second apart.
-- **Measured, not eyeballed.** Sampling matching wallpaper patches (decoded to sRGB so both are compared in one space) gives export-minus-preview deltas of roughly `+9 +7 +9`, `+5 +11 +9`, `+16 +17 +14` (R G B, 0-255). Two things follow: the export is lifted overall, and **midtones lift most** — in one patch green went `68 -> 79` while red in the same patch went `29 -> 34`. That is a transfer-function signature. A wrong YCbCr matrix would shift hue roughly uniformly instead, so the matrix is probably not the culprit.
-- **Two concrete inconsistencies exist in the export path, either of which could contribute:**
-  1. `VideoColorPipeline.tag(pixelBuffer:)` attaches `kCVImageBufferCGColorSpaceKey = sRGB` **and** `kCVImageBufferTransferFunctionKey = ITU_R_709_2` to the same buffer. Those are different curves, and consumers disagree about which wins: Core Image reads the CGColorSpace attachment, AVFoundation/VideoToolbox read the discrete transfer tag. The preview and the export therefore need not agree even from identical pixels.
-  2. The written file reports `FullRangeVideo: 0` (limited range, 16-235) while Core Image renders full-range 0-255. If the data really is full-range, a decoder honouring the tag shifts everything.
-- **Do NOT guess at the fix.** Both "tag sRGB transfer instead of 709" and "convert the data to 709" are one-line changes that alter every export, and only one is right. `docs/windows-port.md` already records a colour-parity divergence, so this area punishes confident guesses.
-- **Decide it by measurement:** render one known test frame (a greyscale ramp plus primary patches) through the preview path and the export path, sample both, and fit the transform. The ramp separates the two candidates immediately — range shows as a straight-line offset with clipped ends, gamma as a curve.
-- **Start at:** `macos/Runner/Capture/Export/CompositionBuilder.swift:16` (`workingColorSpace`), `:118` (`tag(pixelBuffer:)`), and the export render loop at `macos/Runner/Capture/Export/LetterboxExporter.swift:2383-2393` where the buffer is tagged before it is appended.
-- **Evidence:** the reported screenshot pair, and the exported file's own extensions dump (`CVImageBufferColorPrimaries: ITU_R_709_2`, `FullRangeVideo: 0`).
-- **Effort:** human ~4h / CC ~45min once the ramp measurement exists.
+Filed 2026-07-28 (#369), closed by the 1.0.7 cycle. Kept for the measurements,
+which are the only recorded numbers for this defect.
+
+- **The symptom, measured:** sampling matching wallpaper patches (decoded to sRGB
+  so both are compared in one space) gave export-minus-preview deltas of roughly
+  `+9 +7 +9`, `+5 +11 +9`, `+16 +17 +14` (R G B, 0-255). The export was lifted
+  overall and **midtones lifted most** — one patch went green `68 -> 79` while red
+  in the same patch went `29 -> 34`. That is a transfer-function signature, not a
+  matrix error, which is what pointed at the right fix.
+- **Fixed by:** #380 and #383 (encode into the transfer the file declares), #391
+  (use the gamma Apple's decoder actually applies), #395 (route every export
+  through the path that encodes colour), #396 (GIF undoes the export transfer),
+  #402 (camera overlay was encoded twice), #404 (record in sRGB so the BT.709 tag
+  on `screen.mov` is honest). CHANGELOG 1.0.7: "Exported colour matches the
+  preview... Fixed on every export path, including GIF."
+- **Do not re-open on the dual tagging.** `VideoColorPipeline.tag(pixelBuffer:)`
+  (`CompositionBuilder.swift:118-140`) still attaches
+  `kCVImageBufferCGColorSpaceKey = sRGB` alongside a 709 transfer tag. That is now
+  **intentional**: sRGB is the working space, and
+  `ColorTransferFunctions.encodeForExport` puts the data into the 709 transfer the
+  file declares. The original TODO listed this as suspicious; it is the design.
+- **Caveat that is still true:** recordings made before 2026-08-02 hold P3 data
+  under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
+  and recorded in the CHANGELOG.
+
+## Editor - layout
+
+### The clips lane is below the fold in the editor, at every window height tested
+
+> **STATUS 2026-09-15 — DOES NOT REPRODUCE on develop @ `a01467f`. Not closed.**
+> Re-measured with the same project and the same window size, and the ruler, clips
+> lane and zoom lane all render fully on screen. Details in "Re-measured" below.
+> Left open rather than deleted because the 2026-09-12 sighting was a human looking
+> at a real screen, and because every Dart file behind this layout is byte-identical
+> between that sighting and this clean result — so nothing was fixed, and the cause
+> is still unknown. Close it once a second session (ideally at a different display
+> scale) confirms a clean editor; re-open with a DPI-aware capture if it returns.
+
+- **What:** open a recording, and the timeline toolbar and transport bar render but the
+  TimelineEditorViewport (ruler + clips/zoom lanes) sits below the bottom of the window.
+  No cutting, trimming, reordering or zoom editing is reachable.
+- **Measured 2026-09-12, Release AND Debug builds, project rec_1784676792947794 (26 s, 1 clip):**
+  - 1550x830 window on a 1536x864 display (1080p at Windows' default 125% scaling): lane not visible.
+  - 1550x830 after the density fix below (chrome ~8% smaller): still not visible.
+  - **2062x1118 window on a 2048x1152 display: STILL not visible** - the toolbar sits ~50 px from
+    the window bottom. That is what rules out "the window is just too short".
+- **Not a lane-visibility toggle.** `_showClipsLane = true` and `_showZoomLane = true` are the
+  defaults (`video_timeline.dart:101-105`), and the debug log confirms the lane is live:
+  `[ClipsLane] clip editor attached (1 clips, dur=26082ms)`.
+- **Not a RenderFlex overflow.** A Debug build produced ZERO overflow or constraint assertions
+  across the whole session, at both window sizes. Whatever clips the viewport is not a Flex
+  overflow, so the usual yellow-stripe signal never fires and Release clips silently.
+- **Structure, for whoever picks this up:** `home_shell.dart:600` is
+  `Column[ Expanded(pane row), SizedBox(innerGap), TimelineBar() ]`. The pane row carries
+  `ConstrainedBox(minHeight: HomeDesktopPaneDimensions.workspaceMinHeight = 520)`, which a tight
+  Expanded constraint should override. `TimelineBar` -> `VideoTimeline` builds
+  `Column[ TimelineToolbar, gap, TimelineTransportBar, gap, TimelineEditorViewport ]`
+  (`video_timeline.dart:~540-612`), and the viewport computes its own height as
+  `ruler + lanes*laneHeight + gaps` (`timeline_editor_viewport.cpp:155-160` / `:412-420`).
+  The toolbar and transport render; only the viewport does not.
+- **Re-measured 2026-09-15, develop @ `a01467f`, Debug build, same project
+  rec_1784676792947794.** The lane renders. Two window sizes, both DPI-aware captures:
+  - **1937x1037 real px** (client 1919x990) — this IS the "1550x830 on a 1536x864 display"
+    case above, written in real pixels rather than virtualized ones. Ruler 0:00-0:25,
+    Clips lane with the clip labelled "1", Zoom lane with three segments. All visible.
+  - **1250x800 real px** (client 1232x753) — the smallest window the app allows
+    (`kMinimumDesktopWindowSize = Size(960, 640)`, `lib/app/bootstrap/desktop_window.dart:8`).
+    Same three, all visible. If the defect were height-driven it would show here first.
+  - The render tree agrees and always did: `VideoTimeline` sits at column offset
+    (0, 525.3) with height 251.5 = header 48.0 + 5.5 + transport 42.2 + 5.5 +
+    **viewport 150.3**, inside a tight 776.8-tall `home_workspace_column` whose five
+    children sum to exactly 776.8. No overflow, nothing clipped, viewport on screen.
+  - **No layout fix landed in between, and this is checked, not assumed.**
+    `git diff eef38a5 a01467f -- lib/` returns exactly one file:
+    `lib/core/bridges/native_bridge.dart` (the unrelated project-open drain fix,
+    #493). `eef38a5` is the density fix #484 — i.e. the very commit this entry's own
+    "after the density fix ... still not visible" line was measured against. So every
+    Dart file that produces this layout is **byte-identical** between the 2026-09-12
+    sighting and the 2026-09-15 clean result. Same code, same project, same window
+    size, opposite outcome. (Native changed over that window — #486-#490 — but that
+    is the camera render-plan seam in `Capture/Camera/`, which has no part in
+    Flutter-side timeline layout.)
+  - That is the useful lead for whoever picks this up: since the code is identical,
+    the difference has to be environmental or in the original measurement. Prime
+    suspects, in order: display scale / which monitor the window was on (this box has
+    a 1920x1080 @125% primary and a 2560x1440 @125% secondary), and the possibility
+    that the 09-12 numbers were themselves read through a DPI-unaware tool — the same
+    trap documented below, which produces this exact symptom.
+
+- **BEWARE the instrument — this cost an afternoon.** An initial re-measurement
+  "reproduced" the bug perfectly, matching this entry detail for detail including a
+  convincing inverse-height ladder. It was an artifact. Screenshots were taken from a
+  **DPI-unaware** PowerShell: `GetWindowRect`/`GetClientRect` returned virtualized
+  1550x830 / 1536x792 while the real window was 1937x1037 / client 1919x990, the
+  capture bitmap was allocated at the virtualized size, and `PrintWindow` **crops**
+  into an undersized DC instead of scaling. That silently removed the bottom ~20% of
+  every screenshot — exactly where the viewport lives. Before trusting any capture
+  here, call `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`
+  as the FIRST statement, and multiply any size a DPI-unaware tool quotes by the
+  display scale. When a screenshot and the render tree disagree, suspect the capture.
+  (Unrelated red herring: `debugDumpRenderTree` prints `device pixel ratio: 1.3` because
+  it formats to one decimal. The real ratio is 1.25. There is no double-scaling defect.)
+
+- **The widget test does NOT cover this.**
+  `test/app/home/preview/widgets/timeline/timeline_viewport_visibility_test.dart` (#491)
+  pins the viewport on screen at 1550x830 under the real Windows `ResponsiveShellScope`
+  and is green — it was green while this entry described a live bug, and it would stay
+  green if the bug returned in whatever form the harness does not model. Do not read
+  that suite passing as evidence about this entry either way.
+
+- **Next step:** confirm on a second machine, ideally one at a different display scale
+  (this box is 125%). If it stays clean, close this entry. If it returns, capture it
+  DPI-aware and dump the render tree (`debugDumpRenderTree()`) with a project open to
+  find who gives the viewport a zero/negative height box or which ancestor clips it —
+  reading the widget code did not settle it, and three plausible theories were each
+  disproved by measurement.
+- **Severity:** if this reproduces on a tester's machine it blocks the whole editor, which is the
+  half of the product that is not the recorder. Worth confirming on a second machine before the
+  beta invite, since it did not reproduce as a simple height problem. Severity is unchanged by
+  the 09-15 re-measurement — a defect that cannot be reproduced is not the same as one that is
+  understood, and this one is still not understood.
+- **Effort:** unknown. The 09-12 investigation cost ~1h and disproved the obvious causes without
+  finding the real one; the 09-15 re-measurement cost an afternoon, most of it spent chasing a
+  false repro manufactured by the capture tool.
+
+## Windows — capture exclusion
+
+### The other four capture-excluded windows never re-verify WDA after a mutation
+
+- **What:** the ADR (`docs/decisions/windows-camera-bubble-renderer-architecture.md:123-126`) says to re-verify `GetWindowDisplayAffinity` after any unavoidable window mutation — the Electron #47834 lesson. The DComp camera overlay now does, at all three of its mutation sites. Four other capture-excluded windows still call `SetWindowDisplayAffinity` exactly once at creation and then mutate freely:
+  - `camera_floating_overlay.cpp` — `SetWindowPos` (:425), `SetWindowRgn` (:393), `WM_EXITSIZEMOVE` drag path (:125)
+  - `recording_indicator_controller.cpp` — `SetWindowPos` (:336, :358), `SetWindowRgn` (:199), drag path (:103)
+  - `pre_recording_bar_controller.cpp` — :341, :212
+  - `pre_recording_bar_popover.cpp` — :203, :262
+- **Why not folded into the camera fix:** none of these has the DComp overlay's `wda_excluded_` one-way latch or its hide-on-loss policy, so there is nothing to re-verify *into*. Giving them one is a design decision about what a bar/indicator should do when exclusion is lost mid-recording — hide (and lose the recording UI) or keep showing (and burn into the capture). That is a product call, not a few lines.
+- **Severity:** the same class as the camera bug, and the indicator/bar are on screen for the whole recording. Worth deciding rather than leaving implicit.
+- **Effort:** human ~1 day / CC ~2h once the hide-vs-show policy is chosen.
+
+## Windows — preview/export parity
+
+### ~~Camera border width and shadow blur are raw pixels on both surfaces (preview reads ~3x heavier)~~ — DONE
+
+Fixed. The wire value stays absolute export-canvas px (no wire change, so macOS is
+untouched) and the painter resolves it onto whatever surface it is drawing, via
+`CameraBubblePainter::Style::effect_scale` =
+`short_side(surface) / short_side(export)`. The bubble's 96px min-side floor —
+the other non-proportional term, which bound for most of the size-factor band in
+portrait/reel916 — takes the same scale through a defaulted
+`ComputeCameraBubbleRect(..., min_side_px)` parameter.
+
+Residual, deliberately not fixed here: the LIVE overlay has the same class of
+defect internally (`ComputeFloatingRect` scales the bubble by `dpi_scale` while
+`ResolveOverlayBubbleStyle` passes `border_width` through unscaled), so at 150%
+display scaling the live bubble's border is proportionally thinner than at 100%.
+Separate surface, separate fix, and macOS shares the absolute constants — raise
+it with macOS in scope rather than diverging one platform at a time.
+
+### Should the live camera bubble hide while a recording is paused? (product call)
+
+- **What:** `RecordingEngine::Pause` pauses the camera recorder and `CameraRecorder` drops every preview frame while paused, but nothing hides or stops the floating bubble. It stays on screen showing its last frame for an unbounded, user-controlled time.
+- **Why it is on this list and not already fixed:** it surfaced while closing the frameless-park gap, which needed to know every way frames stop. The park fix makes the stale-pixels case safe (a parked presenter now hides its own window), but a PAUSE is not a fault — the bubble is deliberately still up, showing a frozen frame. Whether that is correct is a product decision, not a bug fix, so it was left alone rather than changed unasked.
+- **The argument for hiding:** a paused recording showing a live-looking camera bubble misrepresents state, and it is the widest window in which a mid-session presenter swap would surface an empty bubble.
+- **The argument against:** the bubble is also the user's placement handle; hiding it mid-session moves it out of reach and makes resume feel like a restart.
+- **Start at:** `RecordingEngine::Pause` / `Resume`, mirroring the `wda_excluded()` gate `SetCameraPreviewFloating` already uses. macOS parity should be checked first — it may already have an answer.
+- **Effort:** human ~2h / CC ~20min once the product call is made.
+
+### Should the live camera bubble hide while a recording is paused? (product call)
+
+- **What:** `RecordingEngine::Pause` pauses the camera recorder and `CameraRecorder` drops every preview frame while paused, but nothing hides or stops the floating bubble. It stays on screen showing its last frame for an unbounded, user-controlled time.
+- **Why it is on this list and not already fixed:** it surfaced while closing the frameless-park gap, which needed to know every way frames stop. The park fix makes the stale-pixels case safe (a parked presenter now hides its own window), but a PAUSE is not a fault — the bubble is deliberately still up, showing a frozen frame. Whether that is correct is a product decision, not a bug fix, so it was left alone rather than changed unasked.
+- **The argument for hiding:** a paused recording showing a live-looking camera bubble misrepresents state, and it is the widest window in which a mid-session presenter swap would surface an empty bubble.
+- **The argument against:** the bubble is also the user's placement handle; hiding it mid-session moves it out of reach and makes resume feel like a restart.
+- **Start at:** `RecordingEngine::Pause` / `Resume`, mirroring the `wda_excluded()` gate `SetCameraPreviewFloating` already uses. macOS parity should be checked first — it may already have an answer.
+- **Effort:** human ~2h / CC ~20min once the product call is made.
+
+### Camera render-plan extraction (make derivation parity structural, not just tested)
+
+> **STATUS 2026-09-14 — DONE. All six steps landed; both legs share one derivation.**
+> #486 moved the style into the D2D-free header and made the painter retry term testable. #487 added
+> `Capture/Camera/camera_render_plan.{h,cpp}` with 16 headless tests. #488 moved the preview leg onto it.
+> #489 embedded `CameraRenderSpec` in both export carriers, deleting the bridge mapper and the 24-line
+> copy hop. The final step moved the export leg on: `CameraExportRenderer::Prepare` went from 14
+> parameters to 3, its eight cached members collapsed to one plan, and the pipeline's ~45-line
+> hand-rolled derivation became one `CameraPlanForExportRequest` call.
+>
+> The two legs can no longer drift, because there is ONE derivation rather than two that agree.
+> `CameraExportRenderer::Style` no longer appears anywhere under `Capture/Export/`.
+>
+> **Still open, and NOT closed by this work.** Deleting `render.camera = input.camera;` in
+> `ExportPassthroughCopy` still passes the whole suite: that hop runs inside a function whose
+> `PassthroughResult` does not expose the `RenderRequest`, so nothing headless observes it. Fix by
+> extracting the gate-and-fill into a pure helper, or by widening the export pixel canary to cover the
+> camera path.
+>
+> **Unclosed by design:** the macOS clamp divergence — macOS `clampPresentationFrame` shrinks to fit and
+> insets by a border/shadow outset, while `camera_export_layout.cpp` only translates — and the live DComp
+> overlay, which stays off the shared builder deliberately because it derives from a different wire model
+> and clamps where this path does not.
+
+- **What:** Both surfaces independently derive the same five things from their parsed composition — bubble rect, painter `Style`, `CameraAnimationParams`, slide edge, and the shape/radius/content-mode passed to `painter_.Prepare`. The derivations are currently line-for-line equivalent (audited field by field), but that equivalence is maintained by hand in two files.
+- **Proposed seam — CORRECTED 2026-09-12 after an audit of both legs. The signature first written here was not a pure refactor; it was a behaviour change on both surfaces.** Two fixes are mandatory before any code moves:
+  1. **`BuildCameraRenderPlan` needs `effect_scale`.** The preview passes an 8th argument to `ComputeCameraBubbleRect` (`kCameraBubbleMinSidePx * scale`) and sets `Style::effect_scale = scale`; the export passes neither and takes the 96.0 / 1.0 defaults. That is not drift — it is the preview leg's reason to exist (a 1280x720 texture against an up-to-4K export canvas) and four tests pin it. A builder taking only `(spec, canvas_w, canvas_h)` cannot produce the preview's plan, and dropping the scaling regresses reel-format previews ~32% oversize.
+  2. **`ResolveCameraFrame` needs six inputs, not four.** Both `Draw` methods take `(ctx, frame_ms, total_duration_ms, screen_zoom, zoom_in_segment, zoom_segment_local_ms)`. The last two drive the zoom-emphasis pulse, and **both headers carry an explicit "Deliberately NOT defaulted" comment** saying a default would let a new call site compile while silently never pulsing. A 4-argument signature reintroduces exactly that hazard.
+- **Most of the seam already exists.** ~~`ResolvePreviewCameraPlan(comp, canvas_w, canvas_h, effect_scale)` is already in `preview_camera_renderer.h`, already pure, and already pinned by `ResolvePreviewCameraPlanTest.IdentityScaleMatchesTheExportPlanExactly`.~~ **Superseded 2026-09-14:** that function and that whole test suite are gone. The generalised builder is `clingfy::capture::BuildCameraRenderPlan` in `Capture/Camera/camera_render_plan.h`, and the named test migrated to `BuildCameraRenderPlanTest.IdentityScaleMatchesTheExportPlanExactly`. The work is generalising that one and moving the export onto it — not building a new seam. Resolve the scale divergence **toward the preview**: `effect_scale` becomes a first-class plan input that the export passes as `1.0`, which is provably inert there (it multiplies only lengths).
+- **The equivalence claim above holds, for a better reason than "audited by hand".** Both legs are fed by ONE parser — `ReadCameraComposition` produces a `PreviewCameraComposition`, the preview consumes it directly and the export runs the same struct through `ApplyCameraCompositionToExport`. Every default (size_factor 0.18, opacity 1.0, chroma_strength 0.4, …) is identical because there is one source, plus a guard test. The audit tried to disprove equivalence on all five derivations and could not.
+- **`spec` should be the flattened nullable-colour form** (`PreviewCameraComposition`'s bool+value pairs), not `std::optional`. The optional form is already *derived from* the flattened one, so choosing flattened deletes a conversion rather than adding one.
+- **Two absolute-pixel constants the seam cannot fix and must not try to:** `kSlideMarginPx = 1.0` is added raw and has no scale parameter, and the preview texture's aspect differs from the export canvas by ~0.25% because the two round independently. Both are sub-pixel in effect. Do not "correct" them inside the plan builder.
+- **Out of scope, deliberately:** do NOT fold the live DComp overlay's `ResolveOverlayBubbleStyle` into the same builder. It derives from a different wire model and clamps opacity / corner_radius / chroma_strength where this path does not — unifying would silently add clamps to the export.
+- **Original (superseded) proposal, for the record:** `BuildCameraRenderPlan(spec, canvas_w, canvas_h)` plus `ResolveCameraFrame(plan, clock_ms, total_ms, screen_zoom)`, in a D2D-free header.
+- **Why it is NOT done yet:** the parse side was the surface that actually drifted (twice), and that is now unified with a mapper plus a guard test. The derivation side has never drifted, so this is hardening rather than a fix, and it is wide: it touches export_router, export_passthrough, export_pipeline, camera_export_renderer, preview_camera_renderer and their tests. Worth doing as its own commit so a regression bisects cleanly.
+- **One real snag to fix while doing it:** the preview assigns its cached animation state INSIDE the `factory1 != nullptr && frame_bitmap_ != nullptr` guard, so a one-time bitmap-creation failure leaves `zoom_behavior_` / `layout_preset_` / `slide_edge_` stale. The pure plan build should be hoisted out of that guard. **Confirmed 2026-09-12 — but the recorded reason it is harmless was wrong.** It is not that `painter_ready_` "stays" false; `painter_ready_ = false` is written unconditionally one line *above* the guard and `Draw` short-circuits on it, so the stale members can never be consumed. The hoist is therefore safe, but only while that unconditional write and the `|| !painter_ready_` term in the rebuild predicate both survive. Move one and the staleness becomes reachable.
+- **A second divergence in shape, not in result:** the export copies `anim_params_` into a local and mutates the copy; the preview mutates the member in place, so its cached struct carries the previous frame's `zoom_scale` across a painter rebuild. Not observable today (all three per-frame fields are overwritten before every use), but a `ResolveCameraFrame(const Plan&, …)` makes the export's shape the surviving one, which is the right outcome.
+- **Cheap adjacent fix, done in the same change as this correction:** `preview_router` previewOpen re-implemented the export's camera asset conditions inline while claiming to mirror them. It now calls `ShouldCompositeCamera`. Same family of drift, and it was in the blast radius.
+- **Note `CameraBubblePainter::Style` lives in a header that pulls in `d2d1_1.h`** — move it down into `camera_export_layout.h` with a painter-side alias, or the "pure" plan drags D2D into every test translation unit.
+- **Effort:** human ~1 day / CC ~1h.
+
+### ~~Camera zoom emphasis (the pulse) is not ported~~ — DONE
+
+Ported. `cameraZoomEmphasisPreset` (`none`/`pulse`) + `cameraZoomEmphasisStrength`
+now render on BOTH legs, running the macOS formula
+`1 + strength*0.5*(1 - cos(2 pi * 2Hz * localTime))` for as long as a zoom
+segment is active — a continuous throb, not a one-shot bump on the zoom edge.
+Pure + tested as `ResolveCameraPulseScale`; it drops into the same multiplicative
+`scale` product as the zoom and intro/outro scales, before the canvas clamp.
+
+What actually unblocked it was the slice before this one, not this code: the
+preview and the export now resolve segment membership through ONE
+`ZoomSegmentStateAt` over ONE builder's segments, so both legs measure
+`localTime` from the same backdated segment start. The deferral note below was
+right that a per-click clock would have shipped a visible defect — at 2 Hz a
+200 ms offset is ~144 degrees of phase — and that failure is now pinned by
+`CameraPulseTest.PreviewAndExportAgreeOnPhaseForTheSameSegmentTime`, which
+asserts the two clocks move the bubble in OPPOSITE directions at the same
+instant.
+
+The two "no macOS answer to copy" decisions were resolved as: (1) the pulse keys
+off half-open segment MEMBERSHIP, never `zf.active` (which stays true through the
+whole ease-out tail), so the throb ends exactly at `end_ms` on both legs; (2) the
+pulse clock stays SOURCE-derived while the camera's intro/outro clock stays
+EDITED — deliberately split, and split identically on both legs, so a cut inside
+a zoom segment jumps the phase on the preview and the exported file in the same
+way rather than desyncing them.
+
+Residual, deliberately not closed here: the phase agreement is proven by
+construction and by headless tests, but an on-device eyeball comparing an
+exported file against the editor at the same timestamp has not been done — CI
+cannot do it. Fold it into the camera on-device QA pass.
+
+### ~~Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)~~ — MEASURED 2026-09-11, latent not live
+
+- **Settled the way the item asked: by measuring, not by fixing.** The divergence
+  needs a non-zero container PTS base to exist. Windows recordings do not have one.
+- **The measurement.** Every `.clingfyproj` on the dev box — **36 screen videos** —
+  probed with `ffprobe -select_streams v:0 -show_entries stream=start_pts`:
+  **`start_pts=0` on 36 of 36**, `time_base=1/30000` throughout. Not one non-zero base.
+- **So the export's rebase is a no-op on these files.** `frame_ms =
+  (timestamp - first_video_hns) / 10000` with `first_video_hns` resolving to 0
+  is `timestamp / 10000`, which is exactly the container-relative clock the
+  preview's `CurrentPlaybackUs()` already reports. The two sides agree.
+- **The code already relies on this.** The reorder branch hardcodes
+  `first_video_hns = 0` and justifies it in its own comment: *"The recorder
+  writes from PTS 0"* (`export_pipeline.cpp`, the `if (reorder)` block). That
+  assertion was never measured; it is now.
+- **Durations do not split the two sides either.** 10 of the 36 have a video
+  stream duration differing from the container duration by more than 50 ms
+  (audio running longer). Both sides take the *container* duration — export from
+  `MF_PD_DURATION` on the presentation descriptor, preview from
+  `PlaybackSession().NaturalDuration()` — so the stream/container gap is the
+  same number on both and cannot desynchronise them.
+- **The one case still unmeasured: a macOS-produced bundle opened on Windows.**
+  `RecordingProject::platform` is explicitly `"windows" today; "macos" when read
+  from a Mac bundle`, so this is reachable, and AVAssetWriter is a different
+  writer with no measurement behind it here. No camera-bearing bundle existed on
+  the dev box to check (0 of 36 had `camera.mp4`/`camera.mov`). If a Mac
+  recording ever shows a non-zero base, the fix is the one this item always
+  proposed: rebase the preview clock the same way the export does, keeping one
+  definition of "clip time" instead of two.
+- **Do not "fix" the Windows path on this evidence.** Rebasing a clock whose base
+  is provably zero adds a term that is always zero and a second place to get it
+  wrong.
+- **Reproduce:** `ffprobe -v error -select_streams v:0 -show_entries
+  stream=start_pts,time_base -of csv=p=0 <bundle>/capture/screen.mov`
+
+<details>
+<summary>Original item (kept for the reasoning, which still applies to the macOS-bundle case)</summary>
+
+### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)
+
+- **What:** On a clip with no cuts, the preview and the export derive the animation clock from different sources, so a fade-in / slide-out could start and finish at slightly different absolute times on each side. Trimmed projects are NOT affected — both sides use the edited position and edited duration there, which is the case the animation port was built and reasoned about.
+- **The specific divergence.** Export rebases to the first decoded video frame: `frame_ms = (timestamp - first_video_hns) / 10000` and `camera_total_ms = (duration_hns - first_video_hns) / 10000` (`windows/runner/Capture/Export/export_pipeline.cpp:1097-1103`, `:1385-1394`). The preview uses the MediaPlayer's own clock: `CurrentPlaybackUs()` and `PlaybackSession().NaturalDuration()` (`windows/runner/preview/preview_engine.cpp:1434-1446`). Those agree only when the container's PTS base is zero.
+- **Why the export bothers to rebase**, per its own comment: raw `MF_PD_DURATION` keeps the container's PTS base, and an unrebased duration pushes the outro window past the last reachable `frame_ms`, so the outro never completes. That is the failure this rebasing exists to prevent — which is the reason to suspect the un-rebased preview side rather than the export.
+- **Not observed, only derived.** Found by reading both clocks while wiring the preview animation (PR #419); no recording has been measured. Our own screen recordings may well have a zero PTS base, in which case the two agree today and this is latent rather than live. Do not "fix" it before measuring.
+- **How to settle it:** open a real untrimmed recording, log `first_video_hns` from the export path and `NaturalDuration` / position from the preview path for the same file, and compare. Zero base and equal durations → close this as a non-issue and record that. Non-zero → rebase the preview clock the same way the export does, which keeps one definition of "clip time" instead of two.
+- **Start at:** `windows/runner/preview/preview_engine.cpp` (where `emit_pos_ms` / `emit_dur_ms` are produced on the MediaPlayer path, around `CurrentPlaybackUs` / `NaturalDuration`) and the `first_video_hns` rebase in `windows/runner/Capture/Export/export_pipeline.cpp` (the rebasing it should match). Line numbers from the original item drifted out of date under #466–#473; search the identifiers instead.
+- **Effort:** human ~2h / CC ~30min, most of it the measurement.
+
+</details>
 
 ## Windows — bridge routers
 
-### Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)
-- **What:** Extract the duplicated camera-composition parsing (`preview_router.cpp` `ReadCameraComposition` + `export_router.cpp` `HandleProcessVideo`) into one shared `Bridge/Routers` helper, following the `color_grade_args` pattern.
-- **Why:** The duplication already hid a missing-chroma bug once (caught in the 9.7 review). Two parsers for one wire shape will drift again.
-- **Context:** Deferred in the 2026-07-03 eng review of the color-grade port (editing step 2). PR-2a introduces `Bridge/Routers/color_grade_args.{h,cpp}` — one parser used by both routers — which is exactly the shape the camera parsing should adopt. Deferred because touching two hot routers for zero user-visible change would widen an already-full color slice.
-- **Pros:** Kills the parser-drift bug class for camera args; makes the routers smaller.
-- **Cons:** Pure refactor — no user-visible change; needs careful diffing of the two existing parsers (they may have drifted already, which is the point).
-- **Start at:** `windows/runner/Bridge/Routers/preview_router.cpp` (`ReadCameraComposition`), `windows/runner/Bridge/Routers/export_router.cpp` (`HandleProcessVideo` camera block); model on `Bridge/Routers/color_grade_args.{h,cpp}` once PR-2a lands.
-- **Depends on:** PR-2a (color_grade_args establishes the pattern).
-- **Effort:** human ~2h / CC ~15min.
+### ~~Camera-composition arg-parsing dedupe (shared Bridge/Routers helper)~~ — DONE
+- Landed with the intro/outro preview slice as
+  `Bridge/Routers/camera_composition_args.{h,cpp}`, following the
+  `color_grade_args` pattern. Both `preview_router`
+  (previewSetCameraPlacement) and `export_router` (processVideo) now call
+  `clingfy::bridge::ReadCameraComposition`.
+- The prediction in this entry was correct twice over: after the
+  missing-chroma bug, the two parsers had drifted AGAIN — neither read the four
+  `cameraIntroPreset` / `cameraOutroPreset` / `cameraIntroDurationMs` /
+  `cameraOutroDurationMs` keys, so the inline preview never animated while the
+  export did. Covered by `camera_composition_args_test.cpp`.
 
 ### Log files lose their beginning while the app is still running
 

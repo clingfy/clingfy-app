@@ -3,6 +3,7 @@
 #include <mfapi.h>
 #include <mferror.h>
 
+#include <cmath>
 #include <utility>
 
 #include "Capture/Camera/camera_export_layout.h"
@@ -163,9 +164,39 @@ void PreviewCameraRenderer::PullForward(std::int64_t camera_hns) {
   }
 }
 
+double PreviewCameraEffectScale(double surface_short_side,
+                                double export_short_side) {
+  if (!(surface_short_side > 0.0) || !(export_short_side > 0.0)) {
+    return 1.0;
+  }
+  return surface_short_side / export_short_side;
+}
+
+bool PreviewCameraNeedsRebuild(bool dirty, UINT canvas_w, UINT canvas_h,
+                               double effect_scale, UINT prepared_canvas_w,
+                               UINT prepared_canvas_h,
+                               double prepared_effect_scale,
+                               bool painter_ready) {
+  // The retry term. A painter build can fail for a frame, and the prepared_*
+  // values are recorded even when it does — so without this every other term
+  // reads false from then on and the camera never draws again.
+  if (!painter_ready) {
+    return true;
+  }
+  if (dirty || canvas_w != prepared_canvas_w || canvas_h != prepared_canvas_h) {
+    return true;
+  }
+  // The export size resolves one frame LATE (it needs the decoded source
+  // dimensions), so the scale can change while the canvas does not. Without
+  // this term the first painter — built at the identity fallback — would never
+  // be replaced.
+  return std::abs(effect_scale - prepared_effect_scale) > 1e-6;
+}
+
 void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
                                               UINT canvas_w, UINT canvas_h,
-                                              std::int64_t playback_us) {
+                                              std::int64_t playback_us,
+                                              double effect_scale) {
   if (ctx == nullptr || canvas_w == 0 || canvas_h == 0) {
     return;
   }
@@ -176,8 +207,9 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   {
     std::lock_guard<std::mutex> lock(mutex_);
     comp = composition_;
-    needs_rebuild = dirty_ || canvas_w != prepared_canvas_w_ ||
-                    canvas_h != prepared_canvas_h_;
+    needs_rebuild = PreviewCameraNeedsRebuild(
+        dirty_, canvas_w, canvas_h, effect_scale, prepared_canvas_w_,
+        prepared_canvas_h_, prepared_effect_scale_, painter_ready_);
     dirty_ = false;
   }
   composition_visible_ = comp.visible;
@@ -186,8 +218,35 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   }
 
   // (Re)build the painter when the composition or the canvas changed. Done here,
-  // OUTSIDE the engine's BeginDraw (the shadow bake does SetTarget round-trips).
-  if (needs_rebuild || !painter_ready_) {
+  if (needs_rebuild) {
+    // painter_ready_ and the prepared_* trio are written FIRST and
+    // unconditionally: !painter_ready_ is the sole retry term (see
+    // PreviewCameraNeedsRebuild), so recording the attempt up front is what
+    // makes a FAILED BUILD ask again next frame instead of every other term
+    // reading false forever.
+    //
+    // That is a guarantee about failed builds only, not a total one. A
+    // composition that arrives while the camera is hidden still consumes
+    // dirty_ above and returns before this branch — that path self-heals
+    // because PreviewEngine::SetCameraComposition re-dirties and repaints, not
+    // because of anything here.
+    painter_ready_ = false;
+    prepared_canvas_w_ = canvas_w;
+    prepared_canvas_h_ = canvas_h;
+    prepared_effect_scale_ = effect_scale;
+
+    // Built OUTSIDE the factory/bitmap guard: the plan is pure, cheap and
+    // device-free, and hoisting it keeps the one derivation in one place
+    // rather than half inside a D2D availability check. Under a permanent
+    // bitmap-creation failure this now runs once per frame where it used to
+    // run zero times — the success steady state does not enter this branch at
+    // all. Draw still short-circuits on !painter_ready_, so a plan whose
+    // painter failed to build is never drawn from.
+    plan_ = clingfy::capture::BuildCameraRenderPlan(
+        comp, /*canvas_w=*/static_cast<double>(canvas_w),
+        /*canvas_h=*/static_cast<double>(canvas_h),
+        /*effect_scale=*/effect_scale);
+
     ComPtr<ID2D1Factory> factory0;
     ctx->GetFactory(factory0.GetAddressOf());
     ComPtr<ID2D1Factory1> factory1;
@@ -201,30 +260,12 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
       ctx->CreateBitmap(D2D1::SizeU(cam_w_, cam_h_), nullptr, 0, props,
                         frame_bitmap_.GetAddressOf());
     }
-    painter_ready_ = false;
     if (factory1 != nullptr && frame_bitmap_ != nullptr) {
-      const clingfy::capture::CameraBubbleRect bubble =
-          clingfy::capture::ComputeCameraBubbleRect(
-              static_cast<double>(canvas_w), static_cast<double>(canvas_h),
-              comp.has_center, comp.center_x, comp.center_y, comp.layout_preset,
-              comp.size_factor);
-      clingfy::capture::CameraBubblePainter::Style style;
-      style.mirror = comp.mirror;
-      style.opacity = comp.opacity;
-      style.border_width = comp.border_width;
-      style.has_border_color = comp.has_border_color;
-      style.border_argb = comp.border_argb;
-      style.shadow_preset = comp.shadow_preset;
-      style.chroma_enabled = comp.chroma_enabled;
-      style.chroma_strength = comp.chroma_strength;
-      style.has_chroma_color = comp.has_chroma_color;
-      style.chroma_argb = comp.chroma_argb;
-      painter_ready_ = painter_.Prepare(factory1.Get(), ctx, bubble, comp.shape,
-                                        comp.corner_radius, comp.content_mode,
-                                        style, cam_w_, cam_h_);
+      painter_ready_ = painter_.Prepare(factory1.Get(), ctx, plan_.bubble,
+                                        plan_.shape, plan_.corner_radius,
+                                        plan_.content_mode, plan_.style,
+                                        cam_w_, cam_h_);
     }
-    prepared_canvas_w_ = canvas_w;
-    prepared_canvas_h_ = canvas_h;
   }
 
   // Advance the held camera frame to the playback position.
@@ -248,11 +289,33 @@ void PreviewCameraRenderer::PrepareAndAdvance(ID2D1DeviceContext* ctx,
   PullForward(camera_hns);
 }
 
-void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx) {
+void PreviewCameraRenderer::Draw(ID2D1DeviceContext* ctx,
+                                 std::int64_t frame_ms,
+                                 std::int64_t total_duration_ms,
+                                 double screen_zoom, bool zoom_in_segment,
+                                 std::int64_t zoom_segment_local_ms) {
   if (!composition_visible_ || !painter_ready_ || !has_held_frame_) {
     return;
   }
-  painter_.Draw(ctx, frame_bitmap_.Get());
+
+  // The per-frame half, shared with CameraExportRenderer::Draw. The plan is
+  // const here: the zoom scale and the segment clock are arguments, not cached
+  // state, so two frames cannot leak into each other. ResolveCameraRenderFrame
+  // returns identity when no preset is set or the duration is not known yet,
+  // and the painter falls through to the byte-identical static path on an
+  // identity Frame — so an un-animated preview renders exactly as before.
+  const clingfy::capture::CameraAnimationOutput a =
+      clingfy::capture::ResolveCameraRenderFrame(
+          plan_, /*frame_ms=*/frame_ms,
+          /*total_duration_ms=*/total_duration_ms, /*screen_zoom=*/screen_zoom,
+          /*zoom_in_segment=*/zoom_in_segment,
+          /*zoom_segment_local_ms=*/zoom_segment_local_ms);
+  clingfy::capture::CameraBubblePainter::Frame frame;
+  frame.opacity_mul = a.opacity;
+  frame.scale = a.scale;
+  frame.translate_x = a.translate_x;
+  frame.translate_y = a.translate_y;
+  painter_.Draw(ctx, frame_bitmap_.Get(), frame);
 }
 
 }  // namespace clingfy::preview

@@ -1,0 +1,274 @@
+name: Release - macOS dev channel
+
+# PHASE B of the Azure Pipelines -> GitHub Actions release migration.
+# GitHub counterpart of azure-pipelines/dev-channel.yml.
+#
+# This lane produces a signed, notarized, stapled build against the DEV
+# certificate and publishes it to the dev appcast, so it exercises the whole
+# Apple path (see .github/actions/apple-signing) without touching what real
+# users install.
+#
+# Gate before trusting it, per the migration spec: `codesign -dvvv` and
+# `spctl -a -vvv` on a GitHub-built .app must match an Azure-built one, and the
+# notarization ticket must staple. The lane prints both, and Step 4 already
+# fails on an unstapled build.
+#
+# Controlled by the same repository variable as the Windows dev lane:
+# GH_RELEASE_LANES_ENABLED must be "true", and the Azure trigger for this lane
+# must be disabled first, or both systems publish the same channel.
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: release-macos-dev
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  APP_ENV: dev
+  RELEASE_CHANNEL: dev
+  BUILD_SOURCEBRANCH: ${{ github.ref }}
+  BUILD_SOURCEBRANCHNAME: ${{ github.ref_name }}
+  BUILD_BUILDID: ${{ github.run_id }}
+
+jobs:
+  build-publish:
+    name: Build, notarize, publish
+    runs-on: macos-latest
+    timeout-minutes: 120
+    if: vars.GH_RELEASE_LANES_ENABLED == 'true'
+    # Declared so the OIDC token's `sub` is `repo:clingfy/clingfy-app:environment:development`,
+    # which is what the dev publish role's trust policy matches on. Without it `sub` carries the
+    # ref instead and the assume-role fails with a message that says nothing about environments.
+    environment: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify Xcode and Swift
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Make release scripts executable
+        run: find ops/release -type f -name "*.sh" -exec chmod +x {} +
+
+      - name: Stage .env.dev
+        env:
+          ENV_DEV_B64: ${{ secrets.ENV_DEV_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_DEV_B64:-}" ]; then
+            echo "::error::Secret ENV_DEV_B64 is not set."
+            exit 1
+          fi
+          printf '%s' "$ENV_DEV_B64" | base64 -d > .env.dev
+          test -s .env.dev
+          echo "Staged .env.dev"
+
+      - name: Resolve version and build number
+        env:
+          # github.run_number restarts at 1 for a new workflow file, while the
+          # Azure lane numbered dev builds with the org-wide $(Build.BuildId),
+          # which had reached 802 by 2026-08-06. Sparkle compares these numbers,
+          # so publishing a lower one means installed dev builds ignore the
+          # release. Seed chosen with headroom; the check below is the real
+          # safety net. Raise it, never lower it.
+          MACOS_DEV_BUILD_SEED: "1000"
+        run: |
+          set -euo pipefail
+
+          VERSION_LINE="$(grep '^version:' pubspec.yaml | awk '{print $2}')"
+          APP_VERSION="${VERSION_LINE%%+*}"
+          CANDIDATE=$(( GITHUB_RUN_NUMBER + MACOS_DEV_BUILD_SEED ))
+
+          # Was reading AZ_CDN_ENDPOINT from .env.dev — the Azure CDN, whose storage account was
+          # DELETED on 2026-09-15. A baseline that can no longer move makes the monotonicity guard
+          # below pass no matter what the dev channel actually advertises. Same defect the prod lane
+          # carried, same fix: FEED_URL is provider-aware (configure_public_endpoint), so it names
+          # whichever feed is really being served.
+          source ./ops/release/_config.sh
+          PUBLISHED=""
+          if [ -n "${FEED_URL:-}" ]; then
+            echo "Reading the published build number from ${FEED_URL}"
+            PUBLISHED="$(curl -fsS --max-time 30 "$FEED_URL" 2>/dev/null \
+              | grep -o '<sparkle:version>[0-9]*' \
+              | grep -o '[0-9]*' | sort -n | tail -1 || true)"
+          fi
+
+          if [ -n "$PUBLISHED" ]; then
+            echo "Live dev appcast advertises build $PUBLISHED"
+            if [ "$CANDIDATE" -le "$PUBLISHED" ]; then
+              echo "::error::Computed build number $CANDIDATE is not greater than the published $PUBLISHED. Sparkle would treat this release as older and installed dev builds would never update. Raise MACOS_DEV_BUILD_SEED above $(( PUBLISHED - GITHUB_RUN_NUMBER )) in this workflow."
+              exit 1
+            fi
+          else
+            echo "::warning::Could not read the live appcast; skipping the monotonicity check."
+          fi
+
+          echo "Resolved dev version: ${APP_VERSION}+${CANDIDATE}"
+          {
+            echo "APP_VERSION=$APP_VERSION"
+            echo "BUILD_NUMBER=$CANDIDATE"
+            echo "BUILD_NUMBER_OVERRIDE=$CANDIDATE"
+          } >> "$GITHUB_ENV"
+
+      # Was `azure/login@v2` — see the equivalent note in release-macos-prod.yml. The dev Azure
+      # account (`clingfyreleasesdev`) was deleted on 2026-09-15 and the dev channel now publishes to
+      # the dev releases bucket, so this lane had no working credentials for its publish target.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-release-macos-dev-${{ github.run_id }}
+
+      - name: "Step 0: Restore dev release history"
+        run: ./ops/release/00_restore_history.sh
+
+      - name: "Step 0.5: Overwrite guard (dev version not already published)"
+        run: |
+          set -euo pipefail
+          source ./ops/release/_config.sh
+
+          EXPECTED_BLOB="${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+          echo "Checking ${RELEASE_STORAGE_PROVIDER} store for: ${AZ_CONTAINER}/${EXPECTED_BLOB}"
+
+          # Routed through the provider seam, like the prod lane (#492). The hardcoded
+          # `az storage blob exists` this replaces asked Azure regardless of where the publish step
+          # actually writes, so once dev moved to AWS it would have answered "not published" for
+          # every version and waved through the overwrite it exists to block.
+          PROBE=0
+          publish_object_exists "$AZ_CONTAINER" "$EXPECTED_BLOB" || PROBE=$?
+
+          # A guard that cannot read its store has not passed, it has failed to run.
+          if [ "$PROBE" = "2" ]; then
+            echo "::error::Overwrite guard could not read ${AZ_CONTAINER}/${EXPECTED_BLOB} from the ${RELEASE_STORAGE_PROVIDER} store. Not treating an unreadable store as an unpublished version."
+            exit 1
+          fi
+
+          if [ "$PROBE" = "0" ]; then
+            echo "::error::Dev channel version already exists at ${EXPECTED_BLOB}"
+            exit 1
+          fi
+          echo "Version does not exist yet. Proceeding."
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.1
+          channel: stable
+
+      - name: Install Sparkle tools
+        run: brew install --cask sparkle
+
+      - name: Install create-dmg
+        run: |
+          if command -v create-dmg >/dev/null 2>&1; then
+            echo "create-dmg already installed"
+          else
+            brew install create-dmg
+          fi
+
+      - name: Install Apple signing material
+        id: signing
+        uses: ./.github/actions/apple-signing
+        with:
+          certificate-p12-base64: ${{ secrets.APPLE_CERT_P12_B64 }}
+          certificate-password: ${{ secrets.APPLE_CERT_PASSWORD }}
+          provisioning-profile-base64: ${{ secrets.APPLE_PROFILE_DEV_B64 }}
+
+      - name: Stage notary and Sparkle keys
+        env:
+          APPLE_NOTARY_KEY_B64: ${{ secrets.APPLE_NOTARY_KEY_B64 }}
+          SPARKLE_KEY_B64: ${{ secrets.SPARKLE_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_NOTARY_KEY_B64" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$SPARKLE_KEY_B64"      | base64 -d > "$RUNNER_TEMP/SparkleKey"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/SparkleKey"
+          test -s "$RUNNER_TEMP/AuthKey.p8" || { echo "::error::APPLE_NOTARY_KEY_B64 decoded empty"; exit 1; }
+          test -s "$RUNNER_TEMP/SparkleKey" || { echo "::error::SPARKLE_KEY_B64 decoded empty"; exit 1; }
+          {
+            echo "NOTARY_KEY_PATH=$RUNNER_TEMP/AuthKey.p8"
+            echo "SPARKLE_KEY_PATH=$RUNNER_TEMP/SparkleKey"
+          } >> "$GITHUB_ENV"
+
+      - name: "Step 1: Build and archive"
+        run: ./ops/release/01_build.sh
+
+      - name: "Step 2: Create DMG"
+        run: ./ops/release/02_create_dmg.sh
+
+      - name: "Step 3: Notarize"
+        run: ./ops/release/03_notarize.sh
+
+      - name: "Step 4: Staple and verify"
+        run: ./ops/release/04_finish.sh
+
+      - name: Signing evidence
+        run: |
+          # The Phase B acceptance gate: this output must match an Azure-built
+          # app. codesign does not fail on a wrong identity, so comparing here
+          # is the only way to catch a build signed by the wrong team.
+          set +e
+          APP="build/macos/Build/Products/Release/Clingfy.app"
+          [ -d "$APP" ] || APP="$(find build/macos -maxdepth 6 -name '*.app' -type d | head -1)"
+          echo "Inspecting: $APP"
+          codesign -dvvv "$APP" 2>&1
+          echo "---"
+          spctl -a -vvv -t exec "$APP" 2>&1
+          echo "---"
+          xcrun stapler validate "$APP" 2>&1
+
+      - name: Re-authenticate to AWS before publishing
+        # The credential from the step near the top of this job is STS, and
+        # configure-aws-credentials requests a ONE HOUR session by default. A
+        # signed + notarized macOS build routinely takes longer than that, so by
+        # the time Step 5 runs `aws s3 cp` the session can already be dead. It
+        # surfaces as ExpiredToken on the upload and reads exactly like a
+        # permissions problem -- the same trap the Azure AADSTS700024 note this
+        # replaces was written for. Minting a fresh one here costs nothing.
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-publish-macos-dev-${{ github.run_id }}
+
+      - name: "Step 5: Publish dev release"
+        run: ./ops/release/05_publish_azure.sh
+
+      - name: Upload dist artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clingfy-Dev-Release
+          path: dist
+          if-no-files-found: warn
+
+      - name: Notify Telegram (success)
+        if: success()
+        run: ./ops/release/notify_telegram.sh success
+
+      - name: Notify Telegram (failure)
+        if: failure()
+        run: ./ops/release/notify_telegram.sh failure
+
+      - name: Delete signing keychain
+        if: always()
+        run: |
+          # The runner is ephemeral, but an unlocked keychain holding a Developer
+          # ID private key should not outlive the steps that need it.
+          if [ -n "${CLINGFY_SIGNING_KEYCHAIN:-}" ] && [ -f "$CLINGFY_SIGNING_KEYCHAIN" ]; then
+            security delete-keychain "$CLINGFY_SIGNING_KEYCHAIN" || true
+            echo "Deleted $CLINGFY_SIGNING_KEYCHAIN"
+          fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/SparkleKey" || true

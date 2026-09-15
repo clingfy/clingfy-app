@@ -39,6 +39,7 @@
 #include <vector>
 
 #include "Capture/Export/clip_playback_planner.h"
+#include "Capture/Camera/camera_render_plan.h"
 #include "Capture/Background/canvas_preset_renderer.h"
 #include "Capture/Export/color_grade.h"
 
@@ -138,6 +139,10 @@ struct RenderRequest {
   // is polled each frame so a cancel aborts the loop cleanly. Both default to
   // no-ops — a synchronous export (or a test) needs neither.
   std::string bitrate;
+
+  // Requested video codec ("h264"/"hevc"). Resolved against what this machine
+  // can actually encode; see EncoderConfig::codec.
+  std::string codec;
   std::function<void(double)> on_progress;
   std::function<bool()> is_cancelled;
 
@@ -152,6 +157,12 @@ struct RenderRequest {
   // renderer (8.2) and the smart-zoom controller (8.3). Set whenever either
   // feature is active.
   std::wstring cursor_sidecar_path;
+
+  // `<project>/capture/zoom.manual.json`, when the user has authored or edited
+  // zoom segments. Empty → auto zoom only, exactly as before manual editing
+  // existed. Passed explicitly rather than derived from cursor_sidecar_path so
+  // the layout rule lives in one place (zoom_manual_store.h).
+  std::wstring zoom_manual_path;
 
   // Phase 8.3 smart zoom. When `zoom_enabled` and a sidecar is present, the
   // export auto-generates zoom segments from the recorded clicks + cursor path
@@ -174,42 +185,25 @@ struct RenderRequest {
   // Recording-relative ms of the camera's first frame (camera.meta.json sync
   // key): the camera frame for screen-time `tMs` is at `tMs - startOffsetMs`.
   std::int64_t camera_start_offset_ms = 0;
-  // Bubble placement, from the Dart `camera*` export args. `has_center` true
-  // uses the manual normalized center; otherwise the layout preset's default
-  // corner is used. size_factor is the fraction of the shorter canvas side.
-  bool camera_has_center = false;
-  double camera_center_x = 0.0;
-  double camera_center_y = 0.0;
-  std::string camera_layout_preset;
-  double camera_size_factor = 0.18;
-  // Shape ("circle" / "roundedRect" / "square" / "squircle"), corner radius
-  // (Dart 0..0.5 fraction), and content mode ("fill" cover / "fit" contain).
-  std::string camera_shape;
-  double camera_corner_radius = 0.0;
-  std::string camera_content_mode;
-  // Phase 9.5 styling. mirror flips the camera content horizontally; opacity
-  // (0..1) fades it; border_width (px) + border_color_argb (0xAARRGGBB, nullopt
-  // = no border) stroke the bubble; shadow_preset (0 none, 1/2/3) drops a
-  // blurred shadow. Unsupported/malformed values soft-fail (no styling), never a
-  // failed export.
-  bool camera_mirror = false;
-  double camera_opacity = 1.0;
-  double camera_border_width = 0.0;
-  std::optional<std::int64_t> camera_border_color_argb;
-  int camera_shadow_preset = 0;
-  // Phase 9.7 chroma key. enabled → the camera content's key color (argb, nullopt
-  // = default green) within `strength` tolerance (0..1) is keyed transparent.
-  // Applies to the camera layer only; border/shadow are unaffected. Soft-fails to
-  // an unkeyed camera on any effect failure, never a failed export.
-  bool camera_chroma_enabled = false;
-  double camera_chroma_strength = 0.4;
-  std::optional<std::int64_t> camera_chroma_color_argb;
-  // Phase 9.7 intro/outro animation preset names ("none"/"fade"/"pop"/"slide",
-  // "shrink") + durations (ms). Unknown names soft-fail to a static bubble.
-  std::string camera_intro_preset;
-  std::string camera_outro_preset;
-  int camera_intro_duration_ms = 0;
-  int camera_outro_duration_ms = 0;
+  // HOW to draw the bubble — the same authored spec the bridge parsed and the
+  // inline preview draws from, assigned across from PassthroughInput whole.
+  // See Capture/Camera/camera_render_plan.h for the fields and wire defaults.
+  //
+  // `camera.visible` is carried but NEVER READ on this path. `draw_camera`
+  // above is the export's only gate, and the two are NOT interchangeable:
+  // draw_camera is the RESOLVED verdict (assets present together, meta
+  // parsed, previewBurnedIn false, frames > 0); camera.visible is only the
+  // raw user toggle.
+  //
+  // They LOOK interchangeable in production, and that is the trap. The
+  // assignment that fills this field sits inside `if (wants_camera)` in
+  // ExportPassthroughCopy, and ShouldCompositeCamera requires camera_visible,
+  // so today camera.visible is true exactly when draw_camera is. You can
+  // convince yourself they are the same by reading the production path and
+  // be wrong: substituting it for draw_camera silently drops the other four
+  // guards, and the one test that would catch it GTEST_SKIPs without a D3D11
+  // device. Gate on draw_camera, and keep that assignment gated.
+  clingfy::capture::CameraRenderSpec camera;
 };
 
 struct RenderResult {
@@ -259,6 +253,19 @@ bool IsDeviceRemovedHresult(HRESULT hr);
 // output and leaves NO file at the destination — Phase 10.4). Never throws —
 // all Media Foundation / Direct2D failures are reported through
 // `RenderResult::ok` + `message`.
+// The export leg's camera plan, as a pure function of the request and the
+// canvas. Exists as a named free function rather than inline in
+// RenderComposedExport for one reason: it is the only way to assert what the
+// export passes as `effect_scale` without a D3D11 device. Every camera test
+// in export_pipeline_test.cpp GTEST_SKIPs without one, so they score as
+// passes while proving nothing about this.
+//
+// The export paints ON the export canvas, so kExportCameraEffectScale (1.0)
+// is the whole of it — the authored lengths are already in this surface's
+// pixels. The inline preview is the leg that passes anything else.
+clingfy::capture::CameraRenderPlan CameraPlanForExportRequest(
+    const RenderRequest& request, double canvas_w, double canvas_h);
+
 RenderResult RenderComposedExport(const RenderRequest& request);
 
 }  // namespace clingfy::capture::export_

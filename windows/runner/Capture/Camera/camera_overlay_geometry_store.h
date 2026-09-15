@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
+#include <string>
 
 // Live camera-overlay GEOMETRY (position + size) for the recording preview.
 //
@@ -104,6 +106,71 @@ struct NormalizedCenter {
 NormalizedCenter NormalizedCenterForRect(int work_left, int work_top,
                                          int work_right, int work_bottom,
                                          const FloatingRect& rect);
+
+// Record-stop -> editor hand-off: the live overlay geometry expressed in the
+// EDITOR's coordinate space, for CameraEditorSeed (macOS parity with
+// ScreenRecorderFacade.editorSeed / initialEditorCameraCenter).
+//
+// This is not a rename of the store's fields — the two live in different
+// spaces and both axes need converting:
+//
+//   POSITION. The store normalizes against the MONITOR WORK AREA (rcWork, so
+//   the taskbar band is excluded) of whatever monitor the bubble was last
+//   dropped on. The seed normalizes against the CAPTURED CONTENT rect, which
+//   for a display capture is the FULL monitor (rcMonitor, taskbar included),
+//   for an area capture is the crop box, and for a window capture is the
+//   window's extended frame bounds. Those rects do not coincide, so the value
+//   has to go through absolute screen pixels: de-normalize against the work
+//   area, then re-normalize against the content rect. (macOS gets away with a
+//   near-identity here because it normalizes the overlay against visibleFrame
+//   and falls back to visibleFrame as the content rect; Windows does not.)
+//
+//   Y AXIS. The store measures y DOWN from the work-area top, which is also
+//   what Win32/D2D use. The `cameraNormalizedCenter` wire field is y-UP: Dart
+//   writes `1.0 - dy` into it and reads it back the same way (see
+//   post_processing_controller.setCameraManualCenterPreview and
+//   post_camera_section._resolvedHandlePosition), and macOS consumes it
+//   directly as a bottom-up CGRect. So the seed emits `1 - y`, and
+//   ComputeCameraBubbleRect flips it back for D2D. Those two flips are the
+//   only places this convention is applied — keep them in sync.
+//
+//   SIZE. The store's `size` is LOGICAL px (120..400, DPI-independent) while
+//   the content rect is PHYSICAL px, so the size has to be scaled by the
+//   RECORDED monitor's DPI before dividing. Skipping that silently shrinks the
+//   seeded bubble on a scaled display (220/2160 = 0.10 instead of 0.20 at
+//   200%), and the 0.08 clamp floor hides part of the error.
+struct CameraSeedGeometry {
+  // cameraLayoutPreset. Always a corner — there is no manual/custom value in
+  // either enum, and an unknown string silently coerces to bottom-right on
+  // both sides. Still emitted when a custom center is present, because the
+  // editor falls back to it if the user clears the manual position, and
+  // ResolveCameraSlideEdge reads it for the intro/outro slide direction.
+  std::string layout_preset;
+  // cameraNormalizedCenter, y-UP. Set ONLY when the user actually dragged the
+  // bubble (use_custom): a present center OVERRIDES layout_preset everywhere
+  // downstream, so emitting one unconditionally would permanently defeat the
+  // corner presets.
+  std::optional<double> normalized_center_x;
+  std::optional<double> normalized_center_y;
+  // cameraSizeFactor, a fraction of the content's SHORT edge. Clamped to the
+  // same [0.08, 0.45] band ComputeCameraBubbleRect re-applies, because this
+  // value is also surfaced straight to the editor's size slider.
+  double size_factor = 0.18;
+};
+
+// OverlayPosition index -> CameraLayoutPreset wire name. Mirrors macOS
+// CameraLayoutPreset.fromOverlayPosition: 0 topLeft, 1 topRight, 2 bottomLeft,
+// anything else bottomRight.
+std::string CameraLayoutPresetForOverlayPosition(int position);
+
+// Work-area rect and content rect are both in PHYSICAL screen px (the app is
+// PerMonitorV2, so every Win32 rect already is). `dpi_scale` is the RECORDED
+// monitor's scale (dpi/96) — never the bubble window's, which no longer exists
+// by the time the seed is built. Pure; unit-tested; no Win32 calls.
+CameraSeedGeometry ResolveCameraSeedGeometry(
+    const CameraOverlayGeometry& g, int work_left, int work_top,
+    int work_right, int work_bottom, int content_left, int content_top,
+    int content_right, int content_bottom, double dpi_scale);
 
 // Drag write-back revision adoption: the overlay may mark its own
 // SetCustomPosition revision as seen ONLY when it directly follows the last

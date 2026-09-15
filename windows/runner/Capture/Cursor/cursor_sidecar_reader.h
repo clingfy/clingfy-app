@@ -21,6 +21,25 @@ struct CursorSidecarSample {
   std::int32_t x = 0;        // capture-local px (same space as the encoded frame).
   std::int32_t y = 0;
   bool visible = false;
+  // Which recorded SHAPE this sample was drawn with; -1 when the recording
+  // carries none (anything captured before shapes existed, or a cursor that
+  // failed to rasterize). The export falls back to its vector arrow there,
+  // which is why that arrow cannot simply be deleted.
+  int sprite_id = -1;
+};
+
+// One recorded cursor shape. `pixels` is premultiplied BGRA, top-down, exactly
+// width*height*4 bytes — the layout Direct2D consumes directly.
+struct CursorSidecarSprite {
+  int id = -1;
+  std::int32_t width = 0;
+  std::int32_t height = 0;
+  // The point inside the sprite that sits at the reported position. Drawing
+  // without subtracting it puts every non-arrow cursor off by up to its own
+  // size — most visible on an I-beam, whose hotspot is its middle.
+  std::int32_t hotspot_x = 0;
+  std::int32_t hotspot_y = 0;
+  std::vector<std::uint8_t> pixels;
 };
 
 // A recorded click edge (Phase 8.1 writes press + release; Phase 8.3 smart zoom
@@ -35,6 +54,9 @@ struct CursorSidecarData {
   std::string target_type;   // "display" | "window" | "area".
   std::vector<CursorSidecarSample> samples;  // sorted by t_ms.
   std::vector<CursorSidecarClick> clicks;    // sorted by t_ms.
+  // Recorded shapes, indexed by their id (sprites[i].id == i for a file this
+  // app wrote). Empty for every recording made before shapes were captured.
+  std::vector<CursorSidecarSprite> sprites;
 };
 
 // Parse the full `cursor.jsonl` contents. Returns std::nullopt when the header
@@ -47,6 +69,9 @@ struct CursorAtResult {
   double x = 0.0;
   double y = 0.0;
   bool visible = false;
+  // The recorded shape in effect at this time, or -1 for the fallback
+  // arrow. Never interpolated: a shape is discrete.
+  int sprite_id = -1;
 };
 
 // Resolve the cursor position at `t_ms`. Before the first / after the last sample

@@ -16,6 +16,7 @@
 
 #include "Bridge/Devices/device_probe_log.h"
 #include "Capture/Camera/camera_format.h"
+#include "Encoding/mf_encoder_config.h"
 
 namespace clingfy::capture {
 
@@ -350,6 +351,15 @@ void CameraRecorder::ThreadMain(std::function<void(bool)> report_open) {
     out_type->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
     out_type->SetUINT32(MF_MT_AVG_BITRATE, ResolveBitrate(width, height, fps));
     out_type->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    // Issue #294, camera sidecar. This is a SECOND, independent sink writer —
+    // it does not go through MfSinkWriterEncoder — and the preview seeks into
+    // camera/raw.mov on every backward jump, so it pays its own lead-in and
+    // needs its own pin. Same rule, from the same shared helper.
+    if (const std::uint32_t gop =
+            clingfy::encoding::ResolveKeyframeIntervalFrames(fps);
+        gop > 0) {
+      out_type->SetUINT32(MF_MT_MAX_KEYFRAME_SPACING, gop);
+    }
     ::MFSetAttributeSize(out_type.Get(), MF_MT_FRAME_SIZE, width, height);
     ::MFSetAttributeRatio(out_type.Get(), MF_MT_FRAME_RATE, fps, 1);
     ::MFSetAttributeRatio(out_type.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);

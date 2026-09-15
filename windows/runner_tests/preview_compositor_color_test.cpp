@@ -175,7 +175,7 @@ bool ComposeAndSample(HeadlessD2D& gpu, PreviewCompositor& compositor,
       gpu.ctx.Get(),
       D2D1::RectF(0.0f, 0.0f, static_cast<float>(kTargetSize),
                   static_cast<float>(kTargetSize)),
-      {}, /*playback_us=*/0, /*now_seconds=*/0.0, zoom);
+      {}, {}, /*playback_us=*/0, /*now_seconds=*/0.0, zoom);
   if (FAILED(gpu.ctx->EndDraw())) return false;
   gpu.device.context()->Flush();
   std::vector<std::uint32_t> pixels;

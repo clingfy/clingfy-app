@@ -351,5 +351,157 @@ TEST(CameraOverlayPointInContent, ContentIsInsideHaloIsOutside) {
   EXPECT_TRUE(CameraOverlayPointInContent(0, 0, 0, kSide));
 }
 
+// ---- record-stop -> editor seed geometry ------------------------------------
+
+// A 1920x1080 monitor at the virtual-desktop origin with a 48px taskbar, so the
+// work area and the captured content rect deliberately DIFFER — that difference
+// is the whole point of the conversion and an identity mapping would hide it.
+constexpr int kWorkL = 0, kWorkT = 0, kWorkR = 1920, kWorkB = 1032;
+constexpr int kFullL = 0, kFullT = 0, kFullR = 1920, kFullB = 1080;
+
+CameraSeedGeometry SeedForDisplayCapture(const CameraOverlayGeometry& g,
+                                         double dpi_scale = 1.0) {
+  return ResolveCameraSeedGeometry(g, kWorkL, kWorkT, kWorkR, kWorkB, kFullL,
+                                   kFullT, kFullR, kFullB, dpi_scale);
+}
+
+CameraOverlayGeometry Dragged(double nx, double ny, double size = 220.0) {
+  CameraOverlayGeometry g;
+  g.size = size;
+  g.use_custom = true;
+  g.normalized_x = nx;
+  g.normalized_y = ny;
+  return g;
+}
+
+TEST(CameraLayoutPresetForOverlayPosition, MatchesTheMacosMapping) {
+  // macOS CameraLayoutPreset.fromOverlayPosition (Models.swift).
+  EXPECT_EQ(CameraLayoutPresetForOverlayPosition(0), "overlayTopLeft");
+  EXPECT_EQ(CameraLayoutPresetForOverlayPosition(1), "overlayTopRight");
+  EXPECT_EQ(CameraLayoutPresetForOverlayPosition(2), "overlayBottomLeft");
+  EXPECT_EQ(CameraLayoutPresetForOverlayPosition(3), "overlayBottomRight");
+  // Anything else falls back to bottom-right, like the Swift `default:` arm.
+  EXPECT_EQ(CameraLayoutPresetForOverlayPosition(-1), "overlayBottomRight");
+  EXPECT_EQ(CameraLayoutPresetForOverlayPosition(99), "overlayBottomRight");
+}
+
+TEST(ResolveCameraSeedGeometry, PresetPlacementEmitsNoCenter) {
+  // The center must stay absent for a preset placement: downstream a present
+  // center OVERRIDES layout_preset, so emitting one would defeat the corners.
+  const CameraSeedGeometry seed = SeedForDisplayCapture(Preset(220.0, 0));
+  EXPECT_EQ(seed.layout_preset, "overlayTopLeft");
+  EXPECT_FALSE(seed.normalized_center_x.has_value());
+  EXPECT_FALSE(seed.normalized_center_y.has_value());
+}
+
+TEST(ResolveCameraSeedGeometry, DraggedCenterRebasesWorkAreaOntoContent) {
+  // Bubble centered in the work area: x is unchanged (the work area and the
+  // monitor share their width), but y is NOT — the work area is 1032 tall
+  // inside a 1080 capture, so the true center sits at 516/1080 = 0.4778 from
+  // the top. Emitted y-UP, so 1 - 0.4778.
+  const CameraSeedGeometry seed = SeedForDisplayCapture(Dragged(0.5, 0.5));
+  ASSERT_TRUE(seed.normalized_center_x.has_value());
+  ASSERT_TRUE(seed.normalized_center_y.has_value());
+  EXPECT_NEAR(*seed.normalized_center_x, 0.5, 0.0001);
+  EXPECT_NEAR(*seed.normalized_center_y, 1.0 - (516.0 / 1080.0), 0.0001);
+}
+
+TEST(ResolveCameraSeedGeometry, EmitsTheCenterYUp) {
+  // Top of the work area -> near the TOP of the capture -> y-UP value near 1.
+  const CameraSeedGeometry top = SeedForDisplayCapture(Dragged(0.5, 0.0));
+  ASSERT_TRUE(top.normalized_center_y.has_value());
+  EXPECT_NEAR(*top.normalized_center_y, 1.0, 0.0001);
+
+  // Bottom of the work area -> 1032/1080 down the capture -> 1 - 0.9556.
+  const CameraSeedGeometry bottom = SeedForDisplayCapture(Dragged(0.5, 1.0));
+  ASSERT_TRUE(bottom.normalized_center_y.has_value());
+  EXPECT_NEAR(*bottom.normalized_center_y, 1.0 - (1032.0 / 1080.0), 0.0001);
+
+  // The whole point: dragging DOWN must lower the emitted value.
+  EXPECT_LT(*bottom.normalized_center_y, *top.normalized_center_y);
+}
+
+TEST(ResolveCameraSeedGeometry, AreaCaptureRebasesAgainstTheCropBox) {
+  // A 960x540 crop whose top-left sits at (480, 270) on the monitor. A bubble
+  // centered in the work area lands at absolute (960, 516), which is the crop's
+  // horizontal center and (516-270)/540 = 0.4556 down it.
+  const CameraSeedGeometry seed =
+      ResolveCameraSeedGeometry(Dragged(0.5, 0.5), kWorkL, kWorkT, kWorkR,
+                                kWorkB, 480, 270, 1440, 810, 1.0);
+  ASSERT_TRUE(seed.normalized_center_x.has_value());
+  EXPECT_NEAR(*seed.normalized_center_x, 0.5, 0.0001);
+  EXPECT_NEAR(*seed.normalized_center_y, 1.0 - ((516.0 - 270.0) / 540.0),
+              0.0001);
+}
+
+TEST(ResolveCameraSeedGeometry, CenterOutsideTheCapturedAreaClamps) {
+  // Bubble dragged to the far left of the work area, but the capture is a crop
+  // that starts at x=480 — the bubble was never in frame. Clamp, do not emit a
+  // negative fraction.
+  const CameraSeedGeometry seed =
+      ResolveCameraSeedGeometry(Dragged(0.0, 0.0), kWorkL, kWorkT, kWorkR,
+                                kWorkB, 480, 270, 1440, 810, 1.0);
+  ASSERT_TRUE(seed.normalized_center_x.has_value());
+  EXPECT_DOUBLE_EQ(*seed.normalized_center_x, 0.0);
+  EXPECT_DOUBLE_EQ(*seed.normalized_center_y, 1.0);  // y-UP: top of frame
+}
+
+TEST(ResolveCameraSeedGeometry, SizeFactorIsTheShortEdgeFraction) {
+  // 220 logical px on a 1080-short-edge capture at 100%.
+  const CameraSeedGeometry seed = SeedForDisplayCapture(Preset(220.0, 3));
+  EXPECT_NEAR(seed.size_factor, 220.0 / 1080.0, 0.0001);
+}
+
+TEST(ResolveCameraSeedGeometry, SizeFactorScalesWithTheRecordedMonitorDpi) {
+  // The store's size is LOGICAL px but the capture is PHYSICAL px: at 150% a
+  // 220pt bubble is 330 physical px on a 1620-tall capture, which is the SAME
+  // fraction as the 100% case. Dividing the raw logical size instead would
+  // shrink the seeded bubble by a third.
+  const CameraSeedGeometry seed = ResolveCameraSeedGeometry(
+      Preset(220.0, 3), 0, 0, 2880, 1548, 0, 0, 2880, 1620, 1.5);
+  EXPECT_NEAR(seed.size_factor, 330.0 / 1620.0, 0.0001);
+  EXPECT_NEAR(seed.size_factor, 220.0 / 1080.0, 0.0001);  // scale-invariant
+}
+
+TEST(ResolveCameraSeedGeometry, SizeFactorClampedToTheEditorBand) {
+  // A 400px bubble on a tiny capture would exceed the 0.45 ceiling.
+  const CameraSeedGeometry big = ResolveCameraSeedGeometry(
+      Preset(400.0, 3), 0, 0, 800, 600, 0, 0, 800, 600, 1.0);
+  EXPECT_NEAR(big.size_factor, 0.45, 0.0001);
+  // A 120px bubble on a 4K capture would fall under the 0.08 floor.
+  const CameraSeedGeometry small = ResolveCameraSeedGeometry(
+      Preset(120.0, 3), 0, 0, 3840, 2160, 0, 0, 3840, 2160, 1.0);
+  EXPECT_NEAR(small.size_factor, 0.08, 0.0001);
+}
+
+TEST(ResolveCameraSeedGeometry, DegenerateContentRectFallsBackToDefaults) {
+  // Target-loss before the first frame: no content rect. Still hand the editor
+  // a usable corner + baseline size rather than a divide-by-zero.
+  const CameraSeedGeometry seed = ResolveCameraSeedGeometry(
+      Dragged(0.25, 0.25), kWorkL, kWorkT, kWorkR, kWorkB, 0, 0, 0, 0, 1.0);
+  EXPECT_EQ(seed.layout_preset, "overlayBottomRight");
+  EXPECT_DOUBLE_EQ(seed.size_factor, 0.18);
+  EXPECT_FALSE(seed.normalized_center_x.has_value());
+}
+
+TEST(ResolveCameraSeedGeometry, DegenerateWorkAreaKeepsSizeButDropsTheCenter) {
+  // The content rect is usable (so the size factor is real) but the work area
+  // probe failed, so the drag cannot be de-normalized. Fall back to the preset.
+  const CameraSeedGeometry seed = ResolveCameraSeedGeometry(
+      Dragged(0.25, 0.25), 0, 0, 0, 0, kFullL, kFullT, kFullR, kFullB, 1.0);
+  EXPECT_NEAR(seed.size_factor, 220.0 / 1080.0, 0.0001);
+  EXPECT_FALSE(seed.normalized_center_x.has_value());
+}
+
+TEST(ResolveCameraSeedGeometry, PresetSurvivesADragSoTheEditorCanFallBack) {
+  // A dragged bubble still carries its last preset: the editor restores it if
+  // the user clears the manual position, and ResolveCameraSlideEdge reads it.
+  CameraOverlayGeometry g = Dragged(0.2, 0.3);
+  g.position = 1;
+  const CameraSeedGeometry seed = SeedForDisplayCapture(g);
+  EXPECT_EQ(seed.layout_preset, "overlayTopRight");
+  EXPECT_TRUE(seed.normalized_center_x.has_value());
+}
+
 }  // namespace
 }  // namespace clingfy::capture

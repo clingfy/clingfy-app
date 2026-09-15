@@ -1948,6 +1948,10 @@ class AppLocalizationsRo extends AppLocalizations {
   String get exportSuccess => 'Export reușit:';
 
   @override
+  String get exportSavedWithoutSubtitles =>
+      'Exportat, dar subtitrările nu au putut fi incluse în imagine:';
+
+  @override
   String get open => 'Deschide';
 
   @override
@@ -2428,6 +2432,19 @@ class AppLocalizationsRo extends AppLocalizations {
   String get screen => 'Ecran';
 
   @override
+  String get identifyDisplays => 'Identifică ecranele';
+
+  @override
+  String get identifyDisplaysTooltip =>
+      'Afișează un număr mare pe fiecare ecran ca să le poți deosebi';
+
+  @override
+  String get displayMarkerMain => 'Principal';
+
+  @override
+  String get displayMarkerThisWindow => 'Fereastra curentă';
+
+  @override
   String get app => 'Aplicație';
 
   @override
@@ -2554,6 +2571,10 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get warnCameraDisconnected =>
       'Camera a fost deconectată. Înregistrarea continuă fără ea.';
+
+  @override
+  String get warnCameraPreviewHidden =>
+      'Previzualizarea live a camerei nu poate fi afișată în timpul înregistrării pe acest PC. Înregistrarea continuă — camera este în continuare capturată și apare în videoclipul final.';
 
   @override
   String get warnEncoderVideoError =>
@@ -2729,4 +2750,135 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get crashReportingNoticeOptOut => 'Dezactivează';
+
+  @override
+  String get captions => 'Subtitrări';
+
+  @override
+  String get captionsGenerate => 'Generează subtitrări';
+
+  @override
+  String get captionsRegenerate => 'Generează din nou';
+
+  @override
+  String get captionsCancel => 'Oprește';
+
+  @override
+  String get captionsPreparing => 'Se pregătește…';
+
+  @override
+  String get captionsTranscribing => 'Se transcrie…';
+
+  @override
+  String get captionsSourceMic => 'Microfon';
+
+  @override
+  String get captionsSourceSystem => 'Sunetul ecranului';
+
+  @override
+  String get captionsNoneYet => 'Încă nu există subtitrări.';
+
+  @override
+  String get captionsNoSpeechFound =>
+      'Nu s-a găsit vorbire în această înregistrare.';
+
+  @override
+  String get captionsUnavailableOs =>
+      'Subtitrările necesită o versiune mai nouă de macOS.';
+
+  @override
+  String get captionsUnavailableIntel =>
+      'Subtitrările rulează lent pe Mac-urile Intel, care nu au Neural Engine.';
+
+  @override
+  String get captionsUnavailableNoAudio =>
+      'Această înregistrare nu are sunet de transcris.';
+
+  @override
+  String get captionsUnavailablePlatform =>
+      'Subtitrările sunt disponibile doar pe macOS.';
+
+  @override
+  String get captionsMicOnlyRecording =>
+      'Această înregistrare este anterioară capturii audio separate, deci s-a înregistrat doar microfonul.';
+
+  @override
+  String get captionsFirstRunDownload =>
+      'Prima rulare descarcă un model de vorbire. Se întâmplă o singură dată.';
+
+  @override
+  String get captionsFailed => 'Nu s-au putut genera subtitrările.';
+
+  @override
+  String captionsCueCount(int count) {
+    return '$count subtitrări';
+  }
+
+  @override
+  String get captionsDestination => 'Subtitrări la export';
+
+  @override
+  String get captionsDestinationOff => 'Dezactivat';
+
+  @override
+  String get captionsDestinationBurnIn => 'Incluse în video';
+
+  @override
+  String get captionsDestinationSidecar => 'Fișier';
+
+  @override
+  String get captionsDestinationBoth => 'Ambele';
+
+  @override
+  String get captionsDestinationHint =>
+      'Subtitrările incluse rezistă la reîncărcare. Un fișier rămâne căutabil și poate fi dezactivat.';
+
+  @override
+  String get captionsNotInExport => 'Tăiat';
+
+  @override
+  String get captionsDownloadingModel => 'Se descarcă modelul vocal';
+
+  @override
+  String get captionsStopping => 'Se oprește…';
+
+  @override
+  String get captionsEngineBusy =>
+      'Se finalizează rularea anterioară a subtitrărilor. Generarea devine disponibilă imediat ce se oprește.';
+
+  @override
+  String get storageCaptionModelTitle => 'Model de vorbire';
+
+  @override
+  String get storageCaptionModelDescription =>
+      'Modelul care transformă vorbirea în subtitrări, pe dispozitivul tău. Se descarcă o singură dată, prima dată când generezi subtitrări, și poate fi descărcat din nou oricând.';
+
+  @override
+  String get storageCaptionModelWeights => 'Model';
+
+  @override
+  String get storageCaptionModelCompiledCache => 'Cache compilat';
+
+  @override
+  String get storageCaptionModelNotDownloaded =>
+      'Încă nedescărcat. Prima dată când generezi subtitrări, Clingfy descarcă modelul de vorbire.';
+
+  @override
+  String get storageDeleteCaptionModel => 'Șterge modelul de vorbire';
+
+  @override
+  String get storageDeleteCaptionModelConfirmTitle =>
+      'Ștergi modelul de vorbire?';
+
+  @override
+  String get storageDeleteCaptionModelConfirmMessage =>
+      'Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ 600 MB.';
+
+  @override
+  String get storageDeleteCaptionModelConfirmAction => 'Șterge';
+
+  @override
+  String storageDeleteCaptionModelSuccess(String value) {
+    return 'S-au eliberat $value.';
+  }
 }

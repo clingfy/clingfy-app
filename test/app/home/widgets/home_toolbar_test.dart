@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/app/home/overlay/overlay_controller.dart';
@@ -448,6 +450,103 @@ void main() {
       expect(find.text(l10n.errWindowUnavailable), findsOneWidget);
     },
   );
+
+  testWidgets('a running transcription greys Export out without announcing an '
+      'export', (tester) async {
+    // The seam this pins: the toolbar takes TWO answers — "the export cannot
+    // run" and "an export is running" — and a transcription is only the first.
+    // Handed one value for both, generating subtitles put a spinner and
+    // "Export…" on the button while no file was being written anywhere.
+    final gate = Completer<List<Map<String, Object?>>>();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      switch (call.method) {
+        case 'captionsCapability':
+          return {
+            'available': true,
+            'hasMicAudio': true,
+            'hasSystemAudio': true,
+          };
+        case 'generateCaptions':
+          return gate.future;
+        default:
+          return null;
+      }
+    });
+
+    final nativeBridge = NativeBridge.instance;
+    final settings = SettingsController(nativeBridge: nativeBridge);
+    final recording = RecordingController(
+      nativeBridge: nativeBridge,
+      settings: settings,
+    );
+    final device = _FakeDeviceController();
+    final overlay = OverlayController(bridge: nativeBridge);
+    final post = _ToolbarPostProcessingController();
+    final uiState = HomeUiState();
+    addTearDown(recording.dispose);
+    addTearDown(device.dispose);
+    addTearDown(overlay.dispose);
+    addTearDown(post.dispose);
+    addTearDown(uiState.dispose);
+    addTearDown(settings.dispose);
+
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<RecordingController>.value(value: recording),
+          ChangeNotifierProvider<DeviceController>.value(value: device),
+          ChangeNotifierProvider<OverlayController>.value(value: overlay),
+          ChangeNotifierProvider<PostProcessingController>.value(value: post),
+        ],
+        child: MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: HomeToolbar(
+              isRecording: false,
+              isPaused: false,
+              uiState: uiState,
+              onExport: () {},
+              onOpenSystemSettings: (_) async {},
+              onClearMessage: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final run = post.generateCaptions();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(post.isGeneratingCaptions, isTrue);
+
+    final toolbar = tester.widget<DesktopToolbar>(find.byType(DesktopToolbar));
+    expect(
+      toolbar.isExportUnavailable,
+      isTrue,
+      reason: 'a transcription landing mid-render sweeps the caption bitmaps',
+    );
+    expect(
+      toolbar.isExporting,
+      isFalse,
+      reason: 'nothing is being written; saying otherwise is simply untrue',
+    );
+
+    gate.complete(const []);
+    await run;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(
+      tester
+          .widget<DesktopToolbar>(find.byType(DesktopToolbar))
+          .isExportUnavailable,
+      isFalse,
+      reason: 'the transcription is over; Export has to come back',
+    );
+  });
 
   testWidgets('background export renders in separate export lane', (
     tester,

@@ -45,6 +45,25 @@ class ZoomExportController {
   static std::unique_ptr<ZoomExportController> CreateFromData(
       CursorSidecarData data, std::int64_t duration_ms, double zoom_factor);
 
+  // Build against a CALLER-SUPPLIED timeline instead of deriving one from the
+  // cursor sidecar.
+  //
+  // This is how user-authored zoom reaches the export. The effective timeline
+  // is auto-minus-overridden plus manual (see `MergeZoomSegments`), and that
+  // merge deliberately lives with the store rather than here — this class
+  // stays responsible only for turning a timeline into per-frame transforms.
+  //
+  // `data` is still required: focus resolution reads the cursor samples to
+  // decide whether a segment follows the cursor or anchors on a fixed point,
+  // and a manual segment gets exactly the same treatment as an auto one.
+  //
+  // An empty `segments` yields nullptr — same as "no zoom" — so a project
+  // whose every auto segment was deleted exports unzoomed rather than falling
+  // back to the auto timeline the user just removed.
+  static std::unique_ptr<ZoomExportController> CreateFromSegments(
+      CursorSidecarData data, const std::vector<ZoomSegment>& segments,
+      double zoom_factor);
+
   // Per-frame transform for the frame presented at `frame_ms`, advancing the
   // smoother by `dt_seconds`. `center_*` are normalized [0,1] and already clamped
   // so the zoom window stays inside the content (no background reveal).
@@ -53,6 +72,16 @@ class ZoomExportController {
     double zoom = 1.0;
     double center_x = 0.5;
     double center_y = 0.5;
+    // SEGMENT membership, which is NOT the same thing as `active`.
+    //
+    // `active` is "the smoothed zoom is still above 1", so it stays true
+    // through the whole ease-out tail after a segment ends. `in_segment` goes
+    // false AT end_ms. Anything phase-sensitive must key off these two, not
+    // off `active` — macOS makes the same split (`stableZoomActive` +
+    // `stableZoomStartTime`, both nil'd at the segment boundary while the
+    // smoothed zoom keeps easing), and its camera pulse drops to 1.0 there.
+    bool in_segment = false;
+    std::int64_t segment_local_ms = 0;  // ms since this segment's start_ms
   };
   Frame Advance(std::int64_t frame_ms, double dt_seconds);
 

@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include "Capture/Cursor/cursor_sidecar_reader.h"
+
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -46,6 +48,38 @@ CursorSidecarWriter::Header MakeHeader() {
   h.origin_x = 0;
   h.origin_y = 0;
   return h;
+}
+
+// THE test this file was missing, and the reason the inline preview never
+// zoomed on a single real recording: the preview shipped its own loader that
+// hard-required a `ts_us` field, which this writer has never emitted. Nothing
+// asserted that whatever reads the sidecar can read what the writer writes, so
+// a parser that rejected 100% of real input stayed green indefinitely.
+//
+// Assert the round trip through the REAL bytes, not a hand-written fixture.
+TEST_F(CursorSidecarWriterTest, WrittenBytesParseBackWithTheSharedReader) {
+  CursorSidecarWriter writer;
+  ASSERT_TRUE(writer.Open(path_, MakeHeader()));
+  writer.WriteSample(16, 100, 50, 100, 50, true);
+  writer.WriteSample(33, 200, 60, 200, 60, true);
+  writer.WriteSample(50, 300, 70, 300, 70, false);
+  writer.WriteClick(40, 200, 60, "left", true);
+  writer.WriteClick(120, 200, 60, "left", false);
+  writer.Close();
+
+  const auto parsed = ParseCursorSidecar(ReadFile());
+  ASSERT_TRUE(parsed.has_value()) << "the shared reader rejected the writer's "
+                                     "own output";
+  EXPECT_EQ(parsed->samples.size(), 3u);
+  EXPECT_FALSE(parsed->clicks.empty())
+      << "clicks were dropped — smart zoom keys off these";
+  EXPECT_EQ(parsed->samples[0].t_ms, 16);
+  EXPECT_EQ(parsed->samples[0].x, 100);
+  EXPECT_EQ(parsed->samples[0].y, 50);
+  EXPECT_TRUE(parsed->samples[0].visible);
+  EXPECT_FALSE(parsed->samples[2].visible);
+  EXPECT_EQ(parsed->width, 1920);
+  EXPECT_EQ(parsed->target_type, "display");
 }
 
 TEST_F(CursorSidecarWriterTest, OpenWritesHeaderLine) {

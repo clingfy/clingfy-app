@@ -322,8 +322,31 @@ class MainFlutterWindow: NSWindow {
       case "getStorageSnapshot":
         self.screenRecorder.getStorageSnapshot(result: result)
 
+      case FlutterToNativeMethod.getCaptionModelInfo:
+        self.screenRecorder.getCaptionModelInfo(result: result)
+
+      case FlutterToNativeMethod.deleteCaptionModel:
+        // Refused here rather than inside the delete: the UI's copy of `busy`
+        // comes from a snapshot that can be half a minute old, so this is the
+        // check that actually decides. It is not the only gate — the delete
+        // itself refuses again if the engine will not hand the weights back —
+        // and both answer with the same error so the two cannot drift.
+        guard self.screenRecorder.canDeleteCaptionModel() else {
+          result(ScreenRecorderFacade.captionModelInUseError())
+          return
+        }
+        self.screenRecorder.deleteCaptionModel(result: result)
+
       case "getDisplays":
         self.screenRecorder.getDisplays(result: result)
+      case FlutterToNativeMethod.identifyDisplays:
+        let args = call.arguments as? [String: Any]
+        self.screenRecorder.identifyDisplays(
+          durationMs: (args?["durationMs"] as? NSNumber)?.intValue ?? 1600,
+          onlyDisplayId: args?["onlyDisplayId"] as? NSNumber,
+          only: (args?["only"] as? Bool) ?? false,
+          labels: (args?["labels"] as? [String: String]) ?? [:],
+          result: result)
       case "getAppWindows":
         self.screenRecorder.getAppWindows(result: result)
 
@@ -830,8 +853,14 @@ class MainFlutterWindow: NSWindow {
             cameraParams: cameraParams,
             colorGrade: req.colorGrade,
             clips: req.clips,
+            captionBitmapDirectory: req.captionBitmapDirectory,
+            captions: req.captions,
             onProgress: { [weak self] progress in
-              self?.channel?.invokeMethod("updateExportProgress", arguments: progress)
+              // Labelled payload, not a bare double. See JobProgress — the Dart
+              // side and the Windows publisher implement the same shape.
+              self?.channel?.invokeMethod(
+                "updateExportProgress",
+                arguments: JobProgress.export(progress).toFlutter())
             },
             result: result)
         } else {
@@ -842,6 +871,82 @@ class MainFlutterWindow: NSWindow {
       case "cancelExport":
         self.screenRecorder.cancelExport()
         result(nil)
+
+      case "generateCaptions":
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.generateCaptions(
+            projectPath: projectPath,
+            // Both sources default ON: meetings, demos and tutorials are the
+            // common case and both sides matter there.
+            useMic: (args["useMic"] as? Bool) ?? true,
+            useSystem: (args["useSystem"] as? Bool) ?? true,
+            language: args["language"] as? String,
+            onProgress: { [weak self] progress in
+              self?.channel?.invokeMethod(
+                "updateExportProgress", arguments: progress.toFlutter())
+            },
+            result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            ))
+        }
+
+      case "cancelCaptions":
+        self.screenRecorder.cancelCaptions()
+        result(nil)
+
+      case "captionsCapability":
+        // Answered natively rather than inferred by the UI, for the same reason
+        // the audio panel gates on getRecordingSceneInfo: only this side knows
+        // the hardware, the OS, and what is actually decodable on disk.
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.captionsCapability(projectPath: projectPath, result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            ))
+        }
+
+      case "resolveExportSize":
+        // Flutter rasterises caption bitmaps before the export and needs the
+        // pixel size the frames will actually be. It cannot compute this: the
+        // "auto" resolution preset derives from the recording's own oriented
+        // track size, which only this side has read. Guessing here would ship
+        // captions sized for the wrong canvas.
+        //
+        // `format`/`gifSize` are optional and forwarded because a GIF renders
+        // at a capped intermediate rather than at the resolution preset; an
+        // older Flutter build omits both and gets the uncapped size it has
+        // always used.
+        if let args = call.arguments as? [String: Any],
+          let projectPath = args["projectPath"] as? String
+        {
+          self.screenRecorder.resolveExportSize(
+            projectPath: projectPath,
+            layout: args["layoutPreset"] as? String ?? "auto",
+            resolution: args["resolutionPreset"] as? String ?? "auto",
+            format: args["format"] as? String,
+            gifSize: args["gifSize"] as? String,
+            result: result)
+        } else {
+          result(
+            FlutterError(
+              code: NativeErrorCode.badArgs,
+              message: "missing projectPath",
+              details: nil
+            ))
+        }
 
       case "getRecordingSceneInfo":
         if let args = call.arguments as? [String: Any],
@@ -997,6 +1102,19 @@ class MainFlutterWindow: NSWindow {
           result(
             FlutterError(code: NativeErrorCode.badArgs, message: "Missing segments", details: nil))
         }
+
+      case "previewSetCaptions":
+        // Cues here are on the EDITED timeline, unlike the export payload,
+        // because the preview player's own clock is edited time. A nil track
+        // (absent payload, no cues, or subtitles switched off) clears them.
+        if let previewView = inlinePreviewViewInstance {
+          let args = call.arguments as? [String: Any]
+          let sessionId = args?["sessionId"] as? String
+          if sessionId == nil || previewView.currentSessionId == sessionId {
+            previewView.updateCaptionsOnly(CaptionPreviewTrack.fromFlutter(args))
+          }
+        }
+        result(nil)
 
       case "previewSetColorGrade":
         if let args = call.arguments as? [String: Any],

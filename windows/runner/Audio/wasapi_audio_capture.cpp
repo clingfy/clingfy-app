@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 
+#include "Audio/wasapi_stream_format.h"
 #include "Bridge/Devices/device_probe_log.h"
 
 namespace clingfy::audio {
@@ -215,15 +216,6 @@ std::optional<WasapiCaptureError> WasapiAudioCapture::Impl::Start(
   if (FAILED(hr) || mix_format == nullptr) {
     return MakeError("IAudioClient::GetMixFormat failed.", hr);
   }
-  format_ = Snapshot(mix_format);
-  if (!IsPipelineCompatible(format_)) {
-    ::CoTaskMemFree(mix_format);
-    return MakeError(
-        "Endpoint mix format is not 48 kHz float32 stereo; Phase 3D does not "
-        "yet resample.",
-        E_NOTIMPL);
-  }
-
   const DWORD stream_flags =
       AUDCLNT_STREAMFLAGS_EVENTCALLBACK |
       (kind == WasapiCaptureKind::kSystemLoopback
@@ -233,11 +225,26 @@ std::optional<WasapiCaptureError> WasapiAudioCapture::Impl::Start(
   // periods can produce AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED on some
   // drivers, and longer ones balloon end-to-end latency.
   const REFERENCE_TIME buffer_duration_hns = 200 * kHundredNanosPerMs;
-  hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED, stream_flags,
-                            buffer_duration_hns, 0, mix_format, nullptr);
+  // A non-48 kHz endpoint used to be refused outright here. Now the audio
+  // engine resamples it for us; see wasapi_stream_format.h for why passing the
+  // endpoint's own mix format back (as this did) makes AUTOCONVERTPCM inert.
+  const SharedStreamInit init = InitializeSharedStream(
+      client_.Get(), stream_flags, buffer_duration_hns, mix_format);
+  // The APP-side format is canonical whenever the conversion path was taken,
+  // so snapshot what WE will actually receive, never the endpoint's format —
+  // FrameSizeBytes and the capture loop's memcpy are both sized off this.
+  if (init.converted) {
+    const WAVEFORMATEXTENSIBLE canonical = CanonicalPipelineFormat();
+    format_ = Snapshot(reinterpret_cast<const WAVEFORMATEX*>(&canonical));
+  } else {
+    format_ = Snapshot(mix_format);
+  }
   ::CoTaskMemFree(mix_format);
-  if (FAILED(hr)) {
-    return MakeError("IAudioClient::Initialize failed.", hr);
+  if (FAILED(init.hr)) {
+    return MakeError(
+        "IAudioClient::Initialize failed (including the resampled shared-mode "
+        "fallback for a non-48 kHz float32 stereo endpoint).",
+        init.hr);
   }
 
   event_ = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);

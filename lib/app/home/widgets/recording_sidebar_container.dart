@@ -70,8 +70,12 @@ class RecordingSidebarContainer extends StatelessWidget {
           onRevealArea: overlay.revealAreaRecordingRegion,
           onClearArea: overlay.clearAreaRecordingSelection,
           onTargetModeChanged: actions.setDisplayTargetMode,
-          onDisplayChanged: device.setDisplay,
+          onDisplayChanged: (id, labels) =>
+              device.setDisplay(id, labels: labels),
           onRefreshDisplays: device.reloadDisplays,
+          onIdentifyDisplays: (labels) =>
+              device.identifyDisplays(labels: labels),
+          identifySupported: device.displayIdentifySupported,
           onAppWindowChanged: device.setAppWindow,
           onRefreshAppWindows: device.reloadAppWindows,
           onAudioSourceChanged: device.setAudioSource,

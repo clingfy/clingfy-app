@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:clingfy/core/timeline/post_state_store.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
-import 'package:clingfy/app/home/post_processing/support/canvas_appearance_store.dart';
+import 'package:clingfy/core/timeline/model/timeline.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
-import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:flutter/services.dart';
@@ -62,9 +62,10 @@ void main() {
 
   tearDown(() async {
     await clearCommonNativeMocks();
-    // Let any fire-and-forget CanvasAppearanceStore write drain before the
+    // Let any fire-and-forget PostStateStore write drain before the
     // directory is removed, so the delete never races a file being recreated.
     await _settle();
+    await PostStateStore.settled();
     if (await projectDir.exists()) {
       try {
         await projectDir.delete(recursive: true);
@@ -278,9 +279,7 @@ void main() {
     expect(grade['autoEnabled'], isTrue);
 
     await _waitUntil(
-      () =>
-          CanvasAppearanceStore.load(projectDir.path)?.colorGrade ==
-          post.colorGrade,
+      () => PostStateStore.load(projectDir.path).grade == post.colorGrade,
     );
   });
 
@@ -348,27 +347,22 @@ void main() {
     expect(grade['exposure'], 0);
   });
 
-  test('undo re-persists the restored grade to editor_state.json', () async {
+  test('undo re-persists the restored grade to post/state.json', () async {
     final post = await attachController(projectDir.path);
 
     dragExposureTo(post, 0.45);
     await _waitUntil(
-      () =>
-          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
-          0.45,
+      () => PostStateStore.load(projectDir.path).grade.exposure == 0.45,
     );
 
     post.undoColorGrade();
     await _waitUntil(
-      () =>
-          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.isIdentity ==
-          true,
+      () => PostStateStore.load(projectDir.path).grade.isIdentity == true,
     );
 
-    final loaded = CanvasAppearanceStore.load(projectDir.path);
-    expect(loaded, isNotNull);
-    expect(loaded!.colorGrade.exposure, 0);
-    expect(loaded.colorGrade.isIdentity, isTrue);
+    final loaded = PostStateStore.load(projectDir.path);
+    expect(loaded.grade.exposure, 0);
+    expect(loaded.grade.isIdentity, isTrue);
   });
 
   test('undo notifies listeners so the sliders rebuild', () async {
@@ -590,27 +584,17 @@ void main() {
     // Let the edit's own persist land first, then plant the "already saved"
     // grade, so the restore is guaranteed to read 0.2 and not the edit.
     await waitUntil(
-      () =>
-          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
-          0.8,
+      () => PostStateStore.load(projectDir.path).grade.exposure == 0.8,
       reason: "the edit's own write must land before we overwrite it",
     );
-    await CanvasAppearanceStore.save(
+    // Plant through the unified store: the edit above has already written
+    // post/state.json, and that file outranks the legacy one this used to use.
+    await PostStateStore.update(
       projectDir.path,
-      const CanvasAppearanceState(
-        padding: 0,
-        cornerRadius: 0,
-        backgroundKind: BackgroundKind.color,
-        backgroundColorArgb: null,
-        backgroundImagePath: null,
-        backgroundPreset: null,
-        colorGrade: savedGrade,
-      ),
+      (state) => state.copyWith(grade: savedGrade),
     );
     await waitUntil(
-      () =>
-          CanvasAppearanceStore.load(projectDir.path)?.colorGrade.exposure ==
-          0.2,
+      () => PostStateStore.load(projectDir.path).grade.exposure == 0.2,
     );
 
     // Release the restore.
@@ -638,17 +622,9 @@ void main() {
   test('a restored grade is the baseline for the first edit', () async {
     // Reopening a recording with a persisted grade must not make that grade
     // undoable — there is no edit to step back to, only saved state.
-    await CanvasAppearanceStore.save(
+    await PostStateStore.save(
       projectDir.path,
-      const CanvasAppearanceState(
-        padding: 0,
-        cornerRadius: 0,
-        backgroundKind: BackgroundKind.color,
-        backgroundColorArgb: null,
-        backgroundImagePath: null,
-        backgroundPreset: null,
-        colorGrade: ColorGrade(exposure: 0.2),
-      ),
+      const Timeline(grade: ColorGrade(exposure: 0.2)),
     );
 
     final post = await attachController(projectDir.path);
@@ -673,7 +649,7 @@ Future<void> _settle() async {
 }
 
 /// Polls until [done] holds, so disk assertions never race the fire-and-forget
-/// `CanvasAppearanceStore.save` (now serialized per project path, so two
+/// `PostStateStore.save` (serialized per project path, so two
 /// queued writes drain one after the other rather than concurrently).
 Future<void> _waitUntil(
   bool Function() done, {

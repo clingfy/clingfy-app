@@ -288,7 +288,18 @@ struct PreviewEngine::Impl {
 
   // ---- Compositor + cursor fixture ----
   clingfy::preview::PreviewCompositor compositor;
-  std::vector<clingfy::preview::CursorEvent> cursor_events;
+  capture::CursorSidecarData cursor;
+  // Source-keyed, built once at Open. Read on the frame thread.
+  // The timeline the compositor renders. Built from the cursor sidecar at
+  // Open; REPLACED wholesale when Dart pushes an effective timeline through
+  // previewSetZoomSegments (Dart has already merged auto + manual there — see
+  // the `previewSetZoomSegments` contract in native_bridge.dart).
+  std::vector<capture::ZoomSegment> zoom_segments;
+  // Distinguishes "Dart has not sent a timeline" from "Dart sent an EMPTY
+  // timeline", which is what the user deleting every segment looks like. A
+  // plain empty vector cannot tell those apart, and falling back to the auto
+  // timeline in the second case would resurrect exactly what they deleted.
+  bool has_zoom_override = false;
   clingfy::preview::ZoomState zoom;
   bool cursor_mode = false;
 
@@ -329,6 +340,26 @@ struct PreviewEngine::Impl {
   // Written by SetCanvasComposition on the platform thread, read by the frame
   // thread while compositing.
   core::CanvasComposition canvas{};
+
+  // The raw framing `canvas` was resolved from, retained so it can be resolved
+  // AGAIN once the source dimensions are known.
+  //
+  // Dart pushes the canvas on project open, before any frame has decoded — and
+  // the resolve needs the source size, which only a decoded frame supplies. The
+  // early push therefore resolves to an unpadded canvas with
+  // `export_short_side == 0`, and without this retention that result was
+  // permanent: the raw payload was converted and dropped, so nothing could
+  // recompute it and the preview stayed wrong until an unrelated canvas edit
+  // pushed again. Keeping the payload makes the first frame self-healing.
+  //
+  // Same publish discipline as `canvas` above: render_mutex.
+  core::CanvasFramingArgs canvas_framing{};
+  bool has_canvas_framing = false;
+  // Source size `canvas` was resolved against; 0 means "not resolved yet", so a
+  // mismatch against the live dimensions is the re-resolve trigger. Comparing
+  // dimensions rather than a bool also covers a source whose size CHANGES.
+  UINT canvas_source_w = 0;
+  UINT canvas_source_h = 0;
 
   // ---- Last composed frame's timeline position (render_mutex) ----
   // Replayed verbatim by RepaintRetainedFrame so a settings change on a PAUSED
@@ -885,7 +916,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
         result.video_width = static_cast<int>(impl_->last_video_width.load());
         result.video_height = static_cast<int>(impl_->last_video_height.load());
         result.cursor_event_count =
-            static_cast<std::int64_t>(impl_->cursor_events.size());
+            static_cast<std::int64_t>(impl_->cursor.samples.size());
         result.cursor_mode = impl_->cursor_mode;
       }
       return result;
@@ -904,6 +935,20 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   // ---- 1. Create a D3D11 device + D2D factory. ----
   impl_ = std::make_unique<Impl>();
+  // Carry the last framing Dart pushed into the new Impl. On project open the
+  // push arrives BEFORE this Open, so without seeding it is lost and the
+  // preview renders an unpadded canvas until the user's next canvas edit.
+  // Source dims are unknown here, so resolve against 0x0 and leave
+  // canvas_source_* at 0 — that is exactly the state CanvasNeedsReresolve looks
+  // for, so the first decoded frame re-resolves it against the real size.
+  if (has_last_canvas_framing_) {
+    impl_->canvas_framing = last_canvas_framing_;
+    impl_->has_canvas_framing = true;
+    impl_->canvas_source_w = 0;
+    impl_->canvas_source_h = 0;
+    impl_->canvas = core::ResolveCanvasComposition(last_canvas_framing_, 0.0,
+                                                   0.0);
+  }
   impl_->video_path = args.video_path;
   impl_->cursor_path = args.cursor_path;
   // Audio separation (D9): run the ONE decode probe per sidecar now, so
@@ -1104,15 +1149,48 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   impl_->descriptor.release_callback = nullptr;
   impl_->descriptor.release_context = nullptr;
 
-  // ---- 5. Load cursor JSONL (if provided). ----
+  // ---- 5. Load the cursor sidecar (if provided). ----
+  // The SAME parser the export uses. The preview used to run its own
+  // `ts_us`-shaped loader from the frame-server POC, which the shipping
+  // recorder has never written — so this parsed to zero events on every real
+  // project and the preview's zoom, cursor halo and camera scale-with-zoom
+  // were all silently dead.
   if (!args.cursor_path.empty()) {
-    impl_->cursor_events =
-        clingfy::preview::LoadCursorJsonl(args.cursor_path);
-    impl_->cursor_mode = !impl_->cursor_events.empty();
-    char buf[96];
+    impl_->cursor = {};
+    std::ifstream in(args.cursor_path, std::ios::binary);
+    if (in.is_open()) {
+      const std::string jsonl((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+      if (auto parsed = capture::ParseCursorSidecar(jsonl)) {
+        impl_->cursor = std::move(*parsed);
+      }
+    }
+    impl_->cursor_mode = !impl_->cursor.samples.empty();
+    // The SAME segments the export builds, from the same clicks, through the
+    // same builder — hysteresis, 120 ms gap-merge, minimum length and the
+    // visibility gate included. The preview used to decide "is a zoom wanted"
+    // with its own symmetric ±500 ms click window, which turned the zoom on
+    // half a second BEFORE the click the export starts it at, and had no
+    // notion of a segment ending at all.
+    //
+    // duration_ms 0 = derive the extent from the samples. The export passes the
+    // media's natural duration, which differs only in where a still-active
+    // FINAL segment is truncated; segment starts — and therefore anything
+    // keyed to segment-local time — are identical either way.
+    // Auto only. A manual timeline arrives afterwards via
+    // previewSetZoomSegments — Dart re-pushes it on attach and after an
+    // in-place rebuild (resyncToNative), which is what that method was
+    // written for. Not overwriting an override that somehow already landed.
+    if (!impl_->has_zoom_override) {
+      impl_->zoom_segments = capture::BuildZoomSegments(
+          impl_->cursor.samples, impl_->cursor.clicks, /*duration_ms=*/0);
+    }
+    char buf[160];
     std::snprintf(buf, sizeof(buf),
-                  "cursor_events parsed: %zu  (cursor_mode=%d)",
-                  impl_->cursor_events.size(), impl_->cursor_mode ? 1 : 0);
+                  "cursor sidecar parsed: %zu samples, %zu clicks, "
+                  "%zu zoom segments (cursor_mode=%d)",
+                  impl_->cursor.samples.size(), impl_->cursor.clicks.size(),
+                  impl_->zoom_segments.size(), impl_->cursor_mode ? 1 : 0);
     LogNative(buf);
   }
 
@@ -1328,7 +1406,7 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   result.video_width = 0;  // discovered on first frame
   result.video_height = 0;
   result.cursor_event_count =
-      static_cast<std::int64_t>(impl_->cursor_events.size());
+      static_cast<std::int64_t>(impl_->cursor.samples.size());
   result.cursor_mode = impl_->cursor_mode;
   result.error.clear();
   return result;
@@ -1464,6 +1542,30 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // same proportion of the frame here as it does in the export, instead of ~3x
   // more (this texture is capped at kTextureWidth x kTextureHeight while the
   // export renders at the user's chosen resolution).
+  // Resolve the retained framing before the first read of `impl->canvas`.
+  //
+  // The canvas is normalised against the EXPORT canvas, which ResolveTargetSize
+  // derives from the SOURCE dimensions — unknown until a frame decodes. So the
+  // push Dart sends on project open necessarily lands unresolved, and so does
+  // any edit made before the first frame. Doing it here, at the single point
+  // that consumes the canvas, covers every push and every decode path at once.
+  //
+  // Without this the preview drew an unpadded canvas and a camera bubble whose
+  // border, shadow and min-side floor were export-canvas pixels on this smaller
+  // texture (~1.5x too heavy at 1080p, ~3x at 4K) until the user happened to
+  // touch an unrelated canvas control and trigger a second push.
+  const UINT source_w = impl->last_video_width.load();
+  const UINT source_h = impl->last_video_height.load();
+  if (core::CanvasNeedsReresolve(impl->has_canvas_framing,
+                                 impl->canvas_source_w, impl->canvas_source_h,
+                                 source_w, source_h)) {
+    impl->canvas = core::ResolveCanvasComposition(
+        impl->canvas_framing, static_cast<double>(source_w),
+        static_cast<double>(source_h));
+    impl->canvas_source_w = source_w;
+    impl->canvas_source_h = source_h;
+  }
+
   const double surface_short = std::min(static_cast<double>(texture_width_),
                                         static_cast<double>(texture_height_));
   const double padding_px = core::DenormalizeFromShortSide(
@@ -1505,9 +1607,16 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // Phase 9.6: advance/seek the camera frame BEFORE BeginDraw (the painter's
   // shadow bake does SetTarget round-trips, illegal inside BeginDraw).
   if (impl->camera_renderer) {
+    // Same reasoning as the padding/radius denormalize above, for the values
+    // that are not fractions: the authored border width, the shadow table and
+    // the bubble's min-side floor are all EXPORT-canvas pixels, so on this
+    // smaller texture they must be resolved by the short-side ratio or the
+    // preview shows a ~3x-too-thick border and a floored-oversized bubble.
+    const double camera_effect_scale = PreviewCameraEffectScale(
+        surface_short, impl->canvas.export_short_side);
     impl->camera_renderer->PrepareAndAdvance(
         impl->d2d_context.Get(), static_cast<UINT>(texture_width_),
-        static_cast<UINT>(texture_height_), playback_us);
+        static_cast<UINT>(texture_height_), playback_us, camera_effect_scale);
   }
 
   impl->timing_render.BeginFrame();
@@ -1519,11 +1628,22 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   impl->d2d_context->SetTarget(impl->shared_bitmap.Get());
   impl->d2d_context->BeginDraw();
   impl->compositor.ComposeFrame(impl->d2d_context.Get(), dest,
-                                impl->cursor_events, playback_us,
+                                impl->cursor, impl->zoom_segments, playback_us,
                                 NowSeconds(), impl->zoom);
   // Camera bubble draws on top of the composited screen frame, in canvas space.
+  // The intro/outro clock is the EDITED position + edited duration, not
+  // `playback_us` (source time, used above to advance the camera VIDEO frame).
+  // The export splits the two the same way — see "camera_clock_ms" in
+  // export_pipeline.cpp — because on a trimmed project the source origin may sit
+  // inside a cut, so a source-keyed intro would fire where the user never looks.
+  // `impl->zoom` was just refreshed by ComposeFrame above, so the segment state
+  // is this frame's — the same [start_ms, end_ms) membership the export reads,
+  // which is what keeps the camera pulse in phase between the two surfaces.
   if (impl->camera_renderer) {
-    impl->camera_renderer->Draw(impl->d2d_context.Get());
+    impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
+                                emit_dur_ms, impl->zoom.current_zoom,
+                                impl->zoom.segment_active,
+                                impl->zoom.segment_local_ms);
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();
@@ -2125,7 +2245,7 @@ void PreviewEngine::Close(const CloseArgs& args) {
     frames_consumed = dying_impl->frames_consumed.load();
     video_w = dying_impl->last_video_width.load();
     video_h = dying_impl->last_video_height.load();
-    cursor_events_size = dying_impl->cursor_events.size();
+    cursor_events_size = dying_impl->cursor.samples.size();
     cursor_mode = dying_impl->cursor_mode;
     stats_total = dying_impl->timing_total.ComputeStats();
     stats_copy = dying_impl->timing_copy.ComputeStats();
@@ -2667,6 +2787,56 @@ void PreviewEngine::SetCameraComposition(
   RepaintPausedPreview();
 }
 
+void PreviewEngine::SetZoomSegments(
+    const std::string& session_id,
+    const std::vector<capture::ZoomSegment>& segments) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetZoomSettings / SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+  }
+  {
+    // render_mutex ALONE, for the reason spelled out in SetZoomSettings: the
+    // frame thread takes render_mutex -> mutex_ and never the reverse.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->zoom_segments = segments;
+    impl->has_zoom_override = true;
+  }
+  RepaintPausedPreview();
+}
+
+void PreviewEngine::SetZoomSettings(const std::string& session_id,
+                                    double factor, bool effect_enabled) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Same stale-session discipline as SetColorGrade.
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
+    }
+    if (impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+  }
+  {
+    // The frame thread takes render_mutex -> mutex_ (never the reverse), so
+    // publish under render_mutex ALONE, after mutex_ is released above —
+    // the SetCanvasComposition discipline.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    impl->zoom.zoom_factor = factor;
+    impl->zoom.effect_enabled = effect_enabled;
+  }
+  RepaintPausedPreview();
+}
+
 void PreviewEngine::SetColorGrade(
     const std::string& session_id,
     const capture::export_::color::ColorGrade& grade) {
@@ -2699,6 +2869,23 @@ void PreviewEngine::SetCanvasComposition(
   std::string session_snapshot;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // Retain for the NEXT Open BEFORE the guards below.
+    //
+    // On project open Dart restores the canvas and pushes it while no preview
+    // exists yet: `active_session_id_` is still empty and `impl_` is null, so
+    // both guards dropped the push on the floor. The preview then opened with a
+    // default canvas — unpadded, and with the camera bubble's border, shadow
+    // and min-side floor left at export scale — until the user happened to
+    // touch a canvas control and trigger a second push. `Open` seeds the new
+    // Impl from this.
+    //
+    // A push naming a DIFFERENT live session is genuinely stale and must not
+    // overwrite the pending framing; a push arriving when nothing is open is
+    // not stale, it is early.
+    if (core::ShouldRetainCanvasFraming(session_id, active_session_id_)) {
+      last_canvas_framing_ = framing;
+      has_last_canvas_framing_ = true;
+    }
     // Same stale-session discipline as SetColorGrade.
     if (!session_id.empty() && session_id != active_session_id_) {
       return;
@@ -2722,32 +2909,23 @@ void PreviewEngine::SetCanvasComposition(
   // source plus layout/resolution preset becomes a canvas. Dart sends raw
   // export-output pixels; converting them against the export target is what
   // stops the preview from drawing ~3x the padding at 4K.
-  core::CanvasComposition canvas{};
-  canvas.background_argb = framing.background_argb;
-  canvas.background_image_path = framing.background_image_path;
-  canvas.preset = framing.preset;
-  canvas.has_preset = framing.has_preset;
-  if (source_w > 0 && source_h > 0) {
-    const capture::export_::SizeF target =
-        capture::export_::ResolveTargetSize(
-            capture::export_::SizeF{static_cast<double>(source_w),
-                                    static_cast<double>(source_h)},
-            framing.layout_preset, framing.resolution_preset);
-    const double export_short = std::min(target.width, target.height);
-    canvas.padding_fraction =
-        core::NormalizeToShortSide(framing.padding_px, export_short);
-    canvas.corner_radius_fraction =
-        core::NormalizeToShortSide(framing.corner_radius_px, export_short);
-  }
+  const core::CanvasComposition canvas = core::ResolveCanvasComposition(
+      framing, static_cast<double>(source_w), static_cast<double>(source_h));
   // No frame yet => source dims unknown => fractions stay 0 and the canvas
-  // renders unpadded, which is what the preview shows today anyway. The next
-  // push after the first frame resolves properly.
+  // renders unpadded. The retained `framing` below is what lets the first
+  // composed frame resolve it, so this no longer waits on the user's next edit.
 
   {
     // The frame thread takes render_mutex -> mutex_ (never the reverse), so
     // publish under render_mutex ALONE, after mutex_ is released above.
     std::lock_guard<std::mutex> render_lock(impl->render_mutex);
     impl->canvas = canvas;
+    // Retain the payload and the size it was resolved against, so
+    // ComposeAndHandoffLocked can redo the resolve when the dimensions land.
+    impl->canvas_framing = framing;
+    impl->has_canvas_framing = true;
+    impl->canvas_source_w = source_w;
+    impl->canvas_source_h = source_h;
   }
   // Paused / ended preview: re-light the retained frame so the canvas edit is
   // visible immediately. No seek, no decode. While playing this is a no-op and
@@ -2879,6 +3057,35 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   impl->timing_total.BeginFrame();
   ComposeAndHandoffLocked(impl, source_ms * 1000, edited_ms, edited_dur);
   return true;
+}
+
+PreviewEngine::PacerStallDecision PreviewEngine::DecidePacerStallReport(
+    const PacerStallInput& in) {
+  PacerStallDecision out;
+
+  if (in.rendered_in_window > 0) {
+    // Producing again. Only announce recovery if a stall was announced —
+    // otherwise a sub-threshold gap would log a recovery from nothing.
+    out.next_stalled_windows = 0;
+    out.next_stall_reported = false;
+    out.report = in.stall_reported ? PacerStallReport::kRecovered
+                                   : PacerStallReport::kNone;
+    return out;
+  }
+
+  const int windows = in.stalled_windows + 1;
+  out.next_stalled_windows = windows;
+  out.next_stall_reported = in.stall_reported;
+
+  if (windows < kPacerStallOnsetWindows) {
+    return out;  // not yet convincing — playback can legitimately pause here
+  }
+  const int since_onset = windows - kPacerStallOnsetWindows;
+  if (!in.stall_reported || since_onset % kPacerStallRepeatWindows == 0) {
+    out.report = PacerStallReport::kStalled;
+    out.next_stall_reported = true;
+  }
+  return out;
 }
 
 PreviewEngine::PacerChaseDecision PreviewEngine::DecidePacerChase(
@@ -3248,6 +3455,10 @@ void PreviewEngine::PacerLoop() {
   int telemetry_rendered = 0;
   int telemetry_skipping = 0;
   int telemetry_idle = 0;
+  // Stall watchdog (Info level, rate-limited): the same counters, but reported
+  // when the pacer is playing and emits NOTHING. See DecidePacerStallReport.
+  int stalled_windows = 0;
+  bool stall_reported = false;
   while (!shutting_down_.load()) {
     Impl* impl = nullptr;
     {
@@ -3296,6 +3507,32 @@ void PreviewEngine::PacerLoop() {
                   " rendered=" + std::to_string(telemetry_rendered) +
                   " skipping=" + std::to_string(telemetry_skipping) +
                   " idle=" + std::to_string(telemetry_idle) + " per 2s");
+
+          // The same numbers, escalated to Info ONLY when the pacer is playing
+          // and producing nothing — the shape of the 35-hour burn that left no
+          // trace in a release log (625 frames, one core, Debug-only evidence).
+          const int stalled_before = stalled_windows;
+          const auto stall = DecidePacerStallReport(PacerStallInput{
+              telemetry_rendered, stalled_windows, stall_reported});
+          stalled_windows = stall.next_stalled_windows;
+          stall_reported = stall.next_stall_reported;
+          if (stall.report == PacerStallReport::kStalled) {
+            clingfy::bridge::NativeLogPublisher::Instance().Info(
+                "Preview",
+                "pacer STALLED: playing but no frame emitted for ~" +
+                    std::to_string(stalled_windows * 2) +
+                    "s. video_edited=" + std::to_string(impl->edited_pos_ms) +
+                    "ms audio=" + std::to_string(audio_ms) +
+                    "ms audio_playing=" + (audio_playing ? "1" : "0") +
+                    " skipping=" + std::to_string(telemetry_skipping) +
+                    " idle=" + std::to_string(telemetry_idle) + " per 2s");
+          } else if (stall.report == PacerStallReport::kRecovered) {
+            clingfy::bridge::NativeLogPublisher::Instance().Info(
+                "Preview", "pacer recovered after ~" +
+                               std::to_string(stalled_before * 2) +
+                               "s without a frame");
+          }
+
           telemetry_last = now;
           telemetry_rendered = 0;
           telemetry_skipping = 0;

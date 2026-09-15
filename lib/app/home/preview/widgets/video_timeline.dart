@@ -18,7 +18,6 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/widgets/responsive_shell_scope.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -466,12 +465,14 @@ class _VideoTimelineState extends State<VideoTimeline> {
     final rawEditor = context.select<PlayerController, ZoomEditorController?>(
       (player) => player.zoomEditor,
     );
-    // Phase 10.3: Windows zoom is display-only — manual segments were never
-    // persisted (saveManualZoomSegments is a stub), previewed, or exported,
-    // so an editable track was a lie. The lane still RENDERS the real auto
-    // segments (playerSegments, fed by the native getZoomSegments); nulling
-    // the local editor disables every edit affordance in one move.
-    final editor = isWindows() ? null : rawEditor;
+    // Windows zoom editing is live now. It used to be display-only because
+    // manual segments were never persisted, previewed, or exported — an
+    // editable track would have been a lie. All three are real: the segments
+    // round-trip through capture/zoom.manual.json (the same file macOS uses),
+    // previewSetZoomSegments pushes the effective timeline into the live
+    // preview, and the export merges auto-minus-overrides with the manual
+    // ones. So the editor is attached on both platforms.
+    final editor = rawEditor;
     final playerSegments = context.select<PlayerController, List<ZoomSegment>>(
       (player) => player.zoomSegments,
     );

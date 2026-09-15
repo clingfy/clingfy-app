@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
+import 'package:clingfy/core/models/caption_model_info.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/recording/models/audio_output_route.dart';
@@ -12,6 +13,8 @@ import 'package:clingfy/core/models/storage_snapshot.dart';
 import 'package:clingfy/core/permissions/models/windows_permission_details.dart';
 import 'package:clingfy/core/updater/windows_update_feed.dart';
 import 'package:flutter/foundation.dart';
+import '../captions/captions_capability.dart';
+import 'job_progress.dart';
 
 class NativeBridge {
   late final MethodChannel _nativeBridge;
@@ -28,7 +31,7 @@ class NativeBridge {
   VoidCallback? _onIndicatorPauseTapped;
   VoidCallback? _onIndicatorStopTapped;
   VoidCallback? _onIndicatorResumeTapped;
-  ValueChanged<double>? _onExportProgress;
+  ValueChanged<JobProgress>? _onJobProgress;
   VoidCallback? _onMenuBarToggleRequest;
   void Function(String projectPath)? _onProjectOpenRequested;
   Function(String type, Map<String, dynamic>? payload)?
@@ -159,11 +162,31 @@ class NativeBridge {
       return;
     }
 
-    final pending = List<String>.from(_pendingProjectOpenRequests);
-    _pendingProjectOpenRequests.clear();
-    for (final projectPath in pending) {
-      cb(projectPath);
-    }
+    // Drain OFF the registering call stack. `HomeBindings.bind()` attaches this
+    // from `_HomePageState.didChangeDependencies`, which runs inside the build
+    // phase, so delivering inline made a cold start from a `.clingfyproj` path
+    // mutate RecordingController / PlayerController / PostProcessingController
+    // mid-build — five "setState() or markNeedsBuild() called during build"
+    // errors before the editor had drawn a frame. A microtask runs after the
+    // frame's synchronous build/layout/paint, so the callback sees a settled
+    // tree.
+    //
+    // The queue is read and cleared INSIDE the microtask, not before it: if the
+    // callback is detached in between, the request stays queued for the next
+    // listener instead of being dropped. A request that arrives in that window
+    // goes straight to the live path above (the callback is already non-null)
+    // and is never added to the queue, so it cannot be delivered twice.
+    scheduleMicrotask(() {
+      final current = _onProjectOpenRequested;
+      if (current == null) {
+        return;
+      }
+      final pending = List<String>.from(_pendingProjectOpenRequests);
+      _pendingProjectOpenRequests.clear();
+      for (final projectPath in pending) {
+        current(projectPath);
+      }
+    });
   }
 
   void setOnPreRecordingBarAction(
@@ -176,8 +199,13 @@ class NativeBridge {
     _onNativeSelectionChanged = cb;
   }
 
-  void setOnExportProgress(ValueChanged<double>? cb) {
-    _onExportProgress = cb;
+  /// Receives every long-running native job's progress, not just export.
+  ///
+  /// Named for the job rather than the method because `updateExportProgress`
+  /// now carries captions too; renaming the method itself would break the
+  /// Windows publisher and macOS emitter for no gain.
+  void setOnJobProgress(ValueChanged<JobProgress>? cb) {
+    _onJobProgress = cb;
   }
 
   void setOnCameraOverlayMoved(
@@ -215,9 +243,13 @@ class NativeBridge {
         _onMenuBarToggleRequest?.call();
         return null;
       case NativeToFlutterMethod.updateExportProgress:
-        final p = call.arguments as double?;
-        if (p != null) {
-          _onExportProgress?.call(p);
+        // Labelled payload since captions began reporting on this channel.
+        // JobProgress.fromNative also accepts a bare double, so a native binary
+        // out of step with this build degrades to a working export bar rather
+        // than one that silently never moves.
+        final progress = JobProgress.fromNative(call.arguments);
+        if (progress != null) {
+          _onJobProgress?.call(progress);
         }
         return null;
       case NativeToFlutterMethod.preRecordingBarAction:
@@ -440,6 +472,42 @@ class NativeBridge {
     } catch (e, st) {
       Log.w('NativeBridge', 'getAudioOutputRoute failed: $e', e, st);
       return AudioOutputRoute.unknown;
+    }
+  }
+
+  /// Asks native to flash identifying numbers on the physical displays.
+  ///
+  /// Returns the snapshot native says it painted so the caller can adopt it —
+  /// the number on the glass and the number in the picker then cannot drift.
+  ///
+  /// A native build with no handler is reported as
+  /// [IdentifyDisplaysResult.unsupported], which permanently hides the control.
+  /// Any other failure keeps the feature supported with a null snapshot: a
+  /// transient error must not disable a working button.
+  Future<IdentifyDisplaysResult> identifyDisplays({
+    required int durationMs,
+    required bool only,
+    required Map<String, String> labels,
+    int? onlyDisplayId,
+  }) async {
+    try {
+      final reply = await _nativeBridge
+          .invokeMethod<List<dynamic>>(NativeMethod.identifyDisplays, {
+            'durationMs': durationMs,
+            'only': only,
+            'onlyDisplayId': onlyDisplayId,
+            'labels': labels,
+          });
+      return IdentifyDisplaysResult(supported: true, snapshot: reply);
+    } on MissingPluginException {
+      Log.d(
+        'NativeBridge',
+        'identifyDisplays is not implemented by this native build',
+      );
+      return IdentifyDisplaysResult.unsupported;
+    } catch (e, st) {
+      Log.w('NativeBridge', 'identifyDisplays failed: $e', e, st);
+      return const IdentifyDisplaysResult(supported: true, snapshot: null);
     }
   }
 
@@ -892,6 +960,186 @@ class NativeBridge {
       );
     }
     return RecordingSceneInfo.fromMap(raw);
+  }
+
+  /// Transcribes a recording's audio into caption cues.
+  ///
+  /// Long-running: progress arrives on the shared job-progress callback tagged
+  /// `ProgressJob.captions`, and [cancelCaptions] abandons it. The first run on
+  /// a machine also downloads the model, which is why the early ticks are
+  /// indeterminate rather than a bar pinned at zero.
+  ///
+  /// Both sources default on — meetings, demos and tutorials are the common
+  /// case and both sides matter there.
+  ///
+  /// Throws [PlatformException] with code `CAPTIONS_CANCELLED` when the user
+  /// cancelled, which callers should treat as a normal outcome rather than an
+  /// error worth reporting.
+  Future<List<Map<dynamic, dynamic>>> generateCaptions({
+    required String projectPath,
+    bool useMic = true,
+    bool useSystem = true,
+    String? language,
+  }) async {
+    final raw = await _nativeBridge
+        .invokeMethod<List<dynamic>>('generateCaptions', {
+          'projectPath': projectPath,
+          'useMic': useMic,
+          'useSystem': useSystem,
+          if (language != null) 'language': language,
+        });
+    if (raw == null) return const [];
+    return raw.whereType<Map<dynamic, dynamic>>().toList();
+  }
+
+  /// Abandons an in-flight transcription. Safe to call when none is running.
+  Future<void> cancelCaptions() async {
+    try {
+      await _nativeBridge.invokeMethod<void>('cancelCaptions');
+    } on MissingPluginException {
+      // Nothing to cancel on a platform without the engine.
+    }
+  }
+
+  /// Asks native whether captions can run on this machine for this recording.
+  ///
+  /// Mirrors `getRecordingSceneInfo`: native is the only side that knows the
+  /// hardware, the OS, and what is actually decodable on disk, so the UI asks
+  /// rather than inferring. Every platform answers — Windows reports
+  /// `platformNotSupported` rather than leaving the method unhandled, because
+  /// an unhandled method throws MissingPluginException and reaches the user as
+  /// a crash-shaped error instead of an explanation.
+  ///
+  /// Falls back to unavailable on a missing implementation or a malformed
+  /// reply. Captions being off is a far better outcome than an exception.
+  Future<CaptionsCapabilityInfo> captionsCapability(String projectPath) async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        'captionsCapability',
+        {'projectPath': projectPath},
+      );
+      if (raw == null) return CaptionsCapabilityInfo.unsupported;
+      return CaptionsCapabilityInfo.fromMap(raw);
+    } on MissingPluginException {
+      return CaptionsCapabilityInfo.unsupported;
+    }
+  }
+
+  /// What the on-device speech model costs on disk right now.
+  ///
+  /// Degrades to "nothing installed" on a missing implementation or a
+  /// malformed reply, like [captionsCapability] and unlike
+  /// [getStorageSnapshot]: a settings card that cannot render is not worth
+  /// throwing over, and Windows genuinely has no model.
+  Future<CaptionModelInfo> getCaptionModelInfo() async {
+    try {
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        NativeMethod.getCaptionModelInfo,
+      );
+      return CaptionModelInfo.fromMap(raw);
+    } on MissingPluginException {
+      return CaptionModelInfo.notInstalled;
+    } on PlatformException {
+      return CaptionModelInfo.notInstalled;
+    }
+  }
+
+  /// Unloads and removes the speech model. Returns the bytes freed.
+  ///
+  /// Deliberately lets [PlatformException] escape: `MODEL_IN_USE` carries a
+  /// message the user needs to see, and swallowing it would leave a Delete
+  /// button that silently does nothing.
+  Future<int> deleteCaptionModel() async {
+    final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+      NativeMethod.deleteCaptionModel,
+    );
+    return (raw?['freedBytes'] as num?)?.toInt() ?? 0;
+  }
+
+  /// The pixel size the exported frames will be, for the current layout and
+  /// resolution presets.
+  ///
+  /// Asked rather than computed because the `auto` resolution preset resolves
+  /// against the recording's own oriented video track, which only native has
+  /// read. Caption bitmaps are rasterised at this size, so guessing here would
+  /// burn in captions scaled for a canvas the video does not have.
+  ///
+  /// [format] and [gifSize] are part of the question, not decoration: a GIF is
+  /// NOT rendered at the resolution preset. The exporter renders its
+  /// intermediate at the GIF long-edge cap for the chosen size preset, so a
+  /// bitmap rasterised for the uncapped canvas lands in a frame roughly 1.8x
+  /// smaller than the one it was laid out for — and the caption renderer only
+  /// scales a bitmap DOWN when it is wider than the canvas, so a short cue is
+  /// drawn 1:1 and covers far more of the frame than it should. Omitting them
+  /// (older callers) or talking to an older binary that ignores them yields the
+  /// uncapped size, which is exactly what those builds render.
+  ///
+  /// Returns null when native cannot answer — on Windows, on an older binary,
+  /// or when the project is unreadable. The caller skips burn-in rather than
+  /// rasterising at a made-up size.
+  Future<Size?> resolveExportSize({
+    required String projectPath,
+    required String layoutPreset,
+    required String resolutionPreset,
+    String? format,
+    String? gifSize,
+  }) async {
+    try {
+      final raw = await _nativeBridge
+          .invokeMethod<Map<dynamic, dynamic>>(NativeMethod.resolveExportSize, {
+            'projectPath': projectPath,
+            'layoutPreset': layoutPreset,
+            'resolutionPreset': resolutionPreset,
+            'format': format,
+            'gifSize': gifSize,
+          });
+      final width = (raw?['width'] as num?)?.toDouble();
+      final height = (raw?['height'] as num?)?.toDouble();
+      if (width == null || height == null || width <= 0 || height <= 0) {
+        return null;
+      }
+      return Size(width, height);
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  /// Hands the running preview its caption bitmaps, or clears them.
+  ///
+  /// Cue times are EDITED-timeline milliseconds — where each caption lands in
+  /// the file the export would produce — because the preview player's clock is
+  /// edited time once a kept-range composition is playing. That is the opposite
+  /// of the export payload, which is source-timed.
+  ///
+  /// [canvasWidth]/[canvasHeight] are the canvas the bitmaps were rasterized
+  /// against. Native refuses to draw them on a differently-sized composition:
+  /// the caption font scales with canvas height, so a stale bitmap is the wrong
+  /// size and sometimes the wrong line count.
+  ///
+  /// Never throws — a preview without captions is a far better outcome than an
+  /// exception, and Windows has no implementation at all.
+  Future<void> previewSetCaptions({
+    required String? sessionId,
+    required String? bitmapDirectory,
+    required List<Map<String, dynamic>> cues,
+    required double canvasWidth,
+    required double canvasHeight,
+  }) async {
+    try {
+      await _nativeBridge.invokeMethod<void>('previewSetCaptions', {
+        'sessionId': sessionId,
+        'bitmapDirectory': bitmapDirectory,
+        'cues': cues,
+        'canvasWidth': canvasWidth,
+        'canvasHeight': canvasHeight,
+      });
+    } on MissingPluginException {
+      // No preview caption support on this platform.
+    } on PlatformException catch (e) {
+      Log.w('NativeBridge', 'previewSetCaptions failed: ${e.code}');
+    }
   }
 
   Future<void> previewClose({required String sessionId}) async {

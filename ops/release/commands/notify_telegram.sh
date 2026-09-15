@@ -5,8 +5,13 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/_config.sh"
 
 status="${1:-failure}"
+# --dry-run renders the message and prints it instead of sending. Lets an
+# operator see exactly what will hit the channel before it does, and makes the
+# markdown rendering testable without posting to a real chat.
+dry_run=0
+[[ "${2:-}" == "--dry-run" || "${TELEGRAM_DRY_RUN:-}" == "1" ]] && dry_run=1
 
-if [[ -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then
+if [[ $dry_run -eq 0 && ( -z "${TELEGRAM_BOT_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ) ]]; then
   log_warn "Telegram credentials missing. Skipping Telegram notification."
   exit 0
 fi
@@ -24,6 +29,26 @@ escape_html() {
   text="${text//</&lt;}"
   text="${text//>/&gt;}"
   printf '%s' "$text"
+}
+
+# Markdown -> the small HTML subset Telegram accepts (<b> <i> <code> <a>).
+#
+# CHANGELOG.md is markdown; Telegram is called with parse_mode=HTML. Without
+# this the announcement posts raw `**GIF export**` and `### Highlights` to the
+# channel, which is what every release before 1.0.7 did.
+#
+# MUST run AFTER escape_html, never before: escaping first turns any literal
+# `<` in the changelog into `&lt;`, and the tags this adds then survive. Doing
+# it the other way round would escape our own tags into visible text.
+markdown_to_html() {
+  # `**bold**` before `*italic*` so the double form is consumed first and the
+  # single-asterisk pass only ever sees genuine italics. Unpaired markers match
+  # nothing and are left as-is rather than producing an unclosed tag, which
+  # Telegram would reject as malformed HTML.
+  printf '%s' "$1" | sed -E \
+    -e 's/\*\*([^*]+)\*\*/<b>\1<\/b>/g' \
+    -e 's/\*([^*]+)\*/<i>\1<\/i>/g' \
+    -e 's/`([^`]+)`/<code>\1<\/code>/g'
 }
 
 app_name_esc="$(escape_html "$APP_NAME")"
@@ -55,16 +80,43 @@ if [[ "$status" == "success" ]]; then
     notes_used=0
     notes_truncated=0
     while IFS= read -r line; do
-      line="${line#- }"
-      [[ -z "$line" ]] && continue
+      [[ -z "${line//[[:space:]]/}" ]] && continue
       if (( notes_used + ${#line} + 3 > notes_budget )); then
         notes_truncated=1
         break
       fi
       notes_used=$(( notes_used + ${#line} + 3 ))
-      message+=$'• '
-      message+="$(escape_html "$line")"
-      message+=$'\n'
+      rendered="$(markdown_to_html "$(escape_html "$line")")"
+      if [[ "$line" =~ ^#+[[:space:]] ]]; then
+        # A markdown heading ("### Highlights") is a section label, not an item.
+        # Bulleting it produced "• ### Highlights" in the channel.
+        #
+        # Buffered rather than emitted, so the budget cutting out mid-list can
+        # never leave a heading with nothing under it — which is exactly what
+        # happened on the 1.0.7 notes, where the cut fell right after
+        # "Bug Fixes".
+        heading="${line#\#}"; heading="${heading#\#}"; heading="${heading#\#}"
+        heading="${heading# }"
+        pending_heading="$(markdown_to_html "$(escape_html "$heading")")"
+        continue
+      elif [[ "$line" == "- "* || "$line" == "* "* ]]; then
+        if [[ -n "${pending_heading:-}" ]]; then
+          message+=$'\n<b>'; message+="${pending_heading}"; message+=$'</b>\n'
+          pending_heading=""
+        fi
+        message+=$'• '
+        message+="${rendered#??}"
+        message+=$'\n'
+      else
+        if [[ -n "${pending_heading:-}" ]]; then
+          message+=$'\n<b>'; message+="${pending_heading}"; message+=$'</b>\n'
+          pending_heading=""
+        fi
+        # Prose, e.g. the summary paragraph that opens every entry. It is not a
+        # list item and reads badly with a bullet glued to the front.
+        message+="${rendered}"
+        message+=$'\n'
+      fi
     done < "$RELEASE_NOTES_TEMP"
     if (( notes_truncated )); then
       message+=$'…\n<i>Release notes truncated — see the full changelog in the app or on GitHub.</i>\n'
@@ -95,6 +147,19 @@ fi
 # ---------------------------------------------------------
 # NEW: Better curl execution to capture Telegram's error body
 # ---------------------------------------------------------
+if [[ $dry_run -eq 1 ]]; then
+  log_info "DRY RUN — not sending. Rendered message (${#message} chars, Telegram limit 4096):"
+  printf '%s\n' "----------------------------------------"
+  printf '%s\n' "$message"
+  printf '%s\n' "----------------------------------------"
+  if (( ${#message} > 4096 )); then
+    log_error "Message exceeds Telegram's 4096-character limit."
+    exit 1
+  fi
+  log_success "Message is within the limit."
+  exit 0
+fi
+
 response=$(curl -s -w "\n%{http_code}" -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
   --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
   --data-urlencode "text=${message}" \

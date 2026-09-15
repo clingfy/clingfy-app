@@ -15,6 +15,9 @@ const _toolbarNoticeLaneKey = Key('toolbar_notice_lane');
 const _toolbarExportLaneKey = Key('toolbar_export_lane');
 const _toolbarInspectorToggleKey = Key('home_toolbar_options_toggle_button');
 const _toolbarNewRecordingKey = Key('new_recording_button');
+// Keyed so a test can tell a DISABLED Export button from an absent one — the
+// two look identical to a finder that only asks whether the label is there.
+const _toolbarExportKey = Key('toolbar_export_button');
 
 enum ToolbarMessageTone { info, success, warning, error }
 
@@ -107,7 +110,8 @@ class DesktopToolbar extends StatelessWidget {
     this.countdownText,
     this.onExport,
     this.exportStatus,
-    this.isProcessing = false,
+    this.isExportUnavailable = false,
+    this.isExporting = false,
     this.isInspectorVisible = true,
     this.onToggleInspector,
     this.showPreviewActions = false,
@@ -121,7 +125,19 @@ class DesktopToolbar extends StatelessWidget {
   final String? countdownText;
   final VoidCallback? onExport;
   final ToolbarExportStatusPresentation? exportStatus;
-  final bool isProcessing;
+
+  /// The Export action cannot run right now — a preview render, an export, or a
+  /// transcription is holding the state it would read. Disables the button and
+  /// nothing else.
+  final bool isExportUnavailable;
+
+  /// An export is actually running.
+  ///
+  /// The ONLY thing that may put a spinner and "Export…" on the button. It was
+  /// briefly fed the same value as [isExportUnavailable], which by then included
+  /// a running transcription — so generating subtitles announced an export that
+  /// was writing no file at all.
+  final bool isExporting;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
   final bool showPreviewActions;
@@ -151,7 +167,8 @@ class DesktopToolbar extends StatelessWidget {
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
-          isProcessing: isProcessing,
+          isExportUnavailable: isExportUnavailable,
+          isExporting: isExporting,
           isInspectorVisible: isInspectorVisible,
           onToggleInspector: onToggleInspector,
           showPreviewActions: showPreviewActions,
@@ -171,7 +188,7 @@ class DesktopToolbar extends StatelessWidget {
           elapsedText: elapsedText,
           countdownText: countdownText,
           onExport: onExport,
-          isProcessing: isProcessing,
+          isExportUnavailable: isExportUnavailable,
           isInspectorVisible: isInspectorVisible,
           onToggleInspector: onToggleInspector,
           showPreviewActions: showPreviewActions,
@@ -190,7 +207,7 @@ class DesktopToolbar extends StatelessWidget {
         elapsedText: elapsedText,
         countdownText: countdownText,
         onExport: onExport,
-        isProcessing: isProcessing,
+        isExportUnavailable: isExportUnavailable,
         isInspectorVisible: isInspectorVisible,
         onToggleInspector: onToggleInspector,
         showPreviewActions: showPreviewActions,
@@ -316,7 +333,8 @@ class _MacToolbarRow extends StatelessWidget {
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
-    required this.isProcessing,
+    required this.isExportUnavailable,
+    required this.isExporting,
     required this.isInspectorVisible,
     required this.onToggleInspector,
     required this.showPreviewActions,
@@ -329,7 +347,8 @@ class _MacToolbarRow extends StatelessWidget {
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
-  final bool isProcessing;
+  final bool isExportUnavailable;
+  final bool isExporting;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
   final bool showPreviewActions;
@@ -422,11 +441,12 @@ class _MacToolbarRow extends StatelessWidget {
           ],
           if (onExport != null) ...[
             AppButton(
-              onPressed: isProcessing ? null : onExport,
+              key: _toolbarExportKey,
+              onPressed: isExportUnavailable ? null : onExport,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (isProcessing) ...[
+                  if (isExporting) ...[
                     const CupertinoActivityIndicator(radius: 8),
                     SizedBox(width: spacing.xs + 2),
                     Flexible(
@@ -470,7 +490,7 @@ class _WinToolbarRow extends StatelessWidget {
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
-    required this.isProcessing,
+    required this.isExportUnavailable,
     required this.isInspectorVisible,
     required this.onToggleInspector,
     required this.showPreviewActions,
@@ -483,7 +503,7 @@ class _WinToolbarRow extends StatelessWidget {
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
-  final bool isProcessing;
+  final bool isExportUnavailable;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
   final bool showPreviewActions;
@@ -567,7 +587,8 @@ class _WinToolbarRow extends StatelessWidget {
           ],
           if (onExport != null) ...[
             fluent.FilledButton(
-              onPressed: isProcessing ? null : onExport,
+              key: _toolbarExportKey,
+              onPressed: isExportUnavailable ? null : onExport,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -593,7 +614,7 @@ class _FallbackToolbarRow extends StatelessWidget {
     required this.elapsedText,
     required this.countdownText,
     required this.onExport,
-    required this.isProcessing,
+    required this.isExportUnavailable,
     required this.isInspectorVisible,
     required this.onToggleInspector,
     required this.showPreviewActions,
@@ -606,7 +627,7 @@ class _FallbackToolbarRow extends StatelessWidget {
   final String? elapsedText;
   final String? countdownText;
   final VoidCallback? onExport;
-  final bool isProcessing;
+  final bool isExportUnavailable;
   final bool isInspectorVisible;
   final VoidCallback? onToggleInspector;
   final bool showPreviewActions;
@@ -680,9 +701,10 @@ class _FallbackToolbarRow extends StatelessWidget {
           if (onExport != null) ...[
             _simpleButton(
               context: context,
+              buttonKey: _toolbarExportKey,
               label: l10n.export,
               icon: Icons.download,
-              onPressed: isProcessing ? null : onExport,
+              onPressed: isExportUnavailable ? null : onExport,
             ),
             SizedBox(width: spacing.xs),
           ],

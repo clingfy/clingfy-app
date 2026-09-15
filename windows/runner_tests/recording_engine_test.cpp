@@ -600,6 +600,43 @@ TEST_F(RecordingEngineTest, NoCameraWhenOverlayEnabledButNoDeviceSelected) {
 
 // === Phase 10.4: native disk preflight gate (pure) ==========================
 
+// === kCameraPreviewHidden decision (pure) ===================================
+
+TEST(CameraPreviewHiddenWarningTest, FiresOnlyForAnExistingUnexcludedOverlay) {
+  // The whole truth table. `overlay_exists && !wda_excluded` is the exact
+  // "capture exclusion failed on both presenters" condition — the camera is
+  // recording, the user asked for a live bubble, and it can never be shown.
+  EXPECT_TRUE(ShouldWarnCameraPreviewHidden(/*floating_requested=*/true,
+                                            /*overlay_exists=*/true,
+                                            /*wda_excluded=*/false,
+                                            /*already_warned=*/false));
+}
+
+TEST(CameraPreviewHiddenWarningTest, SilentWhenTheBubbleCanActuallyBeShown) {
+  EXPECT_FALSE(ShouldWarnCameraPreviewHidden(true, true, true, false));
+}
+
+TEST(CameraPreviewHiddenWarningTest, SilentWhenTheUserDidNotAskForFloating) {
+  // Choosing the in-app preview is not a failure.
+  EXPECT_FALSE(ShouldWarnCameraPreviewHidden(false, true, false, false));
+}
+
+TEST(CameraPreviewHiddenWarningTest, SilentWhenNoOverlayExistsAtAll) {
+  // A different failure, already WARNed, and mutually exclusive with
+  // kCameraOpenFailed by construction — the recorder-failure branch nulls the
+  // overlay. Toasting here would also lie: this copy promises the camera still
+  // appears in the finished video, which is only true when the bubble exists
+  // and merely cannot be shown.
+  EXPECT_FALSE(ShouldWarnCameraPreviewHidden(true, false, false, false));
+}
+
+TEST(CameraPreviewHiddenWarningTest, IsOneShotAcrossPreviewModeToggles) {
+  EXPECT_FALSE(ShouldWarnCameraPreviewHidden(true, true, false,
+                                             /*already_warned=*/true));
+}
+
+// === Phase 10.4: native disk preflight gate (pure) ==========================
+
 TEST(StartDiskGateTest, FailedQueryNeverBlocks) {
   EXPECT_EQ(EvaluateStartDiskGate(std::nullopt, false), StartDiskGate::kOk);
   EXPECT_EQ(EvaluateStartDiskGate(std::nullopt, true), StartDiskGate::kOk);

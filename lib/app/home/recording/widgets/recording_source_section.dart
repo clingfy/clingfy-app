@@ -1,4 +1,5 @@
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/core/devices/display_label.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
@@ -24,6 +25,8 @@ class RecordingSourceSection extends StatelessWidget {
     required this.onTargetModeChanged,
     required this.onDisplayChanged,
     required this.onRefreshDisplays,
+    required this.onIdentifyDisplays,
+    required this.identifySupported,
     required this.onAppWindowChanged,
     required this.onRefreshAppWindows,
     required this.onPickArea,
@@ -41,8 +44,18 @@ class RecordingSourceSection extends StatelessWidget {
   final int? areaDisplayId;
   final Rect? areaRect;
   final ValueChanged<DisplayTargetMode> onTargetModeChanged;
-  final ValueChanged<int?> onDisplayChanged;
+
+  /// Reports the chosen display id (null for "Main display") together with the
+  /// labels currently on screen, so the confirm flash paints what the user is
+  /// reading.
+  final void Function(int? id, Map<String, String> labels) onDisplayChanged;
   final VoidCallback onRefreshDisplays;
+
+  /// Flashes an identifying number on every physical display.
+  final void Function(Map<String, String> labels) onIdentifyDisplays;
+
+  /// False when the native build has no identify handler at all.
+  final bool identifySupported;
   final ValueChanged<int?> onAppWindowChanged;
   final VoidCallback onRefreshAppWindows;
   final VoidCallback onPickArea;
@@ -149,6 +162,16 @@ class RecordingSourceSection extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
 
     if (isDisplayTarget) {
+      final labelRows = DisplayLabelBuilder.build(
+        displays,
+        DisplayLabelStrings(
+          screenWord: l10n.screen,
+          mainMarker: l10n.displayMarkerMain,
+          thisWindowMarker: l10n.displayMarkerThisWindow,
+        ),
+      );
+      final labelArgs = DisplayLabelBuilder.labelArgs(labelRows);
+
       return [
         AppFormRow(
           label: l10n.screenToRecord,
@@ -157,26 +180,55 @@ class RecordingSourceSection extends StatelessWidget {
             onPressed: isRecording ? null : onRefreshDisplays,
             icon: Icons.refresh,
           ),
-          control: PlatformDropdown<int?>(
-            value: validDisplayId,
+          // Deliberately typed on `int`, not `int?`: PopupMenuButton cannot
+          // tell a null-valued selection apart from a dismissal, so a
+          // null-valued row is silently unclickable. The sentinel is mapped
+          // back to null at the callback boundary.
+          control: PlatformDropdown<int>(
+            value: validDisplayId ?? kMainDisplaySentinelId,
             minWidth: 0,
             maxWidth: double.infinity,
             expand: true,
             items: [
-              PlatformMenuItem(value: null, label: l10n.mainDisplay),
-              ...displays.map(
-                (display) => PlatformMenuItem(
-                  value: display.id,
-                  label:
-                      '${display.name}  (${display.width.toInt()}×${display.height.toInt()} @${display.scale}x)',
+              PlatformMenuItem(
+                value: kMainDisplaySentinelId,
+                label: l10n.mainDisplay,
+              ),
+              ...labelRows.map(
+                (row) => PlatformMenuItem(
+                  value: row.id,
+                  label: '${row.label}  ${row.detail}',
                 ),
               ),
             ],
             onChanged: isDisplayTarget && !isRecording
-                ? onDisplayChanged
+                ? (value) => onDisplayChanged(
+                    (value == null || value == kMainDisplaySentinelId)
+                        ? null
+                        : value,
+                    labelArgs,
+                  )
                 : null,
           ),
         ),
+        // Meaningless with one screen, and impossible on a native build that
+        // predates the handler.
+        if (identifySupported && displays.length > 1) ...[
+          const SizedBox(height: AppSidebarTokens.rowGap),
+          Tooltip(
+            message: l10n.identifyDisplaysTooltip,
+            child: AppButton(
+              key: const Key('identify_displays_button'),
+              size: AppButtonSize.compact,
+              variant: AppButtonVariant.secondary,
+              icon: Icons.numbers,
+              label: l10n.identifyDisplays,
+              onPressed: isRecording
+                  ? null
+                  : () => onIdentifyDisplays(labelArgs),
+            ),
+          ),
+        ],
       ];
     }
 

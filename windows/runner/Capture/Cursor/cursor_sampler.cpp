@@ -1,5 +1,9 @@
 #include "Capture/Cursor/cursor_sampler.h"
 
+#include <windows.h>
+
+#include "Capture/Cursor/cursor_sprite_capture.h"
+
 #include <algorithm>
 #include <chrono>
 #include <utility>
@@ -47,7 +51,9 @@ bool CursorSampler::OpenWriterAndClock(const Config& config, ProbeFn probe,
   stop_.store(false);
 
   CursorSidecarWriter::Header header;
-  header.schema_version = 1;
+  // v2 adds `sprite` lines + `spriteId` on samples. A v1 reader ignores
+  // both (unknown line type, absent key), so old readers still work.
+  header.schema_version = 2;
   header.sample_rate_hz = config_.sample_rate_hz;
   header.target_type = config_.target_type;
   header.width = config_.width;
@@ -170,8 +176,28 @@ bool CursorSampler::RunOnce() {
                               config_.heartbeat_ms)) {
     return false;
   }
+  // Resolve the cursor SHAPE for this sample. Deduped by handle, so a 60 Hz
+  // sampler rasterizes each distinct shape exactly once no matter how long the
+  // recording runs. A new shape's pixels must be written BEFORE the sample
+  // that references it — the reader resolves ids against sprites it has
+  // already seen.
+  int sprite_id = -1;
+  if (visible && probe.cursor_handle != nullptr) {
+    if (sprite_cache_ == nullptr) {
+      sprite_cache_ = std::make_unique<CursorSpriteCache>();
+    }
+    bool is_new = false;
+    CursorSprite sprite;
+    sprite_id = sprite_cache_->IdFor(
+        static_cast<HCURSOR>(probe.cursor_handle), &is_new, &sprite);
+    if (is_new && sprite_id >= 0) {
+      writer_.WriteSprite(sprite.id, sprite.width, sprite.height,
+                          sprite.hotspot_x, sprite.hotspot_y,
+                          Base64Encode(sprite.pixels));
+    }
+  }
   writer_.WriteSample(now, probe.screen_x, probe.screen_y, local.x, local.y,
-                      visible);
+                      visible, sprite_id);
   have_prev_ = true;
   prev_x_ = local.x;
   prev_y_ = local.y;

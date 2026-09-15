@@ -6,6 +6,8 @@
 #include <cstdlib>
 #include <sstream>
 
+#include "Capture/Cursor/cursor_base64.h"
+
 namespace clingfy::capture {
 
 namespace {
@@ -129,7 +131,42 @@ std::optional<CursorSidecarData> ParseCursorSidecar(const std::string& jsonl) {
       sample.x = static_cast<std::int32_t>(x);
       sample.y = static_cast<std::int32_t>(y);
       sample.visible = vis;
+      // Absent on every v1 file and on any sample whose cursor could not be
+      // rasterized; -1 then means "use the fallback arrow".
+      std::int64_t sprite = 0;
+      if (FindIntField(line, "spriteId", &sprite)) {
+        sample.sprite_id = static_cast<int>(sprite);
+      }
       data.samples.push_back(sample);
+    } else if (type == "sprite") {
+      std::int64_t id = 0;
+      std::int64_t w = 0;
+      std::int64_t h = 0;
+      std::int64_t hx = 0;
+      std::int64_t hy = 0;
+      std::string pixels;
+      if (!FindIntField(line, "id", &id) || !FindIntField(line, "width", &w) ||
+          !FindIntField(line, "height", &h) ||
+          !FindStringField(line, "pixels", &pixels)) {
+        continue;  // malformed sprite line — skip; samples fall back to the arrow
+      }
+      FindIntField(line, "hotspotX", &hx);
+      FindIntField(line, "hotspotY", &hy);
+      CursorSidecarSprite sprite;
+      sprite.id = static_cast<int>(id);
+      sprite.width = static_cast<std::int32_t>(w);
+      sprite.height = static_cast<std::int32_t>(h);
+      sprite.hotspot_x = static_cast<std::int32_t>(hx);
+      sprite.hotspot_y = static_cast<std::int32_t>(hy);
+      sprite.pixels = Base64Decode(pixels);
+      // Reject a payload that does not match its own declared size rather than
+      // handing Direct2D a short buffer to read past.
+      const size_t expected =
+          static_cast<size_t>(sprite.width) * sprite.height * 4;
+      if (sprite.width > 0 && sprite.height > 0 &&
+          sprite.pixels.size() == expected) {
+        data.sprites.push_back(std::move(sprite));
+      }
     } else if (type == "click") {
       // Phase 8.3: smart zoom triggers on clicks. Only the timestamp is needed
       // here; button/action are kept in the file for 8.4's click animation.
@@ -168,6 +205,7 @@ CursorAtResult SampleCursorAt(const std::vector<CursorSidecarSample>& samples,
     result.x = static_cast<double>(s.x);
     result.y = static_cast<double>(s.y);
     result.visible = s.visible;
+    result.sprite_id = s.sprite_id;
   };
 
   if (t_ms <= samples.front().t_ms) {
@@ -197,6 +235,10 @@ CursorAtResult SampleCursorAt(const std::vector<CursorSidecarSample>& samples,
     result.y = static_cast<double>(lo.y) +
                (static_cast<double>(hi.y) - static_cast<double>(lo.y)) * f;
     result.visible = true;
+    // A SHAPE is discrete — there is no meaningful halfway between an
+    // arrow and an I-beam — so take the one already on screen rather than
+    // switching early to the next sample's.
+    result.sprite_id = lo.sprite_id;
   } else {
     // Never interpolate across a visibility boundary — snap to nearest in time.
     use((t_ms - lo.t_ms <= hi.t_ms - t_ms) ? lo : hi);

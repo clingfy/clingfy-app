@@ -93,7 +93,7 @@ class _HomePageState extends State<HomePage> {
           actions.handleRecordingFinalized(context, path),
       onExternalProjectOpenFailed: (projectPath) =>
           actions.handleExternalProjectOpenFailed(context, projectPath),
-      onExportProgress: actions.handleExportProgress,
+      onJobProgress: actions.handleJobProgress,
       onHandleNativeBarAction: (type, payload) =>
           actions.handleNativeBarAction(context, type, payload),
       onHandleNativeSelectionChanged: actions.handleNativeSelectionChanged,

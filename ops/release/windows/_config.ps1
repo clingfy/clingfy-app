@@ -171,6 +171,15 @@ $script:AzurePurgeKeys = @(
   'AZ_CDN_PROFILE',
   'AZ_FRONTDOOR_ENDPOINT_NAME'
 )
+# Read from .env the same way, but never required as a group: which of these matters depends on
+# RELEASE_STORAGE_PROVIDER, so Import-AzurePublishSettings validates them per provider.
+$script:StorageProviderKeys = @(
+  'RELEASE_STORAGE_PROVIDER',
+  'AWS_RELEASES_BUCKET',
+  'AWS_CLOUDFRONT_DISTRIBUTION_ID',
+  'AWS_PUBLIC_ENDPOINT',
+  'RELEASE_PUBLIC_ENDPOINT'
+)
 
 function Initialize-WindowsReleaseContext {
   [CmdletBinding()]
@@ -268,6 +277,18 @@ function Initialize-WindowsReleaseContext {
     AzCdnProfile     = $null
     AzCdnEndpoint    = $null
     AzFrontDoorEndpointName = $null
+
+    # Which cloud this channel publishes to. Azure was decommissioned 2026-09-10 and
+    # clingfy.com/updates/* has served from the AWS releases bucket since the 2026-08-17 cutover,
+    # so publishing prod to Azure writes where nothing reads. dev stays on Azure: there is no dev
+    # releases bucket (infra/aws/releases.tf builds one for prod only).
+    StorageProvider  = $null
+    AwsReleasesBucket = $null
+    AwsCloudFrontDistributionId = $null
+    # Public host + path prefix the artifacts are SERVED from. Distinct from the upload target and
+    # must move with it: latest-windows.json embeds a url built from this, so an endpoint left on
+    # Azure would ship a feed pointing at a storage account being retired.
+    PublicEndpoint   = $null
   }
 
   Write-Info "Channel:   $($context.Channel) ($($context.AppDisplayName))"
@@ -284,29 +305,85 @@ function Initialize-WindowsReleaseContext {
 # AZ_FRONTDOOR_ENDPOINT_NAME) are optional: when no Front Door is configured
 # (blob-direct), they stay empty and 04_publish_azure.ps1 skips the purge.
 function Import-AzurePublishSettings([pscustomobject]$Context) {
-  Import-DotenvFallback $Context.EnvFile ($script:AzureRequiredKeys + $script:AzurePurgeKeys)
-  $missing = $script:AzureRequiredKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
-  if ($missing) {
-    Fail ("Missing Azure publish settings: $($missing -join ', '). " +
-      "Set them in the environment or provide them in $($Context.EnvFile).")
+  Import-DotenvFallback $Context.EnvFile `
+    ($script:AzureRequiredKeys + $script:AzurePurgeKeys + $script:StorageProviderKeys)
+
+  # Provider first: it decides WHICH settings are required. Default mirrors the macOS pipeline —
+  # prod and dev publish to AWS; only a local publish falls through to Azure, and it has no
+  # credentials for either cloud anyway. Both Azure release accounts are being deleted (prod's on
+  # 2026-09-15, dev's right after this lands), so an Azure default here would write to nothing.
+  $provider = $env:RELEASE_STORAGE_PROVIDER
+  if (-not $provider) {
+    $provider = if ($Context.Channel -eq 'prod' -or $Context.Channel -eq 'dev') { 'aws' } else { 'azure' }
   }
-  $Context.AzStorageAccount = $env:AZ_STORAGE_ACCOUNT
-  $Context.AzResourceGroup = $env:AZ_RESOURCE_GROUP
-  $Context.AzCdnProfile = $env:AZ_CDN_PROFILE
-  $Context.AzCdnEndpoint = $env:AZ_CDN_ENDPOINT
-  $Context.AzFrontDoorEndpointName = $env:AZ_FRONTDOOR_ENDPOINT_NAME
-  Write-Info "Storage account: $($Context.AzStorageAccount)"
-  Write-Info "Blob path:       $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
-  if (-not $Context.AzFrontDoorEndpointName) {
-    Write-Info 'Front Door:      none (blob-direct; cache purge will be skipped)'
+  $Context.StorageProvider = $provider
+
+  switch ($provider) {
+    'aws' {
+      $Context.AwsReleasesBucket = $env:AWS_RELEASES_BUCKET
+      $Context.AwsCloudFrontDistributionId = $env:AWS_CLOUDFRONT_DISTRIBUTION_ID
+      if (-not $Context.AwsReleasesBucket) {
+        Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_RELEASES_BUCKET. " +
+          "Set it in the environment or provide it in $($Context.EnvFile).")
+      }
+      # Required, not optional, and this lane is the reason. latest-windows.json is replaced on
+      # EVERY publish by design, so it is always a republished path and always the cached one.
+      # Skipping the invalidation left every Windows tester's updater reading the previous release
+      # from the edge for the full CachingOptimized TTL, while the bucket already held the new
+      # installer. The upload succeeded, the script printed "Publish completed successfully", and
+      # nobody received the build — the exact silent-success shape the AWS switch was written to
+      # eliminate, surviving on this lane because it had no smoke test to catch it.
+      if (-not $Context.AwsCloudFrontDistributionId) {
+        Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_CLOUDFRONT_DISTRIBUTION_ID: " +
+          "/updates/* is cached by CloudFront and latest-windows.json is republished on every " +
+          "publish, so without an invalidation the feed stays stale at the edge and no installed " +
+          "app sees the release. Set it in the environment or provide it in $($Context.EnvFile).")
+      }
+      $Context.PublicEndpoint = if ($env:RELEASE_PUBLIC_ENDPOINT) { $env:RELEASE_PUBLIC_ENDPOINT } else { $env:AWS_PUBLIC_ENDPOINT }
+      if (-not $Context.PublicEndpoint) {
+        Fail ("RELEASE_STORAGE_PROVIDER=aws requires AWS_PUBLIC_ENDPOINT (host + path prefix the " +
+          "releases are served from, e.g. clingfy.com/updates). " +
+          "Set it in the environment or provide it in $($Context.EnvFile).")
+      }
+      Write-Info "Provider:        aws"
+      Write-Info "Bucket:          $($Context.AwsReleasesBucket)"
+      Write-Info "Served from:     https://$($Context.PublicEndpoint)/"
+      Write-Info "Key prefix:      $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
+      Write-Info "CloudFront:      $($Context.AwsCloudFrontDistributionId)"
+    }
+    'azure' {
+      $missing = $script:AzureRequiredKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
+      if ($missing) {
+        Fail ("Missing Azure publish settings: $($missing -join ', '). " +
+          "Set them in the environment or provide them in $($Context.EnvFile).")
+      }
+      $Context.AzStorageAccount = $env:AZ_STORAGE_ACCOUNT
+      $Context.AzResourceGroup = $env:AZ_RESOURCE_GROUP
+      $Context.AzCdnProfile = $env:AZ_CDN_PROFILE
+      $Context.AzCdnEndpoint = $env:AZ_CDN_ENDPOINT
+      $Context.AzFrontDoorEndpointName = $env:AZ_FRONTDOOR_ENDPOINT_NAME
+      $Context.PublicEndpoint = if ($env:RELEASE_PUBLIC_ENDPOINT) { $env:RELEASE_PUBLIC_ENDPOINT } else { $env:AZ_CDN_ENDPOINT }
+      Write-Info "Provider:        azure"
+      Write-Info "Storage account: $($Context.AzStorageAccount)"
+      Write-Info "Blob path:       $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
+      if (-not $Context.AzFrontDoorEndpointName) {
+        Write-Info 'Front Door:      none (blob-direct; cache purge will be skipped)'
+      }
+    }
+    default {
+      Fail "RELEASE_STORAGE_PROVIDER must be 'aws' or 'azure', got '$provider'."
+    }
   }
 }
 
 # Public download base for published Windows artifacts, e.g.
 # https://<front-door-host>/downloads/windows/
 function Get-WindowsDownloadBaseUrl([pscustomobject]$Context) {
-  if (-not $Context.AzCdnEndpoint) {
+  # PublicEndpoint, not AzCdnEndpoint: on the aws provider AzCdnEndpoint is never set, so keying off
+  # it made this fail with a misleading "requires Import-AzurePublishSettings first" even though the
+  # settings had loaded correctly.
+  if (-not $Context.PublicEndpoint) {
     Fail 'Get-WindowsDownloadBaseUrl requires Import-AzurePublishSettings first.'
   }
-  return "https://$($Context.AzCdnEndpoint)/$($Context.WindowsBlobPrefix)/"
+  return "https://$($Context.PublicEndpoint)/$($Context.WindowsBlobPrefix)/"
 }

@@ -10,16 +10,16 @@
 
 namespace clingfy::bridge {
 
-// Phase 0 placeholder for the four event channels that Flutter subscribes to
-// at startup: screen_recorder/events, player/events, workflow/events,
-// updater/events.
+// Registers the four event channels Flutter subscribes to at startup:
+// screen_recorder/events, player/events, workflow/events, updater/events.
 //
-// Each channel is registered with a no-op stream handler so that
-// `EventChannel.receiveBroadcastStream()` succeeds without throwing a
-// MissingPluginException. No events are emitted yet — real producers wire in
-// during later phases (device events in Phase 2, player events in Phase 5,
-// workflow events alongside the recording lifecycle in Phase 4, updater
-// events in Phase 10).
+// The name is now historical. This began as a Phase-0 placeholder that
+// registered no-op handlers so `EventChannel.receiveBroadcastStream()` would
+// not throw MissingPluginException; every channel has since graduated to a
+// real publisher — workflow in Phase 3E, player in Step 5.4, updater in Phase
+// 10.6, and screen_recorder/events (device hot-plug) last of all. No stub
+// remains, and `Register()` — the helper that installed the no-op handler — is
+// gone with the last of them.
 class EventChannelStubs {
  public:
   explicit EventChannelStubs(flutter::BinaryMessenger* messenger);
@@ -29,7 +29,11 @@ class EventChannelStubs {
   EventChannelStubs& operator=(const EventChannelStubs&) = delete;
 
  private:
-  void Register(flutter::BinaryMessenger* messenger, const char* name);
+  // screen_recorder/events: forwards sinks into `DeviceEventPublisher` and
+  // starts / stops the OS-level `DeviceChangeWatcher` on listen / cancel, so
+  // hot-plugged microphones, cameras and displays reach Dart's
+  // DeviceController instead of leaving its lists stale.
+  void RegisterDevices(flutter::BinaryMessenger* messenger);
 
   // Phase 3E: workflow/events is no longer a stub. This registers a real
   // stream handler that forwards listen / cancel into the process-level

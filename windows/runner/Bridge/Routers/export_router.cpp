@@ -14,6 +14,7 @@
 #include <thread>
 #include <utility>
 
+#include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/export_progress_publisher.h"
@@ -22,8 +23,11 @@
 #include "Bridge/platform_thread_dispatcher.h"
 #include "Bridge/result_helpers.h"
 #include "Capture/Cursor/cursor_sidecar_reader.h"
+#include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/export_session.h"
+#include "Capture/Export/video_source_probe.h"
+#include "Capture/Zoom/zoom_manual_store.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Capture/recording_project_reader.h"
 #include "Services/keep_awake.h"
@@ -44,15 +48,6 @@ void HandleEmptyList(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::EmptyList(*result);
-}
-
-void HandleSaveManualZoomSegments(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  // Dart treats `false` as "save failed"; the manual-zoom workflow falls
-  // back gracefully. Manual zoom editing is hidden on Windows (Phase 10.3)
-  // until real persistence lands.
-  reply::Bool(*result, false);
 }
 
 // True when no partial output remains at `utf8_path` (empty = nothing to
@@ -243,6 +238,103 @@ bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
   return fallback;
 }
 
+// ---- manual zoom segments ---------------------------------------------------
+//
+// The user-authored half of the zoom lane. Both of these were stubs — save
+// always replied false and load always replied [] — so the Dart editor, which
+// is attached on both platforms, wrote into a void and nothing survived a
+// keystroke.
+//
+// The on-disk shape is macOS's, at capture/zoom.manual.json, so a project
+// edited on either platform opens on the other. See zoom_manual_store.h for
+// the two encodings that carry the semantics (`baseId` overrides,
+// zero-length tombstones).
+void HandleSaveManualZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = AsMap(call.arguments());
+  if (args == nullptr) {
+    reply::Bool(*result, false);
+    return;
+  }
+  const std::string project_path = ReadString(*args, "projectPath");
+  if (project_path.empty()) {
+    reply::Bool(*result, false);
+    return;
+  }
+
+  std::vector<clingfy::capture::ZoomManualSegment> segments;
+  const auto it = args->find(flutter::EncodableValue("segments"));
+  if (it != args->end()) {
+    if (const auto* list = std::get_if<flutter::EncodableList>(&it->second)) {
+      for (const auto& entry : *list) {
+        const auto* map = std::get_if<flutter::EncodableMap>(&entry);
+        if (map == nullptr) {
+          continue;
+        }
+        clingfy::capture::ZoomManualSegment s;
+        s.id = ReadString(*map, "id");
+        s.start_ms = static_cast<std::int64_t>(ReadDouble(*map, "startMs", 0.0));
+        s.end_ms = static_cast<std::int64_t>(ReadDouble(*map, "endMs", 0.0));
+        s.source = ReadString(*map, "source");
+        s.base_id = ReadString(*map, "baseId");
+        if (s.source.empty()) {
+          s.source = "manual";
+        }
+        // A tombstone is legal (end <= start) — it is how a deletion is
+        // recorded — but it is only meaningful with a baseId to point at.
+        // Dropping the meaningless ones keeps the sidecar honest.
+        if (clingfy::capture::IsZoomTombstone(s) && s.base_id.empty()) {
+          continue;
+        }
+        segments.push_back(std::move(s));
+      }
+    }
+  }
+
+  const bool ok = clingfy::capture::SaveZoomManualSegments(
+      clingfy::storage::Utf8ToWide(project_path), segments);
+  reply::Bool(*result, ok);
+}
+
+void HandleGetManualZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string project_path;
+  if (const auto* args = AsMap(call.arguments())) {
+    project_path = ReadString(*args, "projectPath");
+  }
+  if (project_path.empty()) {
+    reply::EmptyList(*result);
+    return;
+  }
+  const auto segments = clingfy::capture::LoadZoomManualSegments(
+      clingfy::storage::Utf8ToWide(project_path));
+
+  flutter::EncodableList out;
+  out.reserve(segments.size());
+  for (const auto& s : segments) {
+    flutter::EncodableMap map{
+        {flutter::EncodableValue("id"), flutter::EncodableValue(s.id)},
+        {flutter::EncodableValue("startMs"),
+         flutter::EncodableValue(static_cast<std::int64_t>(s.start_ms))},
+        {flutter::EncodableValue("endMs"),
+         flutter::EncodableValue(static_cast<std::int64_t>(s.end_ms))},
+        {flutter::EncodableValue("source"),
+         flutter::EncodableValue(s.source.empty() ? std::string("manual")
+                                                  : s.source)},
+    };
+    // Only present when it means something — matching what macOS writes, so
+    // Dart sees the same absence rather than an empty string.
+    if (!s.base_id.empty()) {
+      map[flutter::EncodableValue("baseId")] =
+          flutter::EncodableValue(s.base_id);
+    }
+    out.push_back(flutter::EncodableValue(std::move(map)));
+  }
+  result->Success(flutter::EncodableValue(std::move(out)));
+}
+
 // ---- getZoomSegments (Phase 10.3) -------------------------------------------
 //
 // Returns the SAME auto-zoom segment list the export will render, computed
@@ -260,6 +352,81 @@ bool ReadBool(const flutter::EncodableMap& map, const std::string& key,
 // sidecar event (zoom_timeline_builder.cpp): start times and interior end
 // times are identical to the export's; only a final still-active segment's
 // endMs can differ from the export's MF-duration-clamped value.
+// resolveExportSize — the pixel size an export of this project would render
+// at, so Flutter can rasterize caption bitmaps against the canvas the frames
+// will actually have.
+//
+// Flutter genuinely cannot compute this. The "auto" resolution preset derives
+// from the recording's own source track size, which only this side reads, and
+// the caption renderer scales a bitmap DOWN to fit a narrower frame but never
+// up — so a cue rasterized for a canvas wider than the real one is drawn 1:1
+// and covers more of the frame than it was laid out for. Guessing here ships
+// captions sized for a canvas that never existed.
+//
+// Failure replies an error rather than a fallback size, and that is
+// deliberate: `NativeBridge.resolveExportSize` maps any error to null and the
+// caller then SKIPS burn-in. A video with no captions is a recoverable
+// disappointment; a video with permanently mis-scaled captions burned into the
+// pixels is not.
+void HandleResolveExportSize(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = AsMap(call.arguments());
+  if (args == nullptr) {
+    reply::BadArgs(*result, "resolveExportSize: missing arguments.");
+    return;
+  }
+  const std::string project_path = ReadString(*args, "projectPath");
+  if (project_path.empty()) {
+    reply::BadArgs(*result, "resolveExportSize: missing projectPath.");
+    return;
+  }
+
+  // UTF-8 from the channel; fs::path(std::string) would decode it with the
+  // legacy ACP. Same conversion every other ReadRecordingProject call site
+  // uses.
+  auto read = clingfy::capture::ReadRecordingProject(
+      clingfy::storage::Utf8ToWide(project_path));
+  if (read.error != clingfy::capture::ReadError::kNone ||
+      !read.project.has_value()) {
+    result->Error("SCENE_INPUT_MISSING",
+                  "Recording project not found. It may have been moved or "
+                  "deleted.",
+                  flutter::EncodableValue(project_path));
+    return;
+  }
+
+  // Probe the video, do not read screen.meta.json. The exporter distrusts the
+  // manifest here on purpose ("Read the true source dimensions from the
+  // negotiated type rather than trusting the project metadata",
+  // export_pipeline.cpp) and this answer only means anything if it matches
+  // what the exporter will do.
+  const auto source = clingfy::capture::export_::ProbeVideoFrameSize(
+      read.project->screen_path);
+  if (!source.has_value()) {
+    result->Error("SCENE_INPUT_MISSING",
+                  "Could not determine source video dimensions.",
+                  flutter::EncodableValue(project_path));
+    return;
+  }
+
+  const clingfy::capture::export_::PixelSize size =
+      clingfy::capture::export_::ResolveExportPixelSize(
+          clingfy::capture::export_::SizeF{
+              static_cast<double>(source->width),
+              static_cast<double>(source->height)},
+          ReadString(*args, "layoutPreset"), ReadString(*args, "resolutionPreset"),
+          ReadString(*args, "format"), ReadString(*args, "gifSize"));
+
+  reply::Map(*result,
+             flutter::EncodableMap{
+                 {flutter::EncodableValue("width"),
+                  flutter::EncodableValue(static_cast<int64_t>(size.width))},
+                 {flutter::EncodableValue("height"),
+                  flutter::EncodableValue(static_cast<int64_t>(size.height))},
+             });
+}
+
 void HandleGetZoomSegments(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
@@ -390,9 +557,16 @@ void HandleExportVideo(
         input.voice_cleanup_mode = ReadString(*vc, "mode");
       }
     }
+    // Speaker-to-mic bleed removal. Same per-call-args route as voiceCleanup:
+    // Windows has no native preferences store, so the toggle's state travels
+    // with the export request rather than being read back from one.
+    input.mic_echo_cancellation_enabled =
+        ReadBool(*args, "micEchoCancellationEnabled", false);
     // Slice 5A. Bitrate is a preset string resolved against the output size;
     // format selects the container (.mp4 vs .mov).
     input.bitrate = ReadString(*args, "bitrate");
+    // Dart has sent this since codec selection shipped; Windows never read it.
+    input.codec = ReadString(*args, "codec");
     // Phase 8.2: cursor rendering. showCursor (default true) + cursorSize
     // (0.5..3.0, default 1.5) match the Dart export args. When showCursor is on
     // and the recording has a cursor sidecar, the export renders the cursor
@@ -411,46 +585,15 @@ void HandleExportVideo(
     // drawn also depends on the project assets + camera.meta.json, resolved in
     // ExportPassthroughCopy. Styling we don't support yet (mirror / opacity /
     // border / shadow / chroma) is accepted-but-ignored per the capabilities map.
-    input.camera_visible = ReadBool(*args, "cameraVisible", false);
-    input.camera_layout_preset = ReadString(*args, "cameraLayoutPreset");
-    input.camera_size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
-    input.camera_shape = ReadString(*args, "cameraShape");
-    input.camera_corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
-    input.camera_content_mode = ReadString(*args, "cameraContentMode");
-    // Phase 9.5 styling. cameraBorderColorArgb is a nullable ARGB int (null →
-    // no border even if width > 0); the others have identity-ish defaults.
-    input.camera_mirror = ReadBool(*args, "cameraMirror", false);
-    input.camera_opacity = ReadDouble(*args, "cameraOpacity", 1.0);
-    input.camera_border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
-    input.camera_border_color_argb =
-        ReadOptionalInt(*args, "cameraBorderColorArgb");
-    input.camera_shadow_preset =
-        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
-    // Phase 9.7 chroma key + intro/outro animation. chromaKeyColorArgb is a
-    // nullable ARGB int (null → default green); strength is the keying tolerance.
-    // The intro/outro preset strings parse natively (unknown → static bubble).
-    input.camera_chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
-    input.camera_chroma_strength =
-        ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
-    input.camera_chroma_color_argb =
-        ReadOptionalInt(*args, "cameraChromaKeyColorArgb");
-    input.camera_intro_preset = ReadString(*args, "cameraIntroPreset");
-    input.camera_outro_preset = ReadString(*args, "cameraOutroPreset");
-    input.camera_intro_duration_ms =
-        static_cast<int>(ReadDouble(*args, "cameraIntroDurationMs", 0.0));
-    input.camera_outro_duration_ms =
-        static_cast<int>(ReadDouble(*args, "cameraOutroDurationMs", 0.0));
-    // cameraNormalizedCenter is a nested {x,y} map (or null when the bubble is
-    // auto-placed by preset). Present → manual placement.
-    if (const auto it = args->find(flutter::EncodableValue(
-            "cameraNormalizedCenter"));
-        it != args->end()) {
-      if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
-        input.camera_has_center = true;
-        input.camera_center_x = ReadDouble(*center, "x", 0.0);
-        input.camera_center_y = ReadDouble(*center, "y", 0.0);
-      }
-    }
+    // ONE parser for all three call sites. exportVideo used to hand-parse the
+    // same 21 camera keys with its own default literals -- a third copy of the
+    // list that agreed with the shared parser only by coincidence, and that
+    // coincidence had already failed twice (missing chroma in the 9.7 review,
+    // then the four intro/outro keys reaching the export but never the
+    // preview). The export now carries the parser's own struct, so a new
+    // field reaches this path by existing, not by someone remembering to add
+    // a line to a mapper.
+    input.camera = clingfy::bridge::ReadCameraComposition(*args);
     // Editing port: the nested `colorGrade` map and the `clips` list, each
     // parsed by the shared helper both routers use (one wire shape, one
     // parser — the camera-parsing duplication hid a bug once). Absent /
@@ -556,43 +699,23 @@ void HandleProcessVideo(
   // previewSetCameraPlacement. Stale-session calls are dropped engine-side.
   if (const auto* args =
           std::get_if<flutter::EncodableMap>(call.arguments())) {
-    clingfy::preview::PreviewCameraComposition c;
-    c.visible = ReadBool(*args, "cameraVisible", false);
-    c.layout_preset = ReadString(*args, "cameraLayoutPreset");
-    c.size_factor = ReadDouble(*args, "cameraSizeFactor", 0.18);
-    c.shape = ReadString(*args, "cameraShape");
-    c.corner_radius = ReadDouble(*args, "cameraCornerRadius", 0.0);
-    c.content_mode = ReadString(*args, "cameraContentMode");
-    c.mirror = ReadBool(*args, "cameraMirror", false);
-    c.opacity = ReadDouble(*args, "cameraOpacity", 1.0);
-    c.border_width = ReadDouble(*args, "cameraBorderWidth", 0.0);
-    if (const auto argb = ReadOptionalInt(*args, "cameraBorderColorArgb")) {
-      c.has_border_color = true;
-      c.border_argb = static_cast<std::uint32_t>(*argb);
-    }
-    c.shadow_preset =
-        static_cast<int>(ReadDouble(*args, "cameraShadowPreset", 0.0));
-    // Phase 9.7 chroma key — kept in sync with preview_router's
-    // ReadCameraComposition so a chroma edit (which arrives via processVideo)
-    // shows in the inline preview, WYSIWYG with the export.
-    c.chroma_enabled = ReadBool(*args, "cameraChromaKeyEnabled", false);
-    c.chroma_strength = ReadDouble(*args, "cameraChromaKeyStrength", 0.4);
-    if (const auto argb = ReadOptionalInt(*args, "cameraChromaKeyColorArgb")) {
-      c.has_chroma_color = true;
-      c.chroma_argb = static_cast<std::uint32_t>(*argb);
-    }
-    if (const auto it =
-            args->find(flutter::EncodableValue("cameraNormalizedCenter"));
-        it != args->end()) {
-      if (const auto* center =
-              std::get_if<flutter::EncodableMap>(&it->second)) {
-        c.has_center = true;
-        c.center_x = ReadDouble(*center, "x", 0.0);
-        c.center_y = ReadDouble(*center, "y", 0.0);
-      }
-    }
+    // ONE parser, shared with previewSetCameraPlacement. This used to be a
+    // hand-duplicated copy of preview_router's block; the drift hid a
+    // missing-chroma bug once and left intro/outro unparsed on both preview
+    // paths, and no test can see a field added to only one copy.
+    clingfy::preview::PreviewCameraComposition c =
+        clingfy::bridge::ReadCameraComposition(*args);
     clingfy::preview::PreviewEngine::Instance()->SetCameraComposition(
         ReadString(*args, "sessionId"), c);
+    // Smart-zoom settings for the inline preview. Same two args the export
+    // reads in HandleExportVideo, with the same defaults — the preview used to
+    // hardcode 1.5x and ignore the toggle, so the editor's screen zoom did not
+    // match the exported file for anyone who moved the slider or turned zoom
+    // off. processVideo carries them on editor open and on every change.
+    clingfy::preview::PreviewEngine::Instance()->SetZoomSettings(
+        ReadString(*args, "sessionId"),
+        ReadDouble(*args, "zoomFactor", 1.5),
+        ReadBool(*args, "zoomEffectEnabled", true));
     // Editing port (audio, step 4-7d): seed the preview audio mix — Dart
     // sends the persisted gain/volume in every processVideo (editor open and
     // the standby-resume resync included), so the mix applies without
@@ -726,8 +849,10 @@ void RegisterHandlers(HandlerTable& table) {
   // .clingfyproj manifest via `clingfy::capture::RecordingProjectReader`
   // and returns the macOS-shaped map.
 
+  table["resolveExportSize"] = &HandleResolveExportSize;
+
   table["getZoomSegments"] = &HandleGetZoomSegments;
-  table["getManualZoomSegments"] = &HandleEmptyList;
+  table["getManualZoomSegments"] = &HandleGetManualZoomSegments;
   table["saveManualZoomSegments"] = &HandleSaveManualZoomSegments;
 }
 

@@ -1,6 +1,9 @@
 import 'package:clingfy/app/home/widgets/desktop_toolbar.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
+import 'package:flutter/cupertino.dart' show CupertinoActivityIndicator;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -8,6 +11,9 @@ void main() {
   Widget buildToolbar({
     ToolbarNoticePresentation? notice,
     ToolbarExportStatusPresentation? exportStatus,
+    VoidCallback? onExport,
+    bool isExportUnavailable = false,
+    bool isExporting = false,
   }) {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -21,10 +27,76 @@ void main() {
           isPaused: false,
           notice: notice,
           exportStatus: exportStatus,
+          onExport: onExport,
+          isExportUnavailable: isExportUnavailable,
+          isExporting: isExporting,
         ),
       ),
     );
   }
+
+  group('the Export button', () {
+    // The spinner branch lives in the macOS row; pin it regardless of the host
+    // the suite runs on.
+    setUp(() => debugPlatformKindOverride = PlatformKind.macos);
+    tearDown(() => debugPlatformKindOverride = null);
+
+    const exportKey = Key('toolbar_export_button');
+
+    testWidgets('unavailable disables it without claiming an export is '
+        'running', (tester) async {
+      // A transcription also makes the export unavailable, and it writes no
+      // file. Feeding one flag to both the disabled state and the spinner
+      // announced an export that did not exist — the user watches a progress
+      // spinner for a file nothing is producing.
+      await tester.pumpWidget(
+        buildToolbar(onExport: () {}, isExportUnavailable: true),
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DesktopToolbar)),
+      )!;
+
+      expect(
+        find.byKey(exportKey),
+        findsOneWidget,
+        reason: 'withholding the button entirely leaves nothing to explain',
+      );
+      expect(tester.widget<AppButton>(find.byKey(exportKey)).onPressed, isNull);
+      expect(find.byType(CupertinoActivityIndicator), findsNothing);
+      expect(find.text('${l10n.export}…'), findsNothing);
+      expect(find.text(l10n.export), findsOneWidget);
+    });
+
+    testWidgets('a real export is what puts the spinner on it', (tester) async {
+      await tester.pumpWidget(
+        buildToolbar(
+          onExport: () {},
+          // Both, because a running export also blocks a second one — this is
+          // the state the pair is meant to describe together.
+          isExportUnavailable: true,
+          isExporting: true,
+        ),
+      );
+      final l10n = AppLocalizations.of(
+        tester.element(find.byType(DesktopToolbar)),
+      )!;
+
+      expect(find.byType(CupertinoActivityIndicator), findsOneWidget);
+      expect(find.text('${l10n.export}…'), findsOneWidget);
+      expect(tester.widget<AppButton>(find.byKey(exportKey)).onPressed, isNull);
+    });
+
+    testWidgets('an available export is live and quiet', (tester) async {
+      var exported = 0;
+      await tester.pumpWidget(buildToolbar(onExport: () => exported++));
+
+      await tester.tap(find.byKey(exportKey));
+      await tester.pump();
+
+      expect(exported, 1);
+      expect(find.byType(CupertinoActivityIndicator), findsNothing);
+    });
+  });
 
   testWidgets('renders toolbar row without status strip when idle', (
     tester,

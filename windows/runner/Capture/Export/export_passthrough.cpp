@@ -20,7 +20,10 @@
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
 #include "Capture/Export/mic_cleanup.h"
+#include "Capture/Zoom/zoom_manual_store.h"
 #include "Capture/recording_project_reader.h"
+#include "Encoding/mf_encoder_config.h"
+#include "Services/shell_reveal.h"
 #include "Services/save_folder.h"
 
 namespace clingfy::capture::export_ {
@@ -336,7 +339,7 @@ PassthroughResult ExportPassthroughCopy(
     }
   }
   const bool wants_camera = ShouldCompositeCamera(
-      input.camera_visible, has_camera_assets, camera_meta.has_value(),
+      input.camera.visible, has_camera_assets, camera_meta.has_value(),
       camera_meta.has_value() && camera_meta->preview_burned_in,
       camera_meta.has_value() ? camera_meta->frames_written : 0u);
 
@@ -393,13 +396,27 @@ PassthroughResult ExportPassthroughCopy(
   // passthrough landmine). Reorder/overlap bake too (3b-2, per-range seeks).
   // Audio separation: a separated recording must compose even at identity
   // settings — the byte-copy would ship the premix (see the probe above).
+  // Codec: the recording is always H.264, so asking for HEVC is a real change
+  // to the output and must force a re-encode. The byte-copy would otherwise
+  // ship the H.264 source while reporting success — the same passthrough
+  // landmine as an ungraded or uncut file, and the reason a codec setting can
+  // look inert even after the encoder learns HEVC.
+  //
+  // Gated on AVAILABILITY, not just the request: on a machine with no HEVC
+  // encoder the export is going to produce H.264 either way, so forcing a
+  // pointless re-encode there would cost the user a lossless instant copy and
+  // give them nothing.
+  const bool wants_hevc =
+      clingfy::encoding::ResolveVideoCodec(
+          clingfy::encoding::ParseVideoCodec(input.codec), nullptr) ==
+      clingfy::encoding::VideoCodec::kHevc;
   const bool needs_composition =
       !IsIdentityTransform(input.layout, input.resolution) ||
       input.padding > 0.0 || input.corner_radius > 0.0 ||
       RequiresAudioProcessing(input.audio_gain_db, input.audio_volume_percent,
                               input.auto_normalize) ||
       wants_non_mov_container || wants_sidecar || wants_camera ||
-      wants_color_grade || wants_clips || wants_separated_audio;
+      wants_color_grade || wants_clips || wants_separated_audio || wants_hevc;
 
   // Phase 10.4 disk-full preflight: estimate the bytes the export needs at
   // the destination (source size + headroom for the chosen path) and compare
@@ -491,6 +508,7 @@ PassthroughResult ExportPassthroughCopy(
     // scope so it outlives RenderComposedExport below, then deleted right after
     // the render returns.
     std::optional<fs::path> cleaned_mic_temp;
+    std::optional<fs::path> echo_mic_temp;
     render.source_video_path = read.project->screen_path;
     render.destination_path = destination.u8string();
     render.layout = input.layout;
@@ -517,13 +535,52 @@ PassthroughResult ExportPassthroughCopy(
     // is that a non-empty path decodes).
     if (mic_sidecar_decodable) {
       render.mic_audio_path = *read.project->mic_audio_path;
+      // Speaker-to-mic bleed removal, FIRST among the mic passes.
+      //
+      // Order is load-bearing. It must run before voice cleanup, whose noise
+      // suppression would distort the very bleed the correlation needs to find
+      // it, and before the normalize peak scan, which would otherwise measure a
+      // peak inflated by the echo.
+      //
+      // Only meaningful when BOTH sidecars exist: with no system track there is
+      // no reference to cancel against. Best-effort throughout — a false return
+      // (including the common "no bleed found") leaves the raw mic in place.
+      if (input.mic_echo_cancellation_enabled && system_sidecar_decodable) {
+        fs::path decoupled = destination;
+        decoupled += ".micecho.mp4";
+        EchoCancelReport report;
+        if (ProduceEchoCancelledMic(*read.project->mic_audio_path,
+                                    *read.project->system_audio_path,
+                                    decoupled.u8string(), is_cancelled,
+                                    &report)) {
+          render.mic_audio_path = decoupled.wstring();
+          echo_mic_temp = decoupled;
+          char buf[192];
+          std::snprintf(buf, sizeof(buf),
+                        "echo cancellation applied: correlation %.2f, delay "
+                        "%.1f ms, residual %.1f dB",
+                        report.bleed_correlation, report.delay_ms,
+                        report.reduction_db);
+          clingfy::bridge::NativeLogPublisher::Instance().Info("Export", buf);
+        } else {
+          std::error_code echo_ec;
+          fs::remove(decoupled, echo_ec);
+          clingfy::bridge::NativeLogPublisher::Instance().Debug(
+              "Export",
+              report.applied
+                  ? "echo cancellation failed; exporting the raw mic"
+                  : "no measurable speaker bleed; exporting the raw mic");
+        }
+      }
       // Phase 4 voice cleanup: run the mic through RNNoise before the audio
       // pump. Best-effort -- a failed clean leaves render.mic_audio_path on the
       // raw sidecar, so the export just skips denoising rather than failing.
       if (input.voice_cleanup_enabled) {
         fs::path cleaned = destination;
         cleaned += ".miccleanup.mp4";
-        if (ProduceCleanedMic(*read.project->mic_audio_path, cleaned.u8string(),
+        // Chain from whatever the echo pass produced, not from the raw
+        // sidecar, or enabling both would silently discard the cancellation.
+        if (ProduceCleanedMic(render.mic_audio_path, cleaned.u8string(),
                               is_cancelled,
                               VoiceCleanupWetMix(input.voice_cleanup_mode))) {
           render.mic_audio_path = cleaned.wstring();
@@ -540,6 +597,7 @@ PassthroughResult ExportPassthroughCopy(
       render.system_audio_path = *read.project->system_audio_path;
     }
     render.bitrate = input.bitrate;
+    render.codec = input.codec;
     // Phase 8.2/8.3: cursor + zoom share the sidecar path; set it when EITHER is
     // active so each feature can read it independently.
     render.show_cursor = wants_cursor_render;
@@ -548,32 +606,25 @@ PassthroughResult ExportPassthroughCopy(
     render.zoom_factor = input.zoom_factor;
     render.cursor_sidecar_path =
         wants_sidecar ? cursor_sidecar.wstring() : std::wstring();
+    // User-authored zoom. Read by the pipeline and merged with the auto
+    // timeline; absent file → auto only, exactly as before.
+    render.zoom_manual_path = clingfy::capture::ZoomManualSidecarPath(
+        clingfy::storage::Utf8ToWide(input.project_path));
     // Phase 9.4: camera bubble. Only set when the gate passed; the pipeline
     // still soft-fails internally if the reader/D2D resources can't be built.
     if (wants_camera) {
       render.draw_camera = true;
       render.camera_video_path = *read.project->camera_video_path;
       render.camera_start_offset_ms = camera_meta->start_offset_ms;
-      render.camera_has_center = input.camera_has_center;
-      render.camera_center_x = input.camera_center_x;
-      render.camera_center_y = input.camera_center_y;
-      render.camera_layout_preset = input.camera_layout_preset;
-      render.camera_size_factor = input.camera_size_factor;
-      render.camera_shape = input.camera_shape;
-      render.camera_corner_radius = input.camera_corner_radius;
-      render.camera_content_mode = input.camera_content_mode;
-      render.camera_mirror = input.camera_mirror;
-      render.camera_opacity = input.camera_opacity;
-      render.camera_border_width = input.camera_border_width;
-      render.camera_border_color_argb = input.camera_border_color_argb;
-      render.camera_shadow_preset = input.camera_shadow_preset;
-      render.camera_chroma_enabled = input.camera_chroma_enabled;
-      render.camera_chroma_strength = input.camera_chroma_strength;
-      render.camera_chroma_color_argb = input.camera_chroma_color_argb;
-      render.camera_intro_preset = input.camera_intro_preset;
-      render.camera_outro_preset = input.camera_outro_preset;
-      render.camera_intro_duration_ms = input.camera_intro_duration_ms;
-      render.camera_outro_duration_ms = input.camera_outro_duration_ms;
+      // One assignment where 24 identity copies used to be. A field added to
+      // CameraRenderSpec now reaches the export by existing.
+      //
+      // KEEP THIS INSIDE `if (wants_camera)`. Hoisting it looks harmless —
+      // composition data is inert when draw_camera is false — but it would
+      // make render.camera.visible the raw user toggle instead of something
+      // that is true only when the full gate passed, and the next reader who
+      // notices camera.visible == draw_camera would then be wrong.
+      render.camera = input.camera;
     }
     render.on_progress = on_progress;
     render.is_cancelled = is_cancelled;
@@ -586,6 +637,10 @@ PassthroughResult ExportPassthroughCopy(
     if (cleaned_mic_temp) {
       std::error_code clean_ec;
       fs::remove(*cleaned_mic_temp, clean_ec);
+    }
+    if (echo_mic_temp) {
+      std::error_code echo_ec;
+      fs::remove(*echo_mic_temp, echo_ec);
     }
     if (!render_result.ok) {
       if (render_result.cancelled) {

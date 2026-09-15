@@ -64,6 +64,33 @@ lifecycle, preview, and basic export.
 Detailed scope per phase is tracked in the session task list and in
 [../CLAUDE.md](../CLAUDE.md).
 
+## Verified parity gaps — all closed
+
+A code-level audit after Phase 10 found the behaviours below still diverging
+from macOS. Each was fixed in its own PR; they were previously enumerated only
+in those PR bodies, which is why this table exists.
+
+| # | Gap | Fix | Where |
+|---|---|---|---|
+| 1 | Keyframe spacing unpinned, so seek lead-in was unbounded (#294) | #466 | `Encoding/mf_sink_writer_encoder.cpp` (`MF_MT_MAX_KEYFRAME_SPACING`) |
+| 2 | WGC yellow capture border never disabled | #467 | `Capture/wgc_display_capture_backend.cpp` (`IsBorderRequired(false)`) |
+| 3 | No resampler — a non-48 kHz endpoint recorded silence, silently | #468 | `Audio/wasapi_stream_format.cpp` (`AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`) |
+| 4 | HEVC silently downgraded to H.264 | #469 | `Encoding/mf_encoder_config.cpp` (`MFVideoFormat_HEVC`) |
+| 5 | Device hot-plug events never emitted | #470 | `Bridge/Devices/device_change_watcher.cpp` |
+| 6 | Manual zoom segments stubbed — auto zoom was real but read-only | #471 | `Capture/Zoom/zoom_manual_store.cpp` |
+| 7 | Speaker-to-mic bleed not cancelled at export | #472 | `Audio/EchoCancel/mic_echo_canceller.cpp` |
+| 8 | Export drew one hardcoded arrow instead of the real cursor | #473 | `Capture/Cursor/cursor_sprite_capture.cpp` |
+
+Two items that appeared on early drafts of this list are **not** gaps:
+
+- **Background image export** — already shipped with the canvas port.
+  `Capture/Export/export_pipeline.cpp` renders it through
+  `Background/background_image_cache`, fed by `backgroundImagePath` in
+  `export_router.cpp`.
+- **Exclude mic from system audio** — not applicable on Windows rather than
+  unported. See the note in
+  [decisions/windows-audio-separation.md](decisions/windows-audio-separation.md).
+
 ## Current status — Phase 10.0 (beta readiness) — DESIGN LOCKED
 
 Phase 10 takes the Windows app from "a Release folder that works on the dev
@@ -258,9 +285,13 @@ Signing (decision D3): material is environment-only (`WIN_SIGN_CERT_PFX`
 — the private beta may ship unsigned with SmartScreen instructions;
 pass `-RequireSignature` once the certificate decision lands.
 
-**Deferred from the original 10.5 scope, deliberately:** `Runner.rc`
-strings → "Clingfy" — ProductName is load-bearing for the Dart log
-path, so it needs its own small slice (the icon half shipped in #171:
+**Deferred from the original 10.5 scope, then completed:** `Runner.rc`
+strings → "Clingfy". FileDescription/title/copyright landed in #398;
+ProductName followed on 2026-08-02 once it was established that a
+CASE-ONLY change reuses the same directory on case-insensitive NTFS
+(verified on a real volume, not assumed). ProductName remains
+rename-frozen — case is the only degree of freedom (the icon half
+shipped in #171:
 a 10-resolution `app_icon.ico` assembled directly from the macOS
 `AppIcon.appiconset` art, deliberately not `flutter_launcher_icons`,
 whose Windows output is single-resolution and which would regenerate
@@ -358,9 +389,10 @@ the signing decision. Internal (not tester-facing): the Dart widget-test
 suite carries a flaky pre-existing baseline of ~93–164
 "No FluentLocalizations found" failures in a fixed set of harness files
 — validate changes by set-diff against that baseline, never raw counts;
-fixing the harness backlog is tracked as its own task. Also deferred:
-the Runner.rc cosmetic strings PR (`CompanyName`/`ProductName` are
-frozen as the path_provider data identity) and D9 per-channel
+fixing the harness backlog is tracked as its own task. Also deferred at
+the time, both since shipped: the Runner.rc cosmetic strings (#398, plus
+the ProductName re-case on 2026-08-02 — `CompanyName` stays frozen as
+the parent of the path_provider data identity) and D9 per-channel
 mutex/data-dir identity.
 
 ## Current status — Phase 9 (camera overlay) — COMPLETE
@@ -407,7 +439,11 @@ Every code slice is a merged PR with native tests, smoked on a real Windows box
   read `camera/raw.mov`, align it via `startOffsetMs`
   (camera time = screen `tMs` − `startOffsetMs`, both clocks pause-aware), and
   draw through the shared `CameraBubblePainter` — so the preview is WYSIWYG
-  with the export (chroma included; intro/outro are export-only by design).
+  with the export (chroma AND intro/outro animations included). The animation
+  clock is the EDITED position + edited duration the engine already carries to
+  the draw call, not the source `playback_us` used to advance the camera video
+  frame — the same two-clock split the export makes, so a trimmed project
+  animates at the same instant on both sides.
 - **In-app preview is the Windows default; floating is opt-in.**
   `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` can report success while
   the window is never composited on some hybrid-GPU machines (undetectable in
@@ -446,7 +482,8 @@ On a real Windows box, record a clip with the camera enabled, then verify:
 - [ ] Chroma key makes the keyed color transparent (camera pixels only — border
       and shadow are never keyed).
 - [ ] Intro/outro animations (fade/pop/slide in; fade/shrink/slide out) play and
-      the outro completes at the end of the clip.
+      the outro completes at the end of the clip — in the inline preview AND in
+      the export, at the same instant on a trimmed project.
 - [ ] A recording with no camera (or camera disabled) previews and exports
       cleanly with no bubble.
 
@@ -469,10 +506,14 @@ On a real Windows box, record a clip with the camera enabled, then verify:
 - **Floating-preview parity is limited by WDA/GPU behavior.** On machines where
   capture-exclusion silently fails to composite, floating mode is unavailable
   by design (the gate refuses to show a window that would burn in).
-- **Camera-composition arg parsing is duplicated** in
-  `preview_router ReadCameraComposition` and `export_router HandleProcessVideo`
-  (the duplication hid a missing-chroma bug in 9.7 review). Optional cleanup:
-  dedupe into one shared helper.
+- **Camera-composition arg parsing is now a single shared parser**,
+  `Bridge/Routers/camera_composition_args.{h,cpp}`, used by both
+  `preview_router` (previewSetCameraPlacement) and `export_router`
+  (processVideo). It was duplicated until the intro/outro preview slice: the
+  drift hid a missing-chroma bug in the 9.7 review and then left the four
+  animation keys unparsed on BOTH preview paths. `bridge_contract_coverage_test`
+  checks method names only and cannot catch a field read on one path, which is
+  why one parser is the fix rather than a test.
 - **Zoom-emphasis "pulse" animation not ported** — it is gated on live zoom
   events and the camera sits outside the zoom transform on Windows.
 
@@ -576,8 +617,13 @@ Every slice is a merged PR with native tests, smoked on a real Windows box.
 - **Clicks are recorded and drive zoom + click animation; macOS records no
   clicks** (it triggers zoom from cursor-shape changes). This is a deliberate
   Windows substitute because sprite data isn't captured.
-- **Cursor/zoom/click are export-rendered only.** The live preview player does not
-  draw them yet.
+- **Cursor/zoom/click render in the live preview too**, not only in the export —
+  the preview compositor draws the cursor, the click halo and the smart zoom,
+  and honours the user's `zoomFactor` / `zoomEffectEnabled` (it hardcoded 1.5x
+  and ignored the toggle until that was fixed). The preview's zoom ACTIVATION
+  is still its own model though: a click-hold window, where the export uses
+  resolved segments with hysteresis and gap-merge, so the two agree on
+  magnitude but not on exact onset.
 - **Auto-zoom only.** Manual zoom-segment editing is not wired — the
   `getZoomSegments` / `saveManualZoomSegments` bridge methods remain stubs.
 - **No export-time cursor-highlight halo.** The `cursorHighlight` setting is a

@@ -36,7 +36,7 @@
   Requires ffmpeg on PATH.
 
   The bundles are written to the DEV channel's recordings root by default
-  (%LOCALAPPDATA%\Clingfy Dev\recordings) because that is where the dev build
+  (%LOCALAPPDATA%\Clingfy-Dev\recordings) because that is where the dev build
   looks after the D9 per-channel identity split. Pass -OutputRoot to override.
 
   `hasMicAudio` is gated on the sidecar being DECODABLE (ProbeDecodableAudio in
@@ -66,7 +66,7 @@ $ffmpeg = Get-Command ffmpeg -ErrorAction SilentlyContinue
 if (-not $ffmpeg) { Fail 'ffmpeg not found on PATH. winget install Gyan.FFmpeg' }
 
 if (-not $OutputRoot) {
-  $OutputRoot = Join-Path $env:LOCALAPPDATA 'Clingfy Dev\recordings'
+  $OutputRoot = Join-Path $env:LOCALAPPDATA 'Clingfy-Dev\recordings'
 }
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 Step "Output root: $OutputRoot"

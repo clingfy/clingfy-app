@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 
+#include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
 #include "Bridge/native_error_codes.h"
@@ -15,10 +16,12 @@
 #include "Capture/Background/preset_thumbnail_cache.h"
 #include "Capture/Camera/camera_meta.h"
 #include "Capture/Export/audio_sidecar_probe.h"
+#include "Capture/Export/export_passthrough.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Capture/recording_project_reader.h"
 #include "Core/canvas_composition.h"
 #include "preview/preview_engine.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 
 namespace clingfy::bridge::routers::preview {
 
@@ -157,45 +160,6 @@ std::optional<std::string> ReadFileUtf8(const std::wstring& path) {
   return ss.str();
 }
 
-// Build the live preview camera composition from a Dart `camera*` arg map (the
-// keys CameraCompositionState.toMap() emits, shared by processVideo +
-// previewSetCameraPlacement). Same shape the export router parses.
-clingfy::preview::PreviewCameraComposition ReadCameraComposition(
-    const flutter::EncodableMap& args) {
-  clingfy::preview::PreviewCameraComposition c;
-  c.visible = ReadBool(args, "cameraVisible", false);
-  c.layout_preset = ReadString(args, "cameraLayoutPreset");
-  c.size_factor = ReadDouble(args, "cameraSizeFactor", 0.18);
-  c.shape = ReadString(args, "cameraShape");
-  c.corner_radius = ReadDouble(args, "cameraCornerRadius", 0.0);
-  c.content_mode = ReadString(args, "cameraContentMode");
-  c.mirror = ReadBool(args, "cameraMirror", false);
-  c.opacity = ReadDouble(args, "cameraOpacity", 1.0);
-  c.border_width = ReadDouble(args, "cameraBorderWidth", 0.0);
-  if (const auto argb = ReadOptionalInt(args, "cameraBorderColorArgb")) {
-    c.has_border_color = true;
-    c.border_argb = static_cast<std::uint32_t>(*argb);
-  }
-  c.shadow_preset =
-      static_cast<int>(ReadDouble(args, "cameraShadowPreset", 0.0));
-  // Phase 9.7 chroma key (previewed for WYSIWYG with the export).
-  c.chroma_enabled = ReadBool(args, "cameraChromaKeyEnabled", false);
-  c.chroma_strength = ReadDouble(args, "cameraChromaKeyStrength", 0.4);
-  if (const auto argb = ReadOptionalInt(args, "cameraChromaKeyColorArgb")) {
-    c.has_chroma_color = true;
-    c.chroma_argb = static_cast<std::uint32_t>(*argb);
-  }
-  if (const auto it = args.find(flutter::EncodableValue("cameraNormalizedCenter"));
-      it != args.end()) {
-    if (const auto* center = std::get_if<flutter::EncodableMap>(&it->second)) {
-      c.has_center = true;
-      c.center_x = ReadDouble(*center, "x", 0.0);
-      c.center_y = ReadDouble(*center, "y", 0.0);
-    }
-  }
-  return c;
-}
-
 // ---------------------------------------------------------------------
 // getRecordingSceneInfo — Step 5.2 of the Phase 5 implementation plan.
 //
@@ -225,8 +189,10 @@ flutter::EncodableMap BuildCameraExportCapabilities() {
   //   * 9.7 → chromaKey ✅
   // Phase 9.4 composites the camera as a masked circle / rounded-rect / square
   // bubble; Phase 9.5 adds mirror, opacity, a stroked border, and a blurred drop
-  // shadow; Phase 9.7 adds a Direct2D chroma key (and export-only intro/outro
-  // animations, which are not gated by this map). So shapeMask + cornerRadius +
+  // shadow; Phase 9.7 adds a Direct2D chroma key (and intro/outro animations,
+  // which the preview also runs but which are not gated by this map, since they
+  // are a timeline effect rather than a per-bubble capability). So shapeMask +
+  // cornerRadius +
   // border + shadow + chromaKey are all true. (mirror / opacity are always-on
   // transforms, not gated by this map.) (Camera *device selection* readiness is a
   // separate concern, surfaced via getVideoSources / setVideoSource + the
@@ -554,22 +520,34 @@ void HandlePreviewOpen(
     open_args.system_audio_path = *read.project->system_audio_path;
   }
   // Phase 9.6: composite the camera in the preview ONLY when the project has a
-  // usable, non-burned-in camera — raw.mov + camera.meta.json present-together
-  // (the reader guarantees this), the metadata parses, the live preview was NOT
-  // burned into screen.mov, and at least one frame was recorded. Mirrors the
-  // export's ShouldCompositeCamera gate so preview and export agree. Otherwise
-  // the preview stays camera-free (camera_path left empty).
-  if (read.project->camera_video_path.has_value() &&
-      read.project->camera_metadata_path.has_value()) {
-    if (const auto meta_json =
-            ReadFileUtf8(*read.project->camera_metadata_path)) {
-      if (const auto meta =
-              clingfy::capture::ParseCameraMetaJson(*meta_json);
-          meta.has_value() && !meta->preview_burned_in &&
-          meta->frames_written > 0) {
-        open_args.camera_path = *read.project->camera_video_path;
-        open_args.camera_start_offset_ms = meta->start_offset_ms;
-      }
+  // usable, non-burned-in camera. This used to re-implement the export's four
+  // asset conditions inline while claiming to "mirror" them — which is the
+  // drift this repo keeps getting bitten by, since adding a fifth condition to
+  // the export gate would have left the preview silently ungated. It now calls
+  // the same function.
+  //
+  // `camera_visible` is passed true rather than read here, and that is not a
+  // fudge: on the export leg visibility is known up front from the request, but
+  // the preview learns it later via `previewSetCameraPlacement` and the
+  // renderer honours it per frame. So this call answers only "does the project
+  // have a camera worth wiring up", and visibility stays the renderer's
+  // decision. Everything else — assets present, metadata parsed, not already
+  // burned into screen.mov, at least one frame recorded — is the shared gate's.
+  if (const auto meta_json =
+          read.project->camera_metadata_path.has_value()
+              ? ReadFileUtf8(*read.project->camera_metadata_path)
+              : std::nullopt) {
+    const auto meta = clingfy::capture::ParseCameraMetaJson(*meta_json);
+    const bool composite = clingfy::capture::export_::ShouldCompositeCamera(
+        /*camera_visible=*/true,
+        /*has_camera_assets=*/read.project->camera_video_path.has_value() &&
+            read.project->camera_metadata_path.has_value(),
+        /*meta_parsed=*/meta.has_value(),
+        /*preview_burned_in=*/meta.has_value() && meta->preview_burned_in,
+        /*frames_written=*/meta.has_value() ? meta->frames_written : 0);
+    if (composite) {
+      open_args.camera_path = *read.project->camera_video_path;
+      open_args.camera_start_offset_ms = meta->start_offset_ms;
     }
   }
 
@@ -727,7 +705,7 @@ void HandlePreviewSetCameraPlacement(
           std::get_if<flutter::EncodableMap>(call.arguments())) {
     const std::string session_id = ReadString(*args, "sessionId");
     PreviewEngine::Instance()->SetCameraComposition(
-        session_id, ReadCameraComposition(*args));
+        session_id, clingfy::bridge::ReadCameraComposition(*args));
   }
   reply::Null(*result);
 }
@@ -745,6 +723,94 @@ void HandlePreviewSetColorGrade(
     const std::string session_id = ReadString(*args, "sessionId");
     PreviewEngine::Instance()->SetColorGrade(
         session_id, clingfy::bridge::ReadColorGradeArg(*args));
+  }
+  reply::Null(*result);
+}
+
+// previewSetCaptions — captions are not ported to Windows, so the preview has
+// no caption layer to hand bitmaps to.
+//
+// Registered rather than left unhandled for the reason the misc_router caption
+// stubs give: an unhandled method throws MissingPluginException in Dart, and
+// this method is also missing from BridgeContractMethods() precisely because
+// nobody noticed it was unimplemented. Registering it puts it under the
+// contract test's drift detection.
+//
+// The reply discriminates, and that distinction is the useful part. CLEARING
+// captions (a null/empty directory with no cues) genuinely succeeds here —
+// there are none, so there is nothing to not-show, and Dart pushes exactly
+// that on every project switch and destination change. SETTING real cues
+// cannot be honoured, and saying Null to it would be a lie the caller has no
+// way to detect: the method returns void, so a false success is indis-
+// tinguishable from a real one until someone notices the preview never shows a
+// caption the export will burn in. When the Windows caption layer lands, this
+// handler is replaced rather than extended.
+void HandlePreviewSetCaptions(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  bool wants_captions = false;
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    if (!ReadString(*args, "bitmapDirectory").empty()) {
+      wants_captions = true;
+    }
+    const auto it = args->find(flutter::EncodableValue("cues"));
+    if (it != args->end()) {
+      if (const auto* cues = std::get_if<flutter::EncodableList>(&it->second)) {
+        wants_captions = wants_captions || !cues->empty();
+      }
+    }
+  }
+  if (wants_captions) {
+    result->Error("CAPTIONS_UNSUPPORTED",
+                  "Caption preview is not available on Windows.");
+    return;
+  }
+  reply::Null(*result);
+}
+
+// The EFFECTIVE zoom timeline from the Dart editor — auto segments minus the
+// ones the user overrode or deleted, plus the ones they authored. Dart does
+// that merge (see the previewSetZoomSegments contract in native_bridge.dart),
+// so the engine replaces its list wholesale rather than merging again.
+//
+// This was a registered no-op, which is why every manual zoom edit vanished
+// the moment it was made: ZoomEditorController pushed here on every change and
+// re-pushed after an in-place rebuild via resyncToNative, into nothing.
+//
+// An EMPTY list is meaningful and is forwarded as such — it is what deleting
+// every segment looks like, and dropping it would resurrect the auto timeline
+// the user just cleared. Always replies null (the void Dart contract).
+void HandlePreviewSetZoomSegments(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    std::vector<clingfy::capture::ZoomSegment> segments;
+    const auto it = args->find(flutter::EncodableValue("segments"));
+    if (it != args->end()) {
+      if (const auto* list = std::get_if<flutter::EncodableList>(&it->second)) {
+        for (const auto& entry : *list) {
+          const auto* map = std::get_if<flutter::EncodableMap>(&entry);
+          if (map == nullptr) {
+            continue;
+          }
+          clingfy::capture::ZoomSegment seg;
+          seg.start_ms =
+              static_cast<std::int64_t>(ReadDouble(*map, "startMs", 0.0));
+          seg.end_ms =
+              static_cast<std::int64_t>(ReadDouble(*map, "endMs", 0.0));
+          // Guard the invariant ZoomSegmentStateAt relies on: membership is
+          // half-open [start, end), so a non-positive span would be a segment
+          // no frame can ever be inside.
+          if (seg.end_ms > seg.start_ms) {
+            segments.push_back(seg);
+          }
+        }
+      }
+    }
+    PreviewEngine::Instance()->SetZoomSegments(session_id, segments);
   }
   reply::Null(*result);
 }
@@ -937,7 +1003,7 @@ void RegisterHandlers(HandlerTable& table) {
   table["inlinePreviewStop"] = &HandleNoopSetter;
 
   table["previewSetCameraPlacement"] = &HandlePreviewSetCameraPlacement;
-  table["previewSetZoomSegments"] = &HandleNoopSetter;
+  table["previewSetZoomSegments"] = &HandlePreviewSetZoomSegments;
   // Voice cleanup (Phase 4 preview WYSIWYG): the RNNoise engine now runs on
   // Windows and the export denoises the mic; this drives the LIVE preview mic
   // too. Enabling produces the cleaned mic on a background thread and rebuilds
@@ -949,6 +1015,7 @@ void RegisterHandlers(HandlerTable& table) {
   // chain the export bakes with (Graphics/color_grade_effect), applied to
   // the preview video by preview_compositor. Video-only, like macOS preview.
   table["previewSetColorGrade"] = &HandlePreviewSetColorGrade;
+  table["previewSetCaptions"] = &HandlePreviewSetCaptions;
   table["previewSetCanvas"] = &HandlePreviewSetCanvas;
   table["canvasPresetThumbnail"] = &HandleCanvasPresetThumbnail;
   // Clip split/cut/trim/arrange (editing port step 4-1): the clip list is now

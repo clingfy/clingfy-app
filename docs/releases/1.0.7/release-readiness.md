@@ -18,14 +18,40 @@ Fill this section before starting verification.
 - Channel: `prod`
 - Date: `2026-08-01`
 - Verified by: `Nabil Alhafez`
-- Commit: `TBD` (fill from the pipeline run; the branch moved after the Windows
-  publish — `develop` was merged in to pick up the export/colour fixes)
-- Tag: `v1.0.7`
-- Build: `Azure prod run TBD` (paste the run number from the pipeline)
-- Status: `In progress` — Windows artifact published and verified. macOS: automated
-  checks green, colour verified on device against a reference chart, recorder, MOV
-  export and GIF export (both size presets) exercised. Remaining before approval:
-  the permissions, overlay/zoom, licensing and artifact-verification sections.
+- Commit: **two** — the platforms were built from different commits.
+  - Windows: `216f1d0`
+  - macOS: `8479c1b` (what tag `v1.0.7` points at)
+  - The branch moved between the two publishes: `develop` was merged in to pick
+    up the export/colour fixes. Over that whole range the only non-macOS change
+    is `8479c1b` itself, which touches `ops/release` — release tooling, not app
+    code — so **the shipped Windows 1.0.7 is not short a fix**. The app-code
+    commits in the window are macOS-only: `14a4af6` (#402 camera overlay encoded
+    twice), `ff91a13` (#403 export writer probe), `19dcd9b` (#404 sRGB capture).
+    Checked, not assumed: `git diff --name-only 216f1d0..8479c1b`.
+- Tag: `v1.0.7` → `8479c1b`
+  - **The tag moved after this doc was first filled in.** It initially pointed at
+    `e60b838`; the macOS lane ran a second time after `8479c1b` (a Telegram
+    failure must not abort the release before tagging) and re-tagged. An earlier
+    revision of this file recorded `e60b838` as the macOS commit — that was the
+    FIRST run, not what is live. A local `git fetch` will refuse the new tag as a
+    clobber; `git fetch --tags --force` is needed.
+  - This is also why the appcast carries two `1.0.7` items, `775` and `776`: one
+    per run, the second published with `ALLOW_OVERWRITE`. `776` is live. See the
+    follow-up at the end of this doc.
+- Build:
+  - macOS: `776` — `CFBundleVersion` / appcast `sparkle:version`, set from
+    `$(Build.BuildId)` by the prod lane.
+  - Windows: `1.0.7+8` from pubspec. The Windows lane deliberately does **not**
+    use `Build.BuildId`: `FILEVERSION` is 16-bit and the org-wide id is already
+    past 65535.
+  - Azure *run* numbers were not captured and cannot be recovered from the
+    artifacts (1.0.6 recorded "Azure #255" while its `sparkle:version` was 619 —
+    different counters). Left unrecorded rather than guessed.
+- Status: `Released` — both artifacts are live, verified against the published
+  feeds, tagged, and merged to `main` (#405) and `develop` (#406).
+  Still unticked below, both needing a Mac in hand: **DMG launches correctly**
+  and **app icon and metadata appear correctly**. Neither blocks the release
+  that already shipped; they are the honest remainder.
 
 Possible status values:
 
@@ -189,16 +215,32 @@ Notes:
 
 Ensure repository documentation and release tooling are in place.
 
-* [ ] release tooling documented in `ops/release/README.md`
-* [ ] `README.md` updated
-* [ ] `LICENSE` added
-* [ ] `LICENSING.md` added
-* [ ] `CONTRIBUTING.md` added
-* [ ] `SECURITY.md` added
+* [x] release tooling documented in `ops/release/README.md`
+* [x] `README.md` updated
+* [x] `LICENSE` added
+* [x] `LICENSING.md` added
+* [x] `CONTRIBUTING.md` added
+* [x] `SECURITY.md` added
 
 Notes:
 
-*
+* The four "added" rows are ticked from the files being present at the release
+  commit — that is the whole claim those rows make, and it is checkable.
+* The other two are **currency judgments, not existence checks**. Both files
+  exist, but "documented" and "updated" mean *current for this release*, and
+  ticking those from `test -f` would have been the wrong kind of green. Closed
+  2026-08-03 against what changed in this cycle rather than against the files
+  existing:
+  * `ops/release/README.md` — updated this cycle for the notifier work: it now
+    documents the 4096-character cap, the `--dry-run` preview, and the reason the
+    notifier is deliberately non-fatal (it sits between publishing the release
+    and tagging it, so a chat failure must not cost the tag). Every script in
+    `ops/release/` still has its line.
+  * `README.md` — current for 1.0.7's user-facing surface. GIF export is listed
+    (`Export as MP4, MOV, or GIF`), there is no hardcoded version to go stale,
+    and it does **not** repeat the false "quality presets" claim corrected in
+    `docs/features.md` this cycle — its "high-resolution export presets" line
+    refers to the export-side presets, which are real and reachable.
 
 ---
 
@@ -211,6 +253,18 @@ Verify the generated release artifacts before publishing.
 * [x] auto-updater configuration verified
 * [x] update channel configuration verified
 * [x] application launches without console errors
+
+Partial evidence for the two open rows, from inspecting the **published** DMG
+(downloaded from the CDN, not a local build) on 2026-08-03:
+
+* The DMG downloads, attaches, and contains `Clingfy.app`.
+* Metadata is correct: `CFBundleShortVersionString 1.0.7`, `CFBundleVersion 776`.
+* The app was built from `8479c1b` — read out of `COMMIT_HASH` in the Flutter
+  snapshot. This is what caught `v1.0.7` being tagged at the wrong commit; the
+  tag has since been moved. See the note under Release Metadata.
+
+Left unticked because neither row is fully covered: the app was never launched
+from the mounted image, and the icon was not looked at.
 
 ## Windows prod publish (verified 2026-08-01)
 
@@ -234,6 +288,29 @@ proves the logic is self-consistent. Neither would catch a renamed field or a
 mispublished channel, which would leave every installed 1.0.6 silently
 believing it is current:
 
+| current version | decision |
+|---|---|
+| prod `1.0.6+7` (the shipped population) | `kUpdateAvailable` |
+| prod `1.0.7+8` | `kNoUpdate` (no re-offer) |
+| prod `1.0.8+9` | `kNoUpdate` (no downgrade) |
+| **dev** build against the prod feed | `kError` (channel isolation holds) |
+
+## macOS prod publish (verified 2026-08-02)
+
+Published from `8479c1b` (tag `v1.0.7`) — the second lane run; the first ran from
+`e60b838` and produced the superseded `775` entry. Appcast:
+`https://clingfyreleases.blob.core.windows.net/updates/appcast.xml`
+
+| check | result |
+|---|---|
+| appcast top entry | `sparkle:shortVersionString 1.0.7`, `sparkle:version 776` |
+| DMG served | 200, 52 121 219 B — matches the `enclosure length` for 776 |
+| version ordering | 776 > 619 (the shipped 1.0.6), so installed Macs are offered the update |
+| history preserved | 1.0.6 and 1.0.5 entries and their DMGs still served |
+
+Not verified here — needs a Mac: installing the DMG, first launch, icon and
+metadata. Those are the two unticked rows above.
+
 Notes:
 
 * The prod lane's version guard ran for the first time this release
@@ -255,4 +332,24 @@ Blocking issues:
 
 Follow-up issues after release:
 
-* None
+* **Stale appcast entry with a signature that no longer matches its bytes.**
+  The feed carries two `1.0.7` items, `776` and `775`, pointing at the *same*
+  URL (`Clingfy_1.0.7.dmg`). The blob now holds the 776 bytes (52 121 219), so
+  775's `edSignature` — cut for 52 121 035 — does not verify against what that
+  URL serves. Sparkle picks the highest version, so real updates are unaffected;
+  1.0.6 shipped with the same duplication (618/619).
+  **Cause, confirmed after the fact:** the lane ran twice for 1.0.7 — once from
+  `e60b838` (→ `775`) and again from `8479c1b` (→ `776`) with `ALLOW_OVERWRITE`,
+  which is also why tag `v1.0.7` moved. The DMG name carries only the marketing
+  version while `sparkle:version` is the build id, so the second run replaced
+  the blob while `generate_appcast` kept the first run's item.
+  **FIXED at the source in #410**: the publish now prunes to one item per
+  enclosure URL before uploading. That is preventive — the live feed keeps its
+  stale `775` item until the next macOS publish rewrites the appcast.
+* macOS prod lane runs **no tests** — the gap the Windows lane closed in #401
+  with `-RunTests`. Did not bite this release (every macOS commit here landed
+  through PR CI), but the lane that builds what users install still gates on
+  nothing.
+* `azure-pipelines/release-prod.yml` step `Step 0.5: Dev Channel Version Exists
+  Guard` is misnamed — it is the prod **overwrite** guard, and reads as a
+  dev-channel precondition.

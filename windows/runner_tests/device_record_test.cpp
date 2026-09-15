@@ -27,6 +27,10 @@ TEST(DeviceRecordTest, DisplayRecordEncodesAllFields) {
   record.width = 1280;
   record.height = 800;
   record.scale = 2.0;
+  record.ordinal = 2;
+  record.os_name = "DELL U2720Q";
+  record.is_primary = true;
+  record.is_app_window_host = false;
 
   const auto map = ToEncodable(record);
 
@@ -37,6 +41,25 @@ TEST(DeviceRecordTest, DisplayRecordEncodesAllFields) {
   EXPECT_DOUBLE_EQ(std::get<double>(*FindKey(map, "width")), 1280.0);
   EXPECT_DOUBLE_EQ(std::get<double>(*FindKey(map, "height")), 800.0);
   EXPECT_DOUBLE_EQ(std::get<double>(*FindKey(map, "scale")), 2.0);
+  EXPECT_EQ(std::get<int64_t>(*FindKey(map, "ordinal")), 2);
+  EXPECT_EQ(std::get<std::string>(*FindKey(map, "osName")), "DELL U2720Q");
+  EXPECT_TRUE(std::get<bool>(*FindKey(map, "isPrimary")));
+  EXPECT_FALSE(std::get<bool>(*FindKey(map, "isAppWindowHost")));
+}
+
+TEST(DeviceRecordTest, DisplayRecordOmitsOsNameWhenEmpty) {
+  // Absent, not empty: Dart reads null and substitutes its own localized
+  // screen word, which an empty string would defeat.
+  DisplayRecord record;
+  record.id = 7;
+  record.name = "1. Screen";
+  record.ordinal = 1;
+
+  const auto map = ToEncodable(record);
+
+  EXPECT_EQ(FindKey(map, "osName"), nullptr);
+  EXPECT_EQ(std::get<int64_t>(*FindKey(map, "ordinal")), 1);
+  EXPECT_FALSE(std::get<bool>(*FindKey(map, "isPrimary")));
 }
 
 TEST(DeviceRecordTest, AppWindowRecordOmitsBoundsWhenIncomplete) {

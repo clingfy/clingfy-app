@@ -27,7 +27,13 @@
 #include "Capture/Camera/camera_export_layout.h"
 #include "Capture/Camera/camera_export_renderer.h"
 #include "Capture/Cursor/cursor_export_renderer.h"
+#include <fstream>
+#include <sstream>
+
+#include "Capture/Cursor/cursor_sidecar_reader.h"
 #include "Capture/Zoom/zoom_export_controller.h"
+#include "Capture/Zoom/zoom_manual_store.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Bridge/native_log_publisher.h"
 #include "Capture/Export/clip_audio_stitch.h"
 #include "Capture/Export/color_grade.h"
@@ -50,6 +56,21 @@ namespace clingfy::capture::export_ {
 namespace {
 
 using Microsoft::WRL::ComPtr;
+
+// Slurp a small sidecar. Returns "" for a missing or unreadable file, which
+// every caller here treats the same way it treats an empty one.
+std::string ReadFileUtf8(const std::wstring& path) {
+  if (path.empty()) {
+    return {};
+  }
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    return {};
+  }
+  std::ostringstream ss;
+  ss << in.rdbuf();
+  return ss.str();
+}
 
 // Sentinel for "stream not found" — distinguishable from any concrete
 // stream index (which start at 0) and from MF's symbolic selectors.
@@ -331,6 +352,12 @@ bool IsDeviceRemovedHresult(HRESULT hr) {
          hr == D2DERR_RECREATE_TARGET;
 }
 
+clingfy::capture::CameraRenderPlan CameraPlanForExportRequest(
+    const RenderRequest& request, double canvas_w, double canvas_h) {
+  return BuildCameraRenderPlan(request.camera, canvas_w, canvas_h,
+                               kExportCameraEffectScale);
+}
+
 RenderResult RenderComposedExport(const RenderRequest& request) {
   EnsureMediaFoundationStarted();
 
@@ -589,10 +616,31 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // Phase 8.3: optional smart-zoom controller. Builds auto-zoom segments from the
   // sidecar (clicks + cursor) and produces a smoothed per-frame transform. Same
   // soft-fail discipline as the cursor renderer — null → no zoom.
+  //
+  // The timeline is the EFFECTIVE one — auto segments minus any the user
+  // overrode or deleted, plus the ones they authored. Reading the manual store
+  // here (rather than taking segments over the wire) mirrors macOS and means a
+  // headless or scripted export honours the user's edits too.
   std::unique_ptr<ZoomExportController> zoom_controller;
   if (request.zoom_enabled && !request.cursor_sidecar_path.empty()) {
-    zoom_controller = ZoomExportController::Create(
-        request.cursor_sidecar_path, duration_hns / 10000, request.zoom_factor);
+    // No manual edits (the overwhelmingly common case) takes the original
+    // path untouched, so nothing about auto-only exports changes.
+    const auto manual =
+        request.zoom_manual_path.empty()
+            ? std::vector<ZoomManualSegment>{}
+            : ParseZoomManualJson(ReadFileUtf8(request.zoom_manual_path));
+    if (manual.empty()) {
+      zoom_controller = ZoomExportController::Create(
+          request.cursor_sidecar_path, duration_hns / 10000,
+          request.zoom_factor);
+    } else if (auto parsed = ParseCursorSidecar(
+                   ReadFileUtf8(request.cursor_sidecar_path))) {
+      const auto autos = BuildZoomSegments(parsed->samples, parsed->clicks,
+                                           duration_hns / 10000);
+      zoom_controller = ZoomExportController::CreateFromSegments(
+          std::move(*parsed), MergeZoomSegments(autos, manual),
+          request.zoom_factor);
+    }
   }
 
   // Phase 9.4: optional camera bubble. Opens camera/raw.mov on its own reader
@@ -605,42 +653,14 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     camera_renderer = CameraExportRenderer::Create(
         request.camera_video_path, request.camera_start_offset_ms);
     if (camera_renderer != nullptr) {
-      const CameraBubbleRect bubble = ComputeCameraBubbleRect(
-          static_cast<double>(canvas.width), static_cast<double>(canvas.height),
-          request.camera_has_center, request.camera_center_x,
-          request.camera_center_y, request.camera_layout_preset,
-          request.camera_size_factor);
-      CameraExportRenderer::Style cam_style;
-      cam_style.mirror = request.camera_mirror;
-      cam_style.opacity = request.camera_opacity;
-      cam_style.border_width = request.camera_border_width;
-      cam_style.has_border_color = request.camera_border_color_argb.has_value();
-      cam_style.border_argb = static_cast<std::uint32_t>(
-          request.camera_border_color_argb.value_or(0));
-      cam_style.shadow_preset = request.camera_shadow_preset;
-      // Phase 9.7 chroma key.
-      cam_style.chroma_enabled = request.camera_chroma_enabled;
-      cam_style.chroma_strength = request.camera_chroma_strength;
-      cam_style.has_chroma_color =
-          request.camera_chroma_color_argb.has_value();
-      cam_style.chroma_argb = static_cast<std::uint32_t>(
-          request.camera_chroma_color_argb.value_or(0));
-      // Phase 9.7 intro/outro animation. Edge resolved once from the (loop-
-      // invariant) placement; unknown presets parse to kNone (static bubble).
-      CameraAnimationParams cam_anim;
-      cam_anim.intro = ParseCameraIntroKind(request.camera_intro_preset);
-      cam_anim.outro = ParseCameraOutroKind(request.camera_outro_preset);
-      cam_anim.intro_duration_ms = request.camera_intro_duration_ms;
-      cam_anim.outro_duration_ms = request.camera_outro_duration_ms;
-      const CameraSlideEdge cam_edge = ResolveCameraSlideEdge(
-          request.camera_layout_preset, request.camera_has_center, bubble,
-          static_cast<double>(canvas.width),
-          static_cast<double>(canvas.height));
+      // One derivation, shared with the inline preview. What used to be ~45
+      // lines of hand-rolled bubble rect + style + animation params + slide
+      // edge is now the same BuildCameraRenderPlan call the preview makes.
       if (!camera_renderer->Prepare(
-              d2d_factory.Get(), d2d_ctx.Get(), bubble, request.camera_shape,
-              request.camera_corner_radius, request.camera_content_mode,
-              cam_style, cam_anim, static_cast<double>(canvas.width),
-              static_cast<double>(canvas.height), cam_edge)) {
+              d2d_factory.Get(), d2d_ctx.Get(),
+              CameraPlanForExportRequest(request,
+                                         static_cast<double>(canvas.width),
+                                         static_cast<double>(canvas.height)))) {
         camera_renderer.reset();
       }
     }
@@ -749,6 +769,15 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     enc_config.fps = request.fps_hint != 0 ? request.fps_hint : 30u;
     enc_config.avg_bitrate_bps = ResolveVideoBitrateBps(
         request.bitrate, canvas.width, canvas.height, enc_config.fps);
+    // Issue #294. The exported file is somebody else's input — an editor, a
+    // player, an upload pipeline — so give it the same 2 s seek granularity
+    // the macOS export already picks rather than whatever the MFT defaults to.
+    enc_config.keyframe_interval_frames =
+        clingfy::encoding::ResolveKeyframeIntervalFrames(enc_config.fps);
+    // Resolve, don't assume: an HEVC request on a machine without an HEVC
+    // encoder MFT degrades to H.264 here rather than failing the export.
+    enc_config.codec = clingfy::encoding::ResolveVideoCodec(
+        clingfy::encoding::ParseVideoCodec(request.codec), nullptr);
 
     std::optional<clingfy::encoding::AudioEncoderConfig> audio_config;
     // Separated recordings feed the encoder from the sidecar pumps, not the
@@ -1392,7 +1421,16 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
                      : (duration_hns > first_video_hns
                             ? (duration_hns - first_video_hns) / 10000
                             : 0);
-        camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms);
+        // `zf.zoom` is the smoothed screen zoom for THIS frame. It only scales
+        // the bubble; the camera is still drawn in canvas space, outside the
+        // zoom transform the video and cursor share.
+        // `zf.in_segment` / `zf.segment_local_ms` come from the same resolved
+        // segment `Advance` already located for the screen zoom — so the pulse
+        // and the zoom that owns it can never disagree about when a segment
+        // starts. Note this is a SOURCE-derived clock while camera_clock_ms is
+        // edited: deliberate, and matched exactly on the preview leg.
+        camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms,
+                              zf.zoom, zf.in_segment, zf.segment_local_ms);
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);

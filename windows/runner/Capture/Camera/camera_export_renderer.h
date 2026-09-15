@@ -15,6 +15,7 @@
 
 #include "Capture/Camera/camera_bubble_painter.h"
 #include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Camera/camera_render_plan.h"
 
 // Phase 9.4/9.5 — composites the recorded `camera/raw.mov` into the export as an
 // editable, styled bubble.
@@ -37,11 +38,18 @@ class CameraExportRenderer {
   static std::unique_ptr<CameraExportRenderer> Create(
       const std::wstring& camera_path, std::int64_t start_offset_ms);
 
+  // THREE arguments, where there were fourteen. Everything the renderer used
+  // to be handed piecemeal now arrives as one plan, built by the same
+  // BuildCameraRenderPlan the inline preview uses — which is the point: the
+  // two legs can no longer derive the bubble differently, because there is
+  // only one derivation left.
+  //
+  // Source-incompatible with the old signature on purpose. There is exactly
+  // one production caller and no test constructs this class, so a silent
+  // mis-ordering of the old positional arguments is not a risk worth keeping
+  // a compatibility overload for.
   bool Prepare(ID2D1Factory1* factory, ID2D1DeviceContext* ctx,
-               const CameraBubbleRect& bubble, const std::string& shape,
-               double corner_radius, const std::string& content_mode,
-               const Style& style, const CameraAnimationParams& anim,
-               double canvas_w, double canvas_h, CameraSlideEdge slide_edge);
+               const CameraRenderPlan& plan);
 
   // Advance the held camera frame forward to `frame_ms - startOffsetMs`, decoding
   // + uploading the new frame. Call OUTSIDE BeginDraw/EndDraw. No-op before the
@@ -61,8 +69,25 @@ class CameraExportRenderer {
   // intro/outro animation for recording-relative `frame_ms` of a
   // `total_duration_ms` clip. Call INSIDE BeginDraw/EndDraw in canvas space (NOT
   // under smart zoom). No-op before the first frame.
+  //
+  // `screen_zoom` is the SMOOTHED per-frame smart-zoom factor. It reaches the
+  // bubble only as a scalar that grows it (scale-with-screen-zoom); the bubble
+  // is still drawn in canvas space, deliberately outside the zoom transform, so
+  // it never pans with the magnified screen. Pass 1.0 when not zooming.
+  //
+  // `zoom_in_segment` / `zoom_segment_local_ms` are the zoom-SEGMENT state for
+  // this frame, straight off ZoomExportController::Frame. They drive the pulse
+  // and nothing else. Per-frame (not on Prepare) because they change every
+  // frame, and separate from `screen_zoom` because segment membership is not
+  // the same predicate as "the smoothed zoom is above 1" — see
+  // CameraAnimationParams::zoom_in_segment.
+  //
+  // Deliberately NOT defaulted. A default would let a new call site compile
+  // while silently never pulsing — the same shape as the intro/outro keys that
+  // shipped parsed on one path only. Make the next caller state its answer.
   void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
-            std::int64_t total_duration_ms);
+            std::int64_t total_duration_ms, double screen_zoom,
+            bool zoom_in_segment, std::int64_t zoom_segment_local_ms);
 
   bool ready() const { return ready_; }
 
@@ -77,12 +102,11 @@ class CameraExportRenderer {
   UINT cam_h_ = 0;
   std::int64_t start_offset_ms_ = 0;
 
-  // Phase 9.7 animation context, resolved once at Prepare.
-  CameraAnimationParams anim_params_{};
-  CameraBubbleRect bubble_{};
-  double canvas_w_ = 0.0;
-  double canvas_h_ = 0.0;
-  CameraSlideEdge slide_edge_ = CameraSlideEdge::kRight;
+  // The loop-invariant plan, resolved once at Prepare. This replaced eight
+  // separate cached members; the inline preview collapsed the identical eight
+  // in the same way, which is what makes the two legs structurally the same
+  // rather than the same by hand-audit.
+  CameraRenderPlan plan_{};
 
   Microsoft::WRL::ComPtr<IMFSample> pending_sample_;
   std::int64_t pending_pts_hns_ = 0;

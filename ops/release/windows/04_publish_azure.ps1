@@ -86,7 +86,12 @@ $latest = [ordered]@{
   channel          = $Ctx.Channel
   platform         = 'windows-x64'
   fileName         = $Ctx.InstallerName
-  url              = "$downloadBaseUrl$($Ctx.InstallerName)"
+  # '+' is percent-encoded for the same reason the macOS appcast does it (see
+  # ops/release/commands/publish_release.sh): CloudFront mangles a literal '+' in the path on the
+  # way to the S3 origin, so .../Clingfy_Dev_Setup_1.0.7+127.exe 404s while the %2B form returns
+  # 206 for the very same object. Every DEV installer is named <version>+<build>. `fileName` above
+  # stays unencoded — it is the on-disk name, not a URL.
+  url              = "$downloadBaseUrl$($Ctx.InstallerName -replace '\+', '%2B')"
   sha256           = $hash
   sizeBytes        = $installer.Length
   minimumOsVersion = '10.0.18362'
@@ -103,6 +108,20 @@ Write-Info "feed:   $($Ctx.LatestJsonPath)"
 # --- Upload -------------------------------------------------------------------------
 # True when the blob already exists in the container.
 function Test-BlobExists([string]$BlobName) {
+  if ($Ctx.StorageProvider -eq 'aws') {
+    # head-object, not `s3 ls`: ls matches a PREFIX, and this bucket really does hold
+    # latest-windows.json.azure-bak-20260817-174816 next to latest-windows.json.
+    & aws s3api head-object `
+      --bucket $Ctx.AwsReleasesBucket `
+      --key "$($Ctx.AzContainer)/$BlobName" 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      # Missing OR unreadable. Same posture as the Azure branch: treat as absent and let the
+      # upload surface the real auth/network error rather than blocking a release on a probe.
+      return $false
+    }
+    return $true
+  }
+
   $exists = & az storage blob exists `
     --account-name $Ctx.AzStorageAccount `
     --container-name $Ctx.AzContainer `
@@ -115,6 +134,18 @@ function Test-BlobExists([string]$BlobName) {
     return $false
   }
   return ($exists -eq 'true')
+}
+
+# Content-Type must be explicit on S3: `aws s3 cp` guesses from the extension and would upload the
+# installer as binary/octet-stream where the objects already in the bucket are
+# application/x-msdownload. Matches lib/aws.sh on the macOS side.
+function Get-ContentTypeFor([string]$BlobName) {
+  switch -Wildcard ($BlobName) {
+    '*.exe'    { return 'application/x-msdownload' }
+    '*.sha256' { return 'text/plain' }
+    '*.json'   { return 'application/json' }
+    default    { return 'application/octet-stream' }
+  }
 }
 
 function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
@@ -132,6 +163,16 @@ function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
     }
   }
   Write-Info "uploading $BlobName"
+  if ($Ctx.StorageProvider -eq 'aws') {
+    & aws s3 cp $File "s3://$($Ctx.AwsReleasesBucket)/$($Ctx.AzContainer)/$BlobName" `
+      --content-type (Get-ContentTypeFor $BlobName) `
+      --only-show-errors | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Fail "aws s3 cp failed for $BlobName with exit code $LASTEXITCODE."
+    }
+    return
+  }
+
   & az storage blob upload `
     --account-name $Ctx.AzStorageAccount `
     --container-name $Ctx.AzContainer `
@@ -145,7 +186,12 @@ function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
   }
 }
 
-Write-Step "Uploading to $($Ctx.AzStorageAccount)/$($Ctx.AzContainer)"
+$uploadTarget = if ($Ctx.StorageProvider -eq 'aws') {
+  "s3://$($Ctx.AwsReleasesBucket)/$($Ctx.AzContainer)"
+} else {
+  "$($Ctx.AzStorageAccount)/$($Ctx.AzContainer)"
+}
+Write-Step "Uploading to $uploadTarget"
 $prefix = $Ctx.WindowsBlobPrefix
 Publish-Blob $Ctx.InstallerPath "$prefix/$($Ctx.InstallerName)"
 Publish-Blob $Ctx.Sha256Path "$prefix/$($Ctx.InstallerName).sha256"
@@ -160,7 +206,32 @@ Publish-Blob $Ctx.LatestJsonPath "$prefix/latest-windows.json" -IsPointer
 # Guarded on the endpoint name: dev and prod are blob-direct (no Front Door) as
 # of 2026-07, so there is no cache to purge. Mirrors the macOS lane's
 # publish_release.sh guard.
-if ($Ctx.AzFrontDoorEndpointName) {
+if ($Ctx.StorageProvider -eq 'aws') {
+  # CloudFront serves /updates/* with the managed CachingOptimized policy, so latest-windows.json —
+  # replaced on EVERY publish by design — would otherwise stay stale at the edge for its full TTL.
+  # The installer and .sha256 are new paths each release and need no invalidation, but they are
+  # included so a re-published build behaves the same as a first publish.
+  #
+  # No "unset" branch: Import-AzurePublishSettings now REQUIRES AwsCloudFrontDistributionId on the
+  # aws provider, so reaching here without one is impossible. It used to Write-Info and carry on,
+  # which shipped a release nobody could receive while printing success.
+  Write-Step 'Invalidating CloudFront paths'
+  $invalidatePaths = @(
+    "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerName)",
+    "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerName).sha256",
+    "/$($Ctx.AzContainer)/$prefix/latest-windows.json"
+  )
+  & aws cloudfront create-invalidation `
+    --distribution-id $Ctx.AwsCloudFrontDistributionId `
+    --paths @($invalidatePaths) `
+    --query 'Invalidation.Id' --output text | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Fail ("aws cloudfront create-invalidation failed with exit code $LASTEXITCODE. " +
+      "latest-windows.json is republished on every publish, so without the invalidation the " +
+      "edge keeps serving the previous release and no installed app sees this one. " +
+      "The bytes are already in S3 - re-run the invalidation, then re-verify the feed.")
+  }
+} elseif ($Ctx.AzFrontDoorEndpointName) {
   Write-Step 'Purging Azure Front Door cache'
   $purgePaths = @(
     "/$prefix/$($Ctx.InstallerName)",
@@ -182,8 +253,67 @@ if ($Ctx.AzFrontDoorEndpointName) {
   Write-Step 'No Front Door configured (blob-direct); skipping cache purge'
 }
 
+# --- Smoke test --------------------------------------------------------------------
+#
+# Read the feed back through the PUBLIC endpoint, which is what the updater actually reads.
+# This lane had no verification at all: it uploaded, optionally invalidated, and printed
+# "Publish completed successfully" without ever checking that a client could see the release.
+# The macOS lane has always done this (publish_release.sh fetches FEED_URL and greps for the new
+# DMG), and it is the reason a bad publish there fails loudly.
+#
+# It must go through the CDN, not the bucket. Reading S3 directly would verify the bytes we just
+# wrote and pass green while the edge still served the previous release — the same shape as the
+# Azure-era smoke test that fetched the copy it had just uploaded.
+#
+# Retries because a CloudFront invalidation is not instant; the macOS lane uses the same 9 x 5s.
+$feedUrl = "${downloadBaseUrl}latest-windows.json"
+Write-Step 'Smoke testing published feed'
+
+$feedOk = $false
+$lastSeen = '<no response>'
+foreach ($attempt in 1..9) {
+  try {
+    # -UseBasicParsing for Windows PowerShell 5.1 compatibility; no-cache headers so a local
+    # proxy cannot answer on CloudFront's behalf and hide exactly the staleness being tested.
+    $resp = Invoke-WebRequest -Uri $feedUrl -UseBasicParsing -TimeoutSec 20 `
+      -Headers @{ 'Cache-Control' = 'no-cache'; 'Pragma' = 'no-cache' }
+    $feed = $resp.Content | ConvertFrom-Json
+    $lastSeen = "fileName=$($feed.fileName) versionFull=$($feed.versionFull)"
+    if ($feed.fileName -eq $Ctx.InstallerName -and $feed.sha256 -eq $hash) {
+      $feedOk = $true
+      break
+    }
+  } catch {
+    $lastSeen = $_.Exception.Message
+  }
+  Start-Sleep -Seconds 5
+}
+
+if (-not $feedOk) {
+  Fail ("Smoke test failed: $feedUrl does not yet describe this release. " +
+    "Expected fileName=$($Ctx.InstallerName) sha256=$hash, last saw: $lastSeen. " +
+    "The installer is in the bucket, so this is a serving problem, not a build one - " +
+    "check the CloudFront invalidation and the /updates/* behaviour before announcing.")
+}
+Write-Info "feed verified through $($Ctx.PublicEndpoint): $($Ctx.InstallerName)"
+
+# The installer itself must be reachable at the URL the feed advertises. The feed can be correct
+# while the binary 404s if the key prefix and the CDN path behaviour ever disagree.
+$installerUrl = "$downloadBaseUrl$($Ctx.InstallerName)"
+try {
+  $head = Invoke-WebRequest -Uri $installerUrl -Method Head -UseBasicParsing -TimeoutSec 30
+  $installerStatus = [int]$head.StatusCode
+} catch {
+  $installerStatus = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+}
+if ($installerStatus -ne 200) {
+  Fail ("Smoke test failed: installer returned HTTP $installerStatus at $installerUrl. " +
+    "The feed points every updater at this URL, so a non-200 here is a release nobody can install.")
+}
+Write-Info "installer reachable: HTTP 200"
+
 Write-Step 'Publish summary'
 Write-Info "Download URL: $downloadBaseUrl$($Ctx.InstallerName)"
-Write-Info "Feed URL:     ${downloadBaseUrl}latest-windows.json"
+Write-Info "Feed URL:     $feedUrl"
 Write-Host 'Publish completed successfully.' -ForegroundColor Green
 exit 0

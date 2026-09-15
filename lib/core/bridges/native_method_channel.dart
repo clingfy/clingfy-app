@@ -50,6 +50,50 @@ abstract class NativeMethod {
   /// audible in the room. macOS only; other platforms reply with a
   /// `MissingPluginException`, which the bridge maps to `unknown`.
   static const String getAudioOutputRoute = 'getAudioOutputRoute';
+
+  /// What the on-device speech model costs on disk, and whether it can be
+  /// deleted right now. Deliberately not part of `getStorageSnapshot`: that
+  /// payload is a fixed shape on a timer, this is asked for by one page.
+  static const String getCaptionModelInfo = 'getCaptionModelInfo';
+
+  /// Unloads and removes the speech model. Returns `{freedBytes}`; fails with
+  /// `MODEL_IN_USE` while a transcription is running.
+  static const String deleteCaptionModel = 'deleteCaptionModel';
+
+  /// The pixel size the exported frames will be. Args `{projectPath,
+  /// layoutPreset, resolutionPreset, format, gifSize}`, reply `{width, height}`.
+  ///
+  /// Asked rather than computed because the `auto` resolution preset resolves
+  /// against the recording's own oriented video track, which only native has
+  /// read. Caption bitmaps are rasterised at this size.
+  ///
+  /// `format` and `gifSize` are part of the question because a GIF does NOT
+  /// render at the resolution preset: the exporter caps its intermediate to the
+  /// GIF long-edge preset, so a caption rasterised for the uncapped canvas is
+  /// composited roughly 1.8x too large in the file. Older native builds ignore
+  /// both keys and answer the uncapped size — which is also what they render.
+  ///
+  /// macOS only today; Windows replies with a `MissingPluginException`, which
+  /// the bridge maps to null so the caller skips burn-in rather than guessing.
+  static const String resolveExportSize = 'resolveExportSize';
+
+  /// Flashes a large ordinal (and the monitor's name) on physical displays and
+  /// auto-dismisses.
+  ///
+  /// Args `{durationMs, only, onlyDisplayId, labels}`, where `labels` maps a
+  /// stringified display id to the label this side is rendering for it.
+  ///
+  /// `only == false` flashes every display — the Identify sweep. `only == true`
+  /// with an id flashes that one display; with a null id it flashes whatever
+  /// the platform would actually capture right now, which is the Clingfy
+  /// window's display on macOS and the primary monitor on Windows.
+  ///
+  /// Replies with the display snapshot that was painted, in the same
+  /// list-of-maps shape as `getDisplays`, so the picker can adopt exactly what
+  /// is on the glass. macOS + Windows. Older native builds reply with a
+  /// `MissingPluginException`, which the bridge maps to
+  /// `IdentifyDisplaysResult.unsupported` so the UI hides the control.
+  static const String identifyDisplays = 'identifyDisplays';
 }
 
 /// Method names for native → Flutter calls.

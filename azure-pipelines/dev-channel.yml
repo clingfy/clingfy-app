@@ -1,8 +1,25 @@
 # dev-channel.yml (alpha)
-trigger:
-  branches:
-    include:
-      - develop
+#
+# MANUAL ONLY (2026-08-08). This lane used to build, sign, notarize and publish a
+# dev DMG on every push to develop. A signed+notarized macOS build is 30-45
+# minutes of hosted-agent time, and with several merges a day it was the single
+# largest consumer of the organization's build minutes -- which matters now that
+# purchased parallel jobs are set to 0 and the lane runs on the free grant
+# (1,800 minutes/month for a private project, if granted at all).
+#
+# Consequence, deliberately accepted: testers no longer receive a dev build per
+# merge. Run this pipeline by hand when there is something worth shipping to them.
+#
+# To restore automatic dev builds, delete `trigger: none` and uncomment the block
+# below. Note that once the GitHub Actions lane takes over
+# (.github/workflows/release-macos-dev.yml), minutes stop being a constraint at
+# all: clingfy-app is a public repository, where GitHub's standard runners are
+# free and unmetered.
+trigger: none
+# trigger:
+#   branches:
+#     include:
+#       - develop
 
 # beta-channel.yml (mirror)
 # trigger:
@@ -84,7 +101,12 @@ steps:
       BUILD_NUMBER_OVERRIDE: $(BUILD_NUMBER)
 
   - task: AzureCLI@2
-    displayName: "Step 0.5: Release Version Exists Guard"
+    # Refuses to publish over a version already in the DEV blob. Named
+    # "Release Version Exists Guard" until 2026-08-02 -- the prod lane's name,
+    # as the two were swapped. Unlike prod's, this one has no ALLOW_OVERWRITE
+    # escape hatch: a dev rebuild bumps its counter, so a collision here means
+    # something is wrong rather than intended.
+    displayName: "Step 0.5: Overwrite guard (dev version not already published)"
     env:
       APP_ENV: $(APP_ENV)
       RELEASE_CHANNEL: $(RELEASE_CHANNEL)
@@ -99,18 +121,21 @@ steps:
         source ./ops/release/_config.sh
 
         EXPECTED_BLOB="${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
-        echo "Checking Azure blob: ${EXPECTED_BLOB}"
+        echo "Checking ${RELEASE_STORAGE_PROVIDER} store for: ${AZ_CONTAINER}/${EXPECTED_BLOB}"
 
-        EXISTS="$(
-          az storage blob exists \
-            --account-name "$AZ_STORAGE_ACCOUNT" \
-            --container-name "$AZ_CONTAINER" \
-            --name "$EXPECTED_BLOB" \
-            --auth-mode login \
-            --query exists -o tsv | tr '[:upper:]' '[:lower:]' | tr -d '\r\n '
-        )"
+        # Routed through the provider seam, like the prod lane (#492). The hardcoded
+        # `az storage blob exists` this replaces asked Azure regardless of where the publish step
+        # actually writes.
+        PROBE=0
+        publish_object_exists "$AZ_CONTAINER" "$EXPECTED_BLOB" || PROBE=$?
 
-        if [ "$EXISTS" = "true" ]; then
+        # A guard that cannot read its store has not passed, it has failed to run.
+        if [ "$PROBE" = "2" ]; then
+          echo "##vso[task.logissue type=error]Overwrite guard could not read ${AZ_CONTAINER}/${EXPECTED_BLOB} from the ${RELEASE_STORAGE_PROVIDER} store. Not treating an unreadable store as an unpublished version."
+          exit 1
+        fi
+
+        if [ "$PROBE" = "0" ]; then
           echo "##vso[task.logissue type=error]Dev channel version already exists at ${EXPECTED_BLOB}"
           exit 1
         else

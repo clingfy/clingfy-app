@@ -24,24 +24,33 @@
 # WIN_SIGN_CERT_PFX/WIN_SIGN_CERT_PASSWORD (or _THUMBPRINT) as env on the build
 # step, and pass -RequireSignature. Left unsigned here on purpose.
 
-trigger:
-  branches:
-    include:
-      - develop
-  # Only rebuild + republish when something that changes the Windows app
-  # artifact moved — a macOS-only, docs-only, or CI-config-only commit does not
-  # spin a Windows agent (mirrors the GitHub-CI path scoping). macos/**,
-  # test/**, docs/**, .github/** are excluded by omission.
-  paths:
-    include:
-      - windows/**
-      - lib/**
-      - assets/**
-      - pubspec.yaml
-      - pubspec.lock
-      - l10n.yaml
-      - ops/release/windows/**
-      - azure-pipelines/windows-dev-channel.yml
+# MANUAL ONLY (2026-08-08), matching the macOS dev lane. Purchased parallel jobs
+# are set to 0, so both dev channels now compete for the free grant's monthly
+# minutes; publishing a dev build per merge is not worth that budget. Run by hand
+# when testers need a build.
+#
+# The path filter below is kept, commented, alongside the trigger: it is the
+# non-obvious half. Restoring `trigger:` without it means every macOS-only or
+# docs-only commit spins a Windows agent for an artifact that did not change.
+trigger: none
+# trigger:
+#   branches:
+#     include:
+#       - develop
+#   # Only rebuild + republish when something that changes the Windows app
+#   # artifact moved — a macOS-only, docs-only, or CI-config-only commit does not
+#   # spin a Windows agent (mirrors the GitHub-CI path scoping). macos/**,
+#   # test/**, docs/**, .github/** are excluded by omission.
+#   paths:
+#     include:
+#       - windows/**
+#       - lib/**
+#       - assets/**
+#       - pubspec.yaml
+#       - pubspec.lock
+#       - l10n.yaml
+#       - ops/release/windows/**
+#       - azure-pipelines/windows-dev-channel.yml
 pr: none
 
 pool:

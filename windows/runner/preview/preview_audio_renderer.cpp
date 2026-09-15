@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "Audio/audio_format.h"
+#include "Audio/wasapi_stream_format.h"
 #include "Capture/Export/reorder_audio_pump.h"
 
 namespace clingfy::preview {
@@ -236,20 +237,19 @@ bool PreviewAudioRenderer::Impl::Open(
   if (FAILED(hr) || mix_format == nullptr) {
     return false;
   }
-  const bool compatible =
-      clingfy::audio::IsPipelineCompatible(clingfy::audio::Snapshot(mix_format));
-  if (!compatible) {
-    // Non-48k/stereo/float endpoint: no resampler yet — same explicit
-    // limitation the capture side ships with. Silent-video fallback.
-    ::CoTaskMemFree(mix_format);
-    return false;
-  }
-  hr = client_->Initialize(AUDCLNT_SHAREMODE_SHARED,
-                           AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                           kBufferDurationHns, 0, mix_format, nullptr);
+  // A non-48 kHz/stereo/float endpoint used to end the preview's audio here:
+  // it returned false and the session played as silent video, and unlike the
+  // capture side there was no user-visible notice at all — just a Warn on the
+  // diagnostics rail. The audio engine now resamples for us. Everything below
+  // keeps assuming 48 kHz float32 stereo, which stays true because the
+  // APP-side format is canonical whichever branch runs.
+  const clingfy::audio::SharedStreamInit init =
+      clingfy::audio::InitializeSharedStream(client_.Get(),
+                                             AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                             kBufferDurationHns, mix_format);
   ::CoTaskMemFree(mix_format);
-  if (FAILED(hr)) {
-    return false;
+  if (FAILED(init.hr)) {
+    return false;  // still soft-fail to silent video (D7)
   }
   if (FAILED(client_->GetBufferSize(&buffer_frames_)) || buffer_frames_ == 0) {
     return false;

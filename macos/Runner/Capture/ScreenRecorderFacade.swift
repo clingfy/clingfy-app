@@ -108,6 +108,31 @@ final class ScreenRecorderFacade: NSObject {
   // moved into `PreviewEngine`. Facade keeps the public method
   // signatures unchanged and delegates.
   private let previewEngine = PreviewEngine()
+
+  /// Owns the one in-flight transcription: its own serial queue, its engine
+  /// instance, its cancel flag. Deliberately not on `AudioComputeQueue` — see
+  /// CaptionsService for why a minutes-long job cannot share the queue that an
+  /// export preamble blocks on.
+  ///
+  /// `private(set)` rather than `let` for the test seam below: the setter is
+  /// file-private, so the app cannot swap the service out at runtime, and a test
+  /// can still reach `deleteCaptionModel`'s refusal path without a 626 MB model.
+  private(set) var captionsService = CaptionsService()
+
+  #if DEBUG
+    /// Test seam: substitutes a captions service backed by a fake engine.
+    ///
+    /// `deleteCaptionModel` removes ~730 MB and must refuse when the unload was
+    /// declined — the engine skips the unload while a cancelled job's abandoned
+    /// task still owns the pipeline, and deleting then takes the weights out
+    /// from under a live Core ML mapping while an uninterruptible download is
+    /// still writing into the same folder. That refusal is unreachable from a
+    /// test without this: the real engine only declines after a real cancelled
+    /// download.
+    func useCaptionsServiceForTesting(_ service: CaptionsService) {
+      captionsService = service
+    }
+  #endif
   var captureFPS: Int = 30  // internal: read by StorageDiagnosticsService (PR 7)
   private let defaultZoomFollowStrength: CGFloat = 0.15
   private let cameraCaptureCoordinator = CameraCaptureCoordinator()
@@ -1239,6 +1264,41 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func getDisplays(result: @escaping FlutterResult) { result(displaySvc.allDisplays()) }
+
+  /// Paints the identify cards and replies with the snapshot it painted.
+  ///
+  /// Re-enumerates at flash time rather than trusting a list Flutter is holding:
+  /// the reply is what is on the glass, and the picker adopts it, so the two
+  /// cannot drift apart.
+  func identifyDisplays(
+    durationMs: Int, onlyDisplayId: NSNumber?, only: Bool, labels: [String: String],
+    result: @escaping FlutterResult
+  ) {
+    let word = NativeStringsStore.shared.string(for: NativeUIStringKey.displayServiceScreen)
+    let records = DisplayLabeler.payloads(from: displaySvc.descriptors(), screenWord: word)
+    let clamped = max(400, min(6000, durationMs))
+
+    var byID: [CGDirectDisplayID: String] = [:]
+    for (key, value) in labels where !value.isEmpty {
+      if let raw = UInt32(key) { byID[CGDirectDisplayID(raw)] = value }
+    }
+
+    // `only` with no id means "whatever this platform would actually capture" —
+    // the honest answer for the Main display row, which resolves differently on
+    // each platform.
+    let target: CGDirectDisplayID? =
+      only
+      ? (onlyDisplayId.map { CGDirectDisplayID($0.uint32Value) }
+        ?? displaySvc.appWindowDisplayID() ?? CGMainDisplayID())
+      : nil
+
+    DispatchQueue.main.async {
+      DisplayIdentifyOverlay.show(
+        records: records, labels: byID, onlyDisplayID: target,
+        duration: TimeInterval(clamped) / 1000.0)
+    }
+    result(records)
+  }
   func setDisplay(id: NSNumber?, result: @escaping FlutterResult) {
     prefs.selectedDisplayId = id == nil ? nil : Int(id!.uint32Value)
     selectedDisplayID = id == nil ? nil : CGDirectDisplayID(id!.uint32Value)
@@ -1506,9 +1566,38 @@ final class ScreenRecorderFacade: NSObject {
     cameraParams: CameraCompositionParams?,
     colorGrade: ColorGrade = .identity,
     clips: [ClipKeptRange] = [],
+    /// Pre-rasterized caption bitmaps and the cues that index them, in SOURCE
+    /// time. `nil` / `[]` means no burn-in.
+    ///
+    /// Deliberately NOT defaulted, unlike every other optional here. Burn-in
+    /// shipped doing nothing precisely because these were absent from this
+    /// signature: `ExportVideoRequest` parsed both fields, the engine declared
+    /// and forwarded both, and the values died in between with no error and no
+    /// log. A default would have let the same omission compile again.
+    ///
+    /// No test can cover a Swift call site that simply does not pass an
+    /// argument — the compiler can, and this is it. There is one caller.
+    captionBitmapDirectory: String?,
+    captions: [CaptionCueTrack.Cue],
     onProgress: ((Double) -> Void)? = nil,
     result: @escaping FlutterResult
   ) {
+    // Hand the speech model back before the memory-hungry part starts.
+    //
+    // A loaded WhisperKit pipeline is several hundred megabytes and a 4K export
+    // is the peak-memory moment in this app, so holding both at once is the one
+    // case worth avoiding. `CaptionsService` already releases at the end of
+    // every job; this is the second gate, for the pipeline a job could not hand
+    // back at the time — the release is refused while a cancelled job's
+    // abandoned task still owns the engine, and an export is exactly when that
+    // stranded model costs the most.
+    //
+    // The result is deliberately ignored HERE and only here: a refusal means a
+    // cancelled job still owns the engine, and this is an optimisation, not a
+    // precondition — the export proceeds either way and the next one asks again.
+    // The delete path is the caller that must not ignore it.
+    captionsService.releaseModel { _ in }
+
     // Slice 8 / PR 27: orchestration moved to ExportEngine. The facade
     // assembles the typed Input + dependency closures and delegates;
     // ExportPrep helpers (`resolveTargetSize`, `exportFormatInfo`,
@@ -1542,7 +1631,9 @@ final class ScreenRecorderFacade: NSObject {
         cameraPath: cameraPath,
         cameraParams: cameraParams,
         colorGrade: colorGrade,
-        clips: clips
+        clips: clips,
+        captionBitmapDirectory: captionBitmapDirectory,
+        captions: captions
       ),
       dependencies: .init(
         loadRecordingProject: { [unowned self] path in

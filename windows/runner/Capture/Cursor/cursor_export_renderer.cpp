@@ -174,6 +174,32 @@ void CursorExportRenderer::Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
 
   D2D1_MATRIX_3X2_F previous;
   ctx->GetTransform(&previous);
+
+  // The REAL recorded shape, when the recording carries one. Anything captured
+  // before shapes existed — and any cursor that failed to rasterize — has
+  // sprite_id -1 and falls through to the vector arrow below, which is why
+  // that arrow is still here.
+  if (ID2D1Bitmap* sprite = BitmapForSprite(ctx, at.sprite_id)) {
+    const auto& meta = data_.sprites[static_cast<size_t>(at.sprite_id)];
+    const float scale = static_cast<float>(place.glyph_scale);
+    // Position by the HOTSPOT, not the top-left. An I-beam's hotspot is its
+    // middle and a resize cursor's is its centre, so drawing at the raw
+    // position would offset every non-arrow shape by up to its own size.
+    const float left =
+        static_cast<float>(place.canvas_x) - meta.hotspot_x * scale;
+    const float top =
+        static_cast<float>(place.canvas_y) - meta.hotspot_y * scale;
+    const D2D1_RECT_F dest = D2D1::RectF(
+        left, top, left + meta.width * scale, top + meta.height * scale);
+    ctx->DrawBitmap(sprite, dest, 1.0f,
+                    // Linear: the sprite is upscaled by cursorSize and the
+                    // content scale, and nearest-neighbour would alias the
+                    // antialiased edges the OS already baked in.
+                    D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    ctx->SetTransform(previous);
+    return;
+  }
+
   // geometry (cursor units) → scale to px → translate so the tip lands on the
   // cursor position → then any pre-existing transform (identity here).
   const D2D1_MATRIX_3X2_F glyph =
@@ -186,6 +212,38 @@ void CursorExportRenderer::Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
   // Stroke width is in geometry (cursor) units, so it scales with the glyph.
   ctx->DrawGeometry(arrow_.Get(), stroke_brush_.Get(), 1.1f);
   ctx->SetTransform(previous);
+}
+
+ID2D1Bitmap* CursorExportRenderer::BitmapForSprite(ID2D1DeviceContext* ctx,
+                                                   int sprite_id) {
+  if (sprite_id < 0 || ctx == nullptr ||
+      static_cast<size_t>(sprite_id) >= data_.sprites.size()) {
+    return nullptr;
+  }
+  if (const auto hit = sprite_bitmaps_.find(sprite_id);
+      hit != sprite_bitmaps_.end()) {
+    return hit->second.Get();  // may be null: a previous failed upload
+  }
+  const CursorSidecarSprite& sprite =
+      data_.sprites[static_cast<size_t>(sprite_id)];
+  Microsoft::WRL::ComPtr<ID2D1Bitmap> bitmap;
+  const D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+      // PREMULTIPLIED, matching what the rasterizer wrote. Declaring it
+      // straight would double-apply alpha and halo every glyph.
+      D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+  const HRESULT hr = ctx->CreateBitmap(
+      D2D1::SizeU(static_cast<UINT32>(sprite.width),
+                  static_cast<UINT32>(sprite.height)),
+      sprite.pixels.data(), static_cast<UINT32>(sprite.width) * 4, props,
+      bitmap.GetAddressOf());
+  if (FAILED(hr)) {
+    // Cache the failure so a broken sprite is not retried every frame; the
+    // null entry sends this frame and every later one to the arrow.
+    sprite_bitmaps_[sprite_id] = nullptr;
+    return nullptr;
+  }
+  sprite_bitmaps_[sprite_id] = bitmap;
+  return sprite_bitmaps_[sprite_id].Get();
 }
 
 }  // namespace clingfy::capture

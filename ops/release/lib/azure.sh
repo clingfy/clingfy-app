@@ -5,25 +5,51 @@ require_azure_cli() {
   ensure_command az
 }
 
+# Existence probe with a THREE-state result, mirroring s3_object_exists(). See the contract note
+# in lib/env.sh: 0 = present, 1 = genuinely absent, 2 = could not determine.
+#
+# The old inline version read `--query exists -o tsv` through a pipeline, so the az exit status was
+# discarded and ANY failure — expired login, wrong account, no network — produced an empty string
+# that compared unequal to "true" and was reported as absence. Absence and failure must not look
+# alike here: upstream, absence means "first release, regenerate the appcast from scratch".
+az_blob_exists() {
+  local account="$1"
+  local container="$2"
+  local blob_name="$3"
+
+  local out
+  # No pipeline: `$?` must belong to az itself, not to `tr`.
+  if ! out="$(
+    az storage blob exists \
+      --account-name "$account" \
+      --container-name "$container" \
+      --name "$blob_name" \
+      --auth-mode login \
+      --query exists -o tsv 2>&1
+  )"; then
+    log_warn "Could not determine whether ${account}/${container}/${blob_name} exists: ${out}"
+    return 2
+  fi
+
+  case "$(printf '%s' "$out" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+    true)  return 0 ;;
+    false) return 1 ;;
+    *)
+      log_warn "Unexpected 'az storage blob exists' output for ${account}/${container}/${blob_name}: ${out}"
+      return 2
+      ;;
+  esac
+}
+
 az_blob_download_if_exists() {
   local account="$1"
   local container="$2"
   local blob_name="$3"
   local output_file="$4"
 
-  local exists
-  exists="$(
-    az storage blob exists \
-      --account-name "$account" \
-      --container-name "$container" \
-      --name "$blob_name" \
-      --auth-mode login \
-      --query exists -o tsv | tr '[:upper:]' '[:lower:]' | tr -d '\r\n '
-  )"
-
-  if [[ "$exists" != "true" ]]; then
-    return 1
-  fi
+  az_blob_exists "$account" "$container" "$blob_name"
+  local probe=$?
+  ((probe == 0)) || return "$probe"
 
   az storage blob download \
     --account-name "$account" \

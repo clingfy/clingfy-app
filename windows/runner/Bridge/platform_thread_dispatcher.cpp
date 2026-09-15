@@ -74,6 +74,21 @@ void PlatformThreadDispatcher::Post(std::function<void()> task) {
   }
 }
 
+bool PlatformThreadDispatcher::TryPost(std::function<void()> task) {
+  if (!task) return false;
+  // No inline fallback on either path — see the header. A caller that reaches
+  // TryPost has told us running on its own thread is not merely undesirable
+  // but unsafe, so dropping is the only correct failure mode.
+  if (hwnd_ == nullptr) return false;
+  auto* heap_task = new std::function<void()>(std::move(task));
+  if (!::PostMessageW(hwnd_, kRunCallbackMsg, 0,
+                      reinterpret_cast<LPARAM>(heap_task))) {
+    delete heap_task;
+    return false;
+  }
+  return true;
+}
+
 LRESULT CALLBACK PlatformThreadDispatcher::WindowProc(HWND hwnd, UINT msg,
                                                      WPARAM wparam,
                                                      LPARAM lparam) {

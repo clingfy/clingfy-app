@@ -2383,6 +2383,79 @@ TEST(ExportPipelineTest, ReorderExportStitchesAudioInEditedOrder) {
 // Editing port (clips, 3b-3): the camera bubble under REORDER (§5.5). The camera
 // is a separate synced player — its VIDEO tracks SOURCE time while the export
 // re-stamps onto the edited timeline, so at a reorder boundary the source clock
+// --- the export leg's camera plan, WITHOUT a device --------------------------
+//
+// Every other camera test in this file GTEST_SKIPs without a D3D11 device, so
+// on a headless runner they score as passes while proving nothing. These two do
+// not touch D3D at all: CameraPlanForExportRequest exists precisely so the
+// export's plan INPUT is assertable in CI.
+
+TEST(CameraPlanForExportRequestTest, ResolvesAtIdentityScaleAndMatchesTheLegacyRect) {
+  RenderRequest r;
+  r.draw_camera = true;
+  r.camera.has_center = true;
+  r.camera.center_x = 0.72;
+  r.camera.center_y = 0.64;
+  r.camera.size_factor = 0.25;
+  r.camera.layout_preset = "overlayBottomRight";
+  // Styling the existing camera test never sets, so a style term dropped on
+  // this leg would show up here rather than nowhere.
+  r.camera.border_width = 4.0;
+  r.camera.has_border_color = true;
+  r.camera.border_argb = 0xFFFFFFFFu;
+  r.camera.shadow_preset = 2;
+
+  const auto plan = CameraPlanForExportRequest(r, 3840.0, 2160.0);
+
+  // THE assertion this whole seam needed: the export passes identity scale.
+  // camera_render_plan_test proves the builder is correct AT 1.0; only this
+  // proves the export call site actually passes 1.0.
+  EXPECT_DOUBLE_EQ(plan.style.effect_scale, 1.0);
+
+  // And at identity the bubble is bit-identical to the 7-argument
+  // ComputeCameraBubbleRect the export called before this refactor, with the
+  // min-side floor left defaulted. That is what makes the default->explicit
+  // transition behaviour-neutral by test rather than by argument.
+  const auto legacy = clingfy::capture::ComputeCameraBubbleRect(
+      3840.0, 2160.0, r.camera.has_center, r.camera.center_x, r.camera.center_y,
+      r.camera.layout_preset, r.camera.size_factor);
+  EXPECT_DOUBLE_EQ(plan.bubble.x, legacy.x);
+  EXPECT_DOUBLE_EQ(plan.bubble.y, legacy.y);
+  EXPECT_DOUBLE_EQ(plan.bubble.width, legacy.width);
+  EXPECT_DOUBLE_EQ(plan.bubble.height, legacy.height);
+
+  // Carried through, not re-derived.
+  EXPECT_DOUBLE_EQ(plan.style.border_width, 4.0);
+  EXPECT_TRUE(plan.style.has_border_color);
+  EXPECT_EQ(plan.style.border_argb, 0xFFFFFFFFu);
+  EXPECT_EQ(plan.style.shadow_preset, 2);
+}
+
+TEST(CameraPlanForExportRequestTest, CarriesTheZoomTrioOntoTheExportPlan) {
+  // The three fields whose loss disables scale-with-screen-zoom SILENTLY:
+  // ResolveCameraZoomScale returns a fixed 1.0 for an empty behaviour, so a
+  // bubble that simply never grows is the only symptom. No error, no warning,
+  // and no pixel test that runs on a headless box.
+  RenderRequest r;
+  r.draw_camera = true;
+  r.camera.layout_preset = "overlayTopLeft";
+  r.camera.zoom_behavior = "scaleWithScreenZoom";
+  r.camera.zoom_scale_multiplier = 0.35;
+
+  const auto plan = CameraPlanForExportRequest(r, 1920.0, 1080.0);
+  EXPECT_EQ(plan.zoom_behavior, "scaleWithScreenZoom");
+  EXPECT_DOUBLE_EQ(plan.zoom_scale_multiplier, 0.35);
+  EXPECT_EQ(plan.layout_preset, "overlayTopLeft");
+  EXPECT_DOUBLE_EQ(plan.canvas_w, 1920.0);
+  EXPECT_DOUBLE_EQ(plan.canvas_h, 1080.0);
+
+  // And the trio actually reaches the per-frame resolver: at a 2x screen zoom
+  // the bubble grows by the multiplier's share of the excess.
+  const auto at_zoom = clingfy::capture::ResolveCameraRenderFrame(
+      plan, /*frame_ms=*/0, /*total_duration_ms=*/10000, /*screen_zoom=*/2.0,
+      /*zoom_in_segment=*/false, /*zoom_segment_local_ms=*/0);
+  EXPECT_DOUBLE_EQ(at_zoom.scale, 1.35);
+}
 // jumps BACKWARD and the forward-only camera reader must be re-primed
 // (CameraExportRenderer::SeekTo, added in 3b-2a) or the bubble would freeze on a
 // stale later frame. Proof: a camera colored by source time (green first source
@@ -2425,13 +2498,18 @@ TEST(ExportPipelineTest, CameraBubbleTracksSourceTimeUnderReorder) {
   r.draw_camera = true;
   r.camera_video_path = fs::u8path(camera).wstring();
   r.camera_start_offset_ms = 0;  // camera time == screen source time
-  r.camera_has_center = true;
-  r.camera_center_x = 0.80;
-  r.camera_center_y = 0.80;
-  r.camera_size_factor = 0.45;   // a big bubble so its center is easy to sample
-  r.camera_shape = "circle";     // center is camera content for any convex shape
-  r.camera_content_mode = "fill";
-  r.camera_opacity = 1.0;
+  // draw_camera above stays loose and is the gate; these seven moved under
+  // .camera when the request started embedding the parser own spec. Note
+  // r.camera.visible is deliberately NOT set here and stays false while the
+  // camera renders -- the opposite of production, where the assignment is
+  // gated so visible and draw_camera agree. Gate on draw_camera.
+  r.camera.has_center = true;
+  r.camera.center_x = 0.80;
+  r.camera.center_y = 0.80;
+  r.camera.size_factor = 0.45;  // a big bubble so its center is easy to sample
+  r.camera.shape = "circle";    // center is camera content for any convex shape
+  r.camera.content_mode = "fill";
+  r.camera.opacity = 1.0;
 
   const RenderResult result = RenderComposedExport(r);
   ASSERT_TRUE(result.ok) << result.message;

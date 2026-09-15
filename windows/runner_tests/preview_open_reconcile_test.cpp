@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 namespace clingfy::preview {
 namespace {
 
@@ -358,6 +360,128 @@ TEST(NextKeptSourceInAfterTest, PicksTheNearestStartRegardlessOfOrder) {
       clip::ClipKeptRange{/*source_in_ms=*/8000, /*source_out_ms=*/9000},
       clip::ClipKeptRange{/*source_in_ms=*/0, /*source_out_ms=*/6000}};
   EXPECT_EQ(PreviewEngine::NextKeptSourceInMsAfter(6500, ranges), 8000);
+}
+
+// ---------------------------------------------------------------------------
+// Pacer stall watchdog.
+//
+// WHY THIS EXISTS: a dev build burned ~0.7 of a core for 35 hours with a
+// preview open that rendered 625 frames in that time, and the release log said
+// nothing — the per-window pacer line is Debug, which release builds drop, so
+// Task Manager was the only evidence. The condition ("playing, emitting
+// nothing") is nameable, so it is now reported at Info.
+//
+// The rate limiting is the whole design. Reporting every window would be the
+// 2s-line problem again; reporting once would lose a 34-hour stall's duration.
+// ---------------------------------------------------------------------------
+
+using Stall = PreviewEngine::PacerStallInput;
+using StallReport = PreviewEngine::PacerStallReport;
+
+// Runs `windows` consecutive frameless windows, returning every report emitted.
+std::vector<StallReport> RunStalledWindows(int windows) {
+  std::vector<StallReport> reports;
+  Stall s;
+  for (int i = 0; i < windows; ++i) {
+    const auto d = PreviewEngine::DecidePacerStallReport(s);
+    if (d.report != StallReport::kNone) reports.push_back(d.report);
+    s.stalled_windows = d.next_stalled_windows;
+    s.stall_reported = d.next_stall_reported;
+  }
+  return reports;
+}
+
+TEST(PacerStallWatchdogTest, RenderingNormallyNeverReports) {
+  Stall s;
+  for (int i = 0; i < 100; ++i) {
+    s.rendered_in_window = 1;
+    const auto d = PreviewEngine::DecidePacerStallReport(s);
+    EXPECT_EQ(d.report, StallReport::kNone);
+    EXPECT_EQ(d.next_stalled_windows, 0);
+    s.stalled_windows = d.next_stalled_windows;
+    s.stall_reported = d.next_stall_reported;
+  }
+}
+
+// A pause, a seek, or a slow decode can legitimately produce a frameless
+// window. Reporting those would train the reader to ignore the line.
+TEST(PacerStallWatchdogTest, ShortGapsAreSilent) {
+  EXPECT_TRUE(RunStalledWindows(PreviewEngine::kPacerStallOnsetWindows - 1)
+                  .empty());
+}
+
+TEST(PacerStallWatchdogTest, ReportsOnceAtTheOnsetThreshold) {
+  const auto reports =
+      RunStalledWindows(PreviewEngine::kPacerStallOnsetWindows);
+  ASSERT_EQ(reports.size(), 1u);
+  EXPECT_EQ(reports[0], StallReport::kStalled);
+}
+
+// THE 35-HOUR CASE. It must keep saying so — a single line at onset would be
+// indistinguishable from a stall that ended a second later — but at a cadence
+// that stays readable, not once per window.
+TEST(PacerStallWatchdogTest, LongStallRepeatsOnACappedCadence) {
+  const int windows = PreviewEngine::kPacerStallOnsetWindows +
+                      PreviewEngine::kPacerStallRepeatWindows * 3;
+  const auto reports = RunStalledWindows(windows);
+  EXPECT_EQ(reports.size(), 4u)  // onset + 3 repeats
+      << "expected onset plus one report per repeat interval, got "
+      << reports.size();
+  for (const auto report : reports) EXPECT_EQ(report, StallReport::kStalled);
+}
+
+TEST(PacerStallWatchdogTest, RecoveryIsReportedAfterAReportedStall) {
+  Stall s;
+  for (int i = 0; i < PreviewEngine::kPacerStallOnsetWindows; ++i) {
+    const auto d = PreviewEngine::DecidePacerStallReport(s);
+    s.stalled_windows = d.next_stalled_windows;
+    s.stall_reported = d.next_stall_reported;
+  }
+  ASSERT_TRUE(s.stall_reported);
+
+  s.rendered_in_window = 1;
+  const auto d = PreviewEngine::DecidePacerStallReport(s);
+  EXPECT_EQ(d.report, StallReport::kRecovered);
+  EXPECT_EQ(d.next_stalled_windows, 0);
+  EXPECT_FALSE(d.next_stall_reported);
+}
+
+// Recovery from a stall nobody was told about is not news.
+TEST(PacerStallWatchdogTest, RecoveryIsSilentWhenTheStallWasNeverReported) {
+  Stall s;
+  s.stalled_windows = PreviewEngine::kPacerStallOnsetWindows - 1;
+  s.stall_reported = false;
+  s.rendered_in_window = 1;
+  const auto d = PreviewEngine::DecidePacerStallReport(s);
+  EXPECT_EQ(d.report, StallReport::kNone);
+  EXPECT_EQ(d.next_stalled_windows, 0);
+}
+
+// A stall that resumes and stalls again is two events, and the second must be
+// announced on its own merits rather than suppressed by the first's flag.
+TEST(PacerStallWatchdogTest, ASecondStallReportsAgain) {
+  Stall s;
+  for (int i = 0; i < PreviewEngine::kPacerStallOnsetWindows; ++i) {
+    const auto d = PreviewEngine::DecidePacerStallReport(s);
+    s.stalled_windows = d.next_stalled_windows;
+    s.stall_reported = d.next_stall_reported;
+  }
+  s.rendered_in_window = 1;
+  const auto recovered = PreviewEngine::DecidePacerStallReport(s);
+  ASSERT_EQ(recovered.report, StallReport::kRecovered);
+  s.stalled_windows = recovered.next_stalled_windows;
+  s.stall_reported = recovered.next_stall_reported;
+  s.rendered_in_window = 0;
+
+  std::vector<StallReport> second;
+  for (int i = 0; i < PreviewEngine::kPacerStallOnsetWindows; ++i) {
+    const auto d = PreviewEngine::DecidePacerStallReport(s);
+    if (d.report != StallReport::kNone) second.push_back(d.report);
+    s.stalled_windows = d.next_stalled_windows;
+    s.stall_reported = d.next_stall_reported;
+  }
+  ASSERT_EQ(second.size(), 1u);
+  EXPECT_EQ(second[0], StallReport::kStalled);
 }
 
 }  // namespace

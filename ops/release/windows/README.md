@@ -1,5 +1,40 @@
 # Windows Release Lane
 
+> **⚠️ PUBLISH TARGET CHANGED 2026-09-12 — prod publishes to AWS S3, not Azure.**
+> Azure was decommissioned on 2026-09-10, and `clingfy.com/updates/*` has served from the AWS
+> releases bucket since the 2026-08-17 cutover. Publishing prod to Azure would have written to a
+> location nothing reads — the upload succeeds, the smoke test passes (it checks the copy it just
+> wrote), and no installed app ever sees the release.
+>
+> `RELEASE_STORAGE_PROVIDER` selects the backend and defaults per channel: **prod -> `aws`**,
+> everything else -> `azure`. Dev deliberately stays on Azure (`clingfyreleasesdev`) because there is
+> no dev releases bucket yet. The S3 key is `<container>/<blob name>`, identical to the Azure layout,
+> because the CloudFront `/updates/*` behaviour has no path rewrite.
+>
+> Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
+> would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
+> the azure branch, which is still live for dev.
+>
+> **Three vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go),
+> `AWS_PUBLIC_ENDPOINT` (where they are SERVED from, e.g. `clingfy.com/updates`), and
+> `AWS_CLOUDFRONT_DISTRIBUTION_ID` (how a republished feed reaches viewers).
+>
+> Bucket and endpoint are separate on purpose — the appcast bakes the public URL into every
+> enclosure, so an endpoint left pointing at Azure would publish a feed from clingfy.com whose
+> downloads resolve to the retired storage account.
+>
+> The distribution id became required rather than optional because every feed this pipeline
+> publishes is a REPUBLISHED path — `appcast.xml` on macOS, `latest-windows.json` on Windows
+> (replaced on every publish by design). `/updates/*` is cached with the managed
+> CachingOptimized policy, so without an invalidation the edge keeps serving the previous
+> release for the full TTL while the bucket already holds the new bytes: the upload succeeds,
+> nothing errors, and no installed app sees the release. Publishing to AWS without the means
+> to invalidate is not a degraded release, it is a release nobody receives.
+>
+> All three are validated at startup and abort before any bytes move.
+
+
+
 This directory contains the secret-free operational tooling used to build, package, sign, and publish Clingfy Windows releases. It is the PowerShell counterpart of the macOS bash lane one level up, sharing its release concepts — channel model, pubspec version source of truth, artifact naming, Azure publishing conventions — while staying fully independent of it: nothing here is sourced or invoked by the macOS scripts, and nothing here writes into the macOS lane's artifact locations (`release_archive/`, the `appcast.xml` feed, or `downloads/` outside the `windows/` prefix).
 
 Like the parent lane, these scripts are public. Private credentials (Azure identities, signing certificates, Sentry tokens) are injected through the environment or local `.env.*` files that are never committed.

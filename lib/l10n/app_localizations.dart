@@ -3622,6 +3622,12 @@ abstract class AppLocalizations {
   /// **'Export successful:'**
   String get exportSuccess;
 
+  /// No description provided for @exportSavedWithoutSubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported, but the subtitles could not be burned in:'**
+  String get exportSavedWithoutSubtitles;
+
   /// No description provided for @open.
   ///
   /// In en, this message translates to:
@@ -4426,6 +4432,30 @@ abstract class AppLocalizations {
   /// **'Screen'**
   String get screen;
 
+  /// No description provided for @identifyDisplays.
+  ///
+  /// In en, this message translates to:
+  /// **'Identify screens'**
+  String get identifyDisplays;
+
+  /// No description provided for @identifyDisplaysTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Flash a big number on every screen so you can tell them apart'**
+  String get identifyDisplaysTooltip;
+
+  /// No description provided for @displayMarkerMain.
+  ///
+  /// In en, this message translates to:
+  /// **'Main'**
+  String get displayMarkerMain;
+
+  /// No description provided for @displayMarkerThisWindow.
+  ///
+  /// In en, this message translates to:
+  /// **'This window'**
+  String get displayMarkerThisWindow;
+
   /// No description provided for @app.
   ///
   /// In en, this message translates to:
@@ -4653,6 +4683,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Your camera was disconnected. Recording continues without it.'**
   String get warnCameraDisconnected;
+
+  /// No description provided for @warnCameraPreviewHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Your live camera preview can\'t be shown while recording on this PC. Recording continues — your camera is still captured and appears in the finished video.'**
+  String get warnCameraPreviewHidden;
 
   /// No description provided for @warnEncoderVideoError.
   ///
@@ -4923,6 +4959,234 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Turn off'**
   String get crashReportingNoticeOptOut;
+
+  /// No description provided for @captions.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles'**
+  String get captions;
+
+  /// No description provided for @captionsGenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate subtitles'**
+  String get captionsGenerate;
+
+  /// No description provided for @captionsRegenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate again'**
+  String get captionsRegenerate;
+
+  /// No description provided for @captionsCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get captionsCancel;
+
+  /// No description provided for @captionsPreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing…'**
+  String get captionsPreparing;
+
+  /// No description provided for @captionsTranscribing.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcribing…'**
+  String get captionsTranscribing;
+
+  /// No description provided for @captionsSourceMic.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone'**
+  String get captionsSourceMic;
+
+  /// No description provided for @captionsSourceSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen audio'**
+  String get captionsSourceSystem;
+
+  /// No description provided for @captionsNoneYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No subtitles yet.'**
+  String get captionsNoneYet;
+
+  /// No description provided for @captionsNoSpeechFound.
+  ///
+  /// In en, this message translates to:
+  /// **'No speech found in this recording.'**
+  String get captionsNoSpeechFound;
+
+  /// No description provided for @captionsUnavailableOs.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles need a newer version of macOS.'**
+  String get captionsUnavailableOs;
+
+  /// No description provided for @captionsUnavailableIntel.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles run slowly on Intel Macs, which have no Neural Engine.'**
+  String get captionsUnavailableIntel;
+
+  /// No description provided for @captionsUnavailableNoAudio.
+  ///
+  /// In en, this message translates to:
+  /// **'This recording has no audio to transcribe.'**
+  String get captionsUnavailableNoAudio;
+
+  /// No description provided for @captionsUnavailablePlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles are only available on macOS.'**
+  String get captionsUnavailablePlatform;
+
+  /// No description provided for @captionsMicOnlyRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'This recording predates separate audio capture, so only your microphone was recorded.'**
+  String get captionsMicOnlyRecording;
+
+  /// No description provided for @captionsFirstRunDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'The first run downloads a speech model. This happens once.'**
+  String get captionsFirstRunDownload;
+
+  /// No description provided for @captionsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t generate subtitles.'**
+  String get captionsFailed;
+
+  /// No description provided for @captionsCueCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} subtitles'**
+  String captionsCueCount(int count);
+
+  /// Header for choosing where subtitles go when the project is exported.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles in export'**
+  String get captionsDestination;
+
+  /// Subtitle export destination: no subtitles in the output.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get captionsDestinationOff;
+
+  /// Subtitle export destination: composited into the video frames.
+  ///
+  /// In en, this message translates to:
+  /// **'Burn in'**
+  String get captionsDestinationBurnIn;
+
+  /// Subtitle export destination: written as separate .srt and .vtt files.
+  ///
+  /// In en, this message translates to:
+  /// **'File'**
+  String get captionsDestinationSidecar;
+
+  /// Subtitle export destination: burned into the video and written as files.
+  ///
+  /// In en, this message translates to:
+  /// **'Both'**
+  String get captionsDestinationBoth;
+
+  /// Explains the trade-off between burned-in subtitles and a sidecar file.
+  ///
+  /// In en, this message translates to:
+  /// **'Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.'**
+  String get captionsDestinationHint;
+
+  /// Marker on a caption whose footage was removed by an edit, so it will not appear in the export.
+  ///
+  /// In en, this message translates to:
+  /// **'Cut'**
+  String get captionsNotInExport;
+
+  /// Progress label while the one-time speech-recognition model download runs.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading speech model'**
+  String get captionsDownloadingModel;
+
+  /// Shown after the user cancels a transcription, while the engine finishes unwinding.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopping…'**
+  String get captionsStopping;
+
+  /// Shown while the transcription engine is still unwinding a job this panel is not showing — started on another recording, or on this one before the user navigated away — which is why Generate is unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing the previous subtitle run. Generate becomes available as soon as it stops.'**
+  String get captionsEngineBusy;
+
+  /// No description provided for @storageCaptionModelTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech model'**
+  String get storageCaptionModelTitle;
+
+  /// No description provided for @storageCaptionModelDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.'**
+  String get storageCaptionModelDescription;
+
+  /// No description provided for @storageCaptionModelWeights.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get storageCaptionModelWeights;
+
+  /// No description provided for @storageCaptionModelCompiledCache.
+  ///
+  /// In en, this message translates to:
+  /// **'Compiled cache'**
+  String get storageCaptionModelCompiledCache;
+
+  /// No description provided for @storageCaptionModelNotDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.'**
+  String get storageCaptionModelNotDownloaded;
+
+  /// No description provided for @storageDeleteCaptionModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete speech model'**
+  String get storageDeleteCaptionModel;
+
+  /// No description provided for @storageDeleteCaptionModelConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete the speech model?'**
+  String get storageDeleteCaptionModelConfirmTitle;
+
+  /// No description provided for @storageDeleteCaptionModelConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.'**
+  String get storageDeleteCaptionModelConfirmMessage;
+
+  /// No description provided for @storageDeleteCaptionModelConfirmAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete'**
+  String get storageDeleteCaptionModelConfirmAction;
+
+  /// No description provided for @storageDeleteCaptionModelSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Freed {value}.'**
+  String storageDeleteCaptionModelSuccess(String value);
 }
 
 class _AppLocalizationsDelegate

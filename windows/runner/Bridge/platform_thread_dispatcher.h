@@ -73,6 +73,25 @@ class PlatformThreadDispatcher {
   //     thread than a dropped event.
   void Post(std::function<void()> task);
 
+  // Post WITHOUT the two inline fallbacks above. Returns true only when the
+  // task was actually queued for the platform thread; returns false (dropping
+  // the task) when the dispatcher is uninitialized or PostMessage fails.
+  //
+  // Post()'s "better a slightly-wrong thread than a dropped event" trade is the
+  // right default for notifications, but it is unsafe for a task that must not
+  // run on the caller's thread. The camera overlay's park notification is the
+  // motivating case: it fires on the DComp presenter's own overlay thread, and
+  // the work it schedules calls that presenter's Stop(), which joins that same
+  // thread — inline execution would self-join and throw
+  // resource_deadlock_would_occur. Note both inline paths matter: the
+  // PostMessage-failure one is reachable in production, and its likeliest cause
+  // (a saturated queue on a struggling machine) correlates with the wedged-GPU
+  // condition that produces the park in the first place.
+  //
+  // Callers must therefore treat `false` as "not delivered" and stay correct
+  // without it.
+  bool TryPost(std::function<void()> task);
+
  private:
   PlatformThreadDispatcher() = default;
 

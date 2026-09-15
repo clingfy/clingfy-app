@@ -655,6 +655,7 @@
   "externalProjectOpenBlocked": "Finish the current recording or preview transition before opening another project.",
   "externalProjectOpenFailed": "Couldn't open that Clingfy project.",
   "exportSuccess": "Export successful:",
+  "exportSavedWithoutSubtitles": "Exported, but the subtitles could not be burned in:",
   "open": "Open",
   "cursorDataMissing": "Cursor data missing",
   "voiceBoost": "Voice Boost",
@@ -806,6 +807,10 @@
   "system": "System",
   "update": "Update",
   "screen": "Screen",
+  "identifyDisplays": "Identify screens",
+  "identifyDisplaysTooltip": "Flash a big number on every screen so you can tell them apart",
+  "displayMarkerMain": "Main",
+  "displayMarkerThisWindow": "This window",
   "app": "App",
   "selectDisplay": "Select Display",
   "selectWindow": "Select Window",
@@ -844,6 +849,7 @@
   "warnCameraUnavailable": "Your camera isn't available right now. Recording continues without the camera overlay.",
   "warnCameraOpenFailed": "Your camera couldn't be started — check camera access in Windows privacy settings. Recording continues without the overlay.",
   "warnCameraDisconnected": "Your camera was disconnected. Recording continues without it.",
+  "warnCameraPreviewHidden": "Your live camera preview can't be shown while recording on this PC. Recording continues — your camera is still captured and appears in the finished video.",
   "warnEncoderVideoError": "Recording hit an encoder problem — the video may be incomplete.",
   "warnEncoderAudioError": "Recording hit an audio encoding problem — the audio may be incomplete.",
   "errMicrophonePermissionRequiredWindows": "Enable microphone access in Windows Settings > Privacy & security > Microphone, then try again.",
@@ -906,5 +912,87 @@
   "crashReportingNoticeTitle": "About crash reports",
   "crashReportingNoticeBody": "Clingfy sends anonymous crash reports and error diagnostics so problems get fixed. This covers the error, a stack trace, your app version, and OS and GPU details — never your recordings, screen contents, audio, or file names.\n\nYou can turn this off at any time in Settings › Diagnostics.",
   "crashReportingNoticeAccept": "Got it",
-  "crashReportingNoticeOptOut": "Turn off"
+  "crashReportingNoticeOptOut": "Turn off",
+  "captions": "Subtitles",
+  "captionsGenerate": "Generate subtitles",
+  "captionsRegenerate": "Generate again",
+  "captionsCancel": "Stop",
+  "captionsPreparing": "Preparing…",
+  "captionsTranscribing": "Transcribing…",
+  "captionsSourceMic": "Microphone",
+  "captionsSourceSystem": "Screen audio",
+  "captionsNoneYet": "No subtitles yet.",
+  "captionsNoSpeechFound": "No speech found in this recording.",
+  "captionsUnavailableOs": "Subtitles need a newer version of macOS.",
+  "captionsUnavailableIntel": "Subtitles run slowly on Intel Macs, which have no Neural Engine.",
+  "captionsUnavailableNoAudio": "This recording has no audio to transcribe.",
+  "captionsUnavailablePlatform": "Subtitles are only available on macOS.",
+  "captionsMicOnlyRecording": "This recording predates separate audio capture, so only your microphone was recorded.",
+  "captionsFirstRunDownload": "The first run downloads a speech model. This happens once.",
+  "captionsFailed": "Couldn’t generate subtitles.",
+  "captionsCueCount": "{count} subtitles",
+  "@captionsCueCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "captionsDestination": "Subtitles in export",
+  "@captionsDestination": {
+    "description": "Header for choosing where subtitles go when the project is exported."
+  },
+  "captionsDestinationOff": "Off",
+  "@captionsDestinationOff": {
+    "description": "Subtitle export destination: no subtitles in the output."
+  },
+  "captionsDestinationBurnIn": "Burn in",
+  "@captionsDestinationBurnIn": {
+    "description": "Subtitle export destination: composited into the video frames."
+  },
+  "captionsDestinationSidecar": "File",
+  "@captionsDestinationSidecar": {
+    "description": "Subtitle export destination: written as separate .srt and .vtt files."
+  },
+  "captionsDestinationBoth": "Both",
+  "@captionsDestinationBoth": {
+    "description": "Subtitle export destination: burned into the video and written as files."
+  },
+  "captionsDestinationHint": "Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.",
+  "@captionsDestinationHint": {
+    "description": "Explains the trade-off between burned-in subtitles and a sidecar file."
+  },
+  "captionsNotInExport": "Cut",
+  "@captionsNotInExport": {
+    "description": "Marker on a caption whose footage was removed by an edit, so it will not appear in the export."
+  },
+  "captionsDownloadingModel": "Downloading speech model",
+  "@captionsDownloadingModel": {
+    "description": "Progress label while the one-time speech-recognition model download runs."
+  },
+  "captionsStopping": "Stopping…",
+  "@captionsStopping": {
+    "description": "Shown after the user cancels a transcription, while the engine finishes unwinding."
+  },
+  "captionsEngineBusy": "Finishing the previous subtitle run. Generate becomes available as soon as it stops.",
+  "@captionsEngineBusy": {
+    "description": "Shown while the transcription engine is still unwinding a job this panel is not showing — started on another recording, or on this one before the user navigated away — which is why Generate is unavailable."
+  },
+  "storageCaptionModelTitle": "Speech model",
+  "storageCaptionModelDescription": "The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.",
+  "storageCaptionModelWeights": "Model",
+  "storageCaptionModelCompiledCache": "Compiled cache",
+  "storageCaptionModelNotDownloaded": "Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.",
+  "storageDeleteCaptionModel": "Delete speech model",
+  "storageDeleteCaptionModelConfirmTitle": "Delete the speech model?",
+  "storageDeleteCaptionModelConfirmMessage": "Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.",
+  "storageDeleteCaptionModelConfirmAction": "Delete",
+  "storageDeleteCaptionModelSuccess": "Freed {value}.",
+  "@storageDeleteCaptionModelSuccess": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  }
 }

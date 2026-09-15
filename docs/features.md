@@ -11,9 +11,10 @@ feature, with platform status. Update this file whenever a release ships
   `docs/windows-port.md` and `docs/windows-beta-tester-guide.md`.
 - Engineering-level inventory (bridge methods, code locations):
   `docs/windows-port-inventory.md`.
-- Marketing scripts derived from this file: `docs/marketing/reels-series.md`.
 
-Status legend: ✅ shipped · 🚧 partial / with caveats · — not available yet.
+Status legend: ✅ shipped · 🚧 partial / with caveats · — not available yet ·
+n/a not applicable on that platform (the underlying problem does not exist
+there, so there is nothing to ship).
 
 ## Recording
 
@@ -38,13 +39,13 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 |---|---|---|---|
 | System audio capture | Record what plays through the speakers. | ✅ | ✅ (48 kHz devices) |
 | Microphone capture | Record the mic alongside the screen. | ✅ | ✅ |
-| Microphone gain | Boost the mic up to +24 dB. Applied at export and previewed live (there is no capture-time input gain). | ✅ | 🚧 (export only) |
+| Microphone gain | Boost the mic up to +24 dB. Applied at export and previewed live (there is no capture-time input gain). | ✅ | 🚧 (export; audible in the preview once the timeline has a cut) |
 | Live mic level meter | dBFS meter while setting up. | ✅ | 🚧 |
-| Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | — |
+| Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | n/a (WASAPI captures system audio as loopback on the render endpoint and the mic on a separate capture endpoint, so the mic is never in the system track; the toggle is hidden rather than always-on) |
 | Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
-| Loudness normalization | One-click normalize to a loudness target at export. | ✅ | — |
-| Live audio mix preview | Hear gain/mix changes while editing. | ✅ | ✅ |
-| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | — (engine not ported yet) |
+| Loudness normalization | One-click scale at export so the loudest sample lands on a target you pick (−24 to −6 dBFS). A sample-peak match, not LUFS. Export only — never previewed. Mic only on recordings with a separate mic track. | ✅ | ✅ |
+| Live audio mix preview | Hear volume and gain changes while editing; voice cleanup too, on recordings with a separate mic track. Loudness normalization is never previewed on either platform. | ✅ | 🚧 (volume only until a real cut or trim) |
+| Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | 🚧 (export baked; live preview only after a cut) |
 
 ## Camera overlay
 
@@ -58,8 +59,9 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 | Border, shadow, opacity, mirror, fit/fill | Full bubble styling. | ✅ | 🚧 |
 | Glow highlight | Attention glow with strength control. | ✅ | 🚧 |
 | Chroma key | Green/blue-screen removal with key color + strength. | ✅ | ✅ |
-| Intro / outro animations | Fade, pop, slide in; fade, shrink, slide out. | ✅ | 🚧 (export-only) |
-| Zoom emphasis + scale-with-zoom | Camera reacts to zoom segments. | ✅ | — |
+| Intro / outro animations | Fade, pop, slide in; fade, shrink, slide out. | ✅ | ✅ |
+| Scale with zoom | Camera bubble grows with the screen zoom. | ✅ | ✅ |
+| Zoom emphasis (pulse) | Camera throbs while a zoom segment is active. | ✅ | — |
 
 ## Cursor & zoom
 
@@ -128,15 +130,17 @@ Status legend: ✅ shipped · 🚧 partial / with caveats · — not available y
 
 ## In development on `develop` (unreleased)
 
-- **Windows Voice Cleanup** — the on-device RNNoise engine is built into the
-  Windows target; wiring it into the Windows export/preview is the remaining
-  work.
+- **Auto-subtitles (macOS)** — on-device transcription via WhisperKit, a
+  cue-level caption editor, burned-in captions and `.srt` / `.vtt` sidecars.
+  macOS only; Windows reports the feature as unavailable with a reason.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 
 ## Roadmap (not started)
 
-- Auto-subtitles + translation (on-device Whisper)
+- Auto-subtitle translation (transcription ships on macOS; translating the
+  transcript into another language needs a second engine — Whisper cannot
+  translate out of English)
 - AI-assisted recording workflows
 - Collaborative recording tools
 

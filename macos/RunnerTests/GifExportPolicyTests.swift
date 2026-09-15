@@ -256,4 +256,53 @@ final class GifExportPolicyTests: XCTestCase {
         canvasSize: canvas, maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "large")),
       CGSize(width: 1080, height: 608))
   }
+
+  // MARK: - intermediateRenderSize (what a GIF export's frames really are)
+
+  /// `ExportEngine` renders a GIF at this size, and `resolveExportSize` reports
+  /// it to Flutter so caption bitmaps are laid out for the frames they will
+  /// land on. One function, two callers: when they disagreed, a caption
+  /// rasterised for the uncapped canvas was composited about 1.8x too large,
+  /// because the caption renderer only shrinks a bitmap WIDER than the frame.
+  func testIntermediateRenderSizeCapsAndEvensTheCanvas() {
+    // 1920x1080 at the Large cap: the long edge caps to 1080 and 607.5 rounds
+    // to 608, which is already even.
+    XCTAssertEqual(
+      GifExportPolicy.intermediateRenderSize(canvasSize: CGSize(width: 1920, height: 1080)),
+      CGSize(width: 1080, height: 608))
+    // 3840x2160 lands on the same frame — the resolution preset is NOT what a
+    // GIF renders at, which is the whole reason Flutter has to ask.
+    XCTAssertEqual(
+      GifExportPolicy.intermediateRenderSize(canvasSize: CGSize(width: 3840, height: 2160)),
+      CGSize(width: 1080, height: 608))
+  }
+
+  func testIntermediateRenderSizeRoundsOddDimensionsUpToEven() {
+    // The H.264 intermediate the GIF is transcoded from wants even dimensions.
+    // 1920x1080 at the Medium cap: 720 x 405 -> 405 is odd.
+    XCTAssertEqual(
+      GifExportPolicy.intermediateRenderSize(
+        canvasSize: CGSize(width: 1920, height: 1080),
+        maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "medium")),
+      CGSize(width: 720, height: 406))
+  }
+
+  func testIntermediateRenderSizeLeavesAnAlreadyFittingEvenCanvasAlone() {
+    XCTAssertEqual(
+      GifExportPolicy.intermediateRenderSize(canvasSize: CGSize(width: 960, height: 540)),
+      CGSize(width: 960, height: 540))
+  }
+
+  func testIntermediateRenderSizeShrinksTheFrameCaptionsAreDrawnFor() {
+    // The defect, stated as a ratio: at the Small preset a 1080p canvas becomes
+    // a 480-wide frame, so a bitmap laid out for 1920 covers 4x the width it
+    // was meant to. Anything that reports the uncapped canvas here brings that
+    // back.
+    let canvas = CGSize(width: 1920, height: 1080)
+    let rendered = GifExportPolicy.intermediateRenderSize(
+      canvasSize: canvas,
+      maxLongEdge: GifExportPolicy.maxLongEdge(forSizePreset: "small"))
+    XCTAssertLessThan(rendered.width, canvas.width)
+    XCTAssertEqual(rendered, CGSize(width: 480, height: 270))
+  }
 }

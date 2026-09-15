@@ -40,8 +40,19 @@ TEST(AppIdentityTest, DevAndProdShareNothing) {
 }
 
 TEST(AppIdentityTest, DevHasItsOwnNames) {
-  EXPECT_EQ(LocalAppDataFolderName(AppChannel::kDev), L"Clingfy Dev");
+  EXPECT_EQ(LocalAppDataFolderName(AppChannel::kDev), L"Clingfy-Dev");
   EXPECT_EQ(InstanceMutexSuffix(AppChannel::kDev), L"com.clingfy.clingfy.dev");
+}
+
+// The data folder is a PATH: it gets typed, pasted into scripts and handed to
+// command-line tools, so a space in it means every consumer has to remember to
+// quote it and the ones that forget fail as if the directory were missing.
+// This briefly shipped as "Clingfy Dev" and the space was the complaint.
+TEST(AppIdentityTest, DataFolderNamesContainNoSpaces) {
+  for (const AppChannel channel : {AppChannel::kProd, AppChannel::kDev}) {
+    EXPECT_EQ(LocalAppDataFolderName(channel).find(L' '), std::wstring::npos)
+        << "data folder names must not contain spaces";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -113,14 +124,24 @@ TEST(AppIdentityTest, DisplayNameDistinguishesTheChannels) {
 // derives the data directory from. If someone ever "tidies" them into one
 // value, prod's data directory moves and every existing user is orphaned.
 // These must not be equal, and the folder name must stay the frozen literal.
+//
+// This got sharper once ProductName was re-cased to "Clingfy": it and
+// DisplayName now read the SAME, which makes them look like duplication
+// begging to be merged. They are equal by coincidence, not by contract. The
+// resource value may be re-cased (NTFS is case-insensitive, so the store is
+// reused) but never renamed; DisplayName has no such constraint.
 TEST(AppIdentityTest, DisplayNameIsNotTheDataDirectoryIdentity) {
   EXPECT_NE(DisplayName(AppChannel::kProd),
             LocalAppDataFolderName(AppChannel::kProd) + L" ");
   // The prod data folder is still exactly the shipped literal.
   EXPECT_EQ(LocalAppDataFolderName(AppChannel::kProd), L"Clingfy");
-  // Dev's display name and its data folder happen to read alike; that is
-  // coincidence, not coupling — the folder is pinned above, this is not.
+  // Dev is where the two kinds visibly come apart: the folder is
+  // "Clingfy-Dev" (a path, so no space) while the display name is
+  // "Clingfy Dev" (read by humans, never typed). Same channel, two spellings,
+  // on purpose.
   EXPECT_EQ(DisplayName(AppChannel::kDev), L"Clingfy Dev");
+  EXPECT_NE(DisplayName(AppChannel::kDev),
+            LocalAppDataFolderName(AppChannel::kDev));
 }
 
 TEST(AppIdentityTest, DisplayNameWrapperMatchesTheCompiledChannel) {

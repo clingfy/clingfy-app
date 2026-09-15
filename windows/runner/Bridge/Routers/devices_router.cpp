@@ -2,9 +2,13 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Bridge/Devices/audio_source_enumerator.h"
 #include "Bridge/Devices/device_record.h"
@@ -14,6 +18,7 @@
 #include "Bridge/result_helpers.h"
 #include "Capture/windows_selection_state.h"
 #include "Overlay/area_picker_overlay.h"
+#include "Overlay/display_identify_overlay.h"
 
 namespace clingfy::bridge::routers::devices {
 
@@ -80,6 +85,116 @@ void HandleGetDisplays(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::List(*result,
               Encode(clingfy::bridge::devices::EnumerateDisplays()));
+}
+
+// Converts a UTF-8 string to UTF-16 for the Win32 text APIs.
+std::wstring WideFromUtf8(const std::string& utf8) {
+  if (utf8.empty()) {
+    return {};
+  }
+  const int needed = ::MultiByteToWideChar(
+      CP_UTF8, 0, utf8.c_str(), static_cast<int>(utf8.size()), nullptr, 0);
+  if (needed <= 0) {
+    return {};
+  }
+  std::wstring out(static_cast<std::size_t>(needed), L'\0');
+  ::MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(),
+                        static_cast<int>(utf8.size()), out.data(), needed);
+  return out;
+}
+
+void HandleIdentifyDisplays(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  int duration = 1600;
+  bool only = false;
+  std::optional<std::int64_t> only_id;
+  std::map<std::int64_t, std::wstring> labels;
+
+  if (const auto* args = AsMap(call.arguments())) {
+    if (const auto raw = ReadOptionalInt(*args, "durationMs")) {
+      duration = static_cast<int>(
+          (std::max)(std::int64_t{400}, (std::min)(std::int64_t{6000}, *raw)));
+    }
+    const auto only_it = args->find(flutter::EncodableValue("only"));
+    if (only_it != args->end()) {
+      if (const auto* flag = std::get_if<bool>(&only_it->second)) {
+        only = *flag;
+      }
+    }
+    only_id = ReadOptionalInt(*args, "onlyDisplayId");
+
+    const auto labels_it = args->find(flutter::EncodableValue("labels"));
+    if (labels_it != args->end()) {
+      if (const auto* map =
+              std::get_if<flutter::EncodableMap>(&labels_it->second)) {
+        for (const auto& entry : *map) {
+          const auto* key = std::get_if<std::string>(&entry.first);
+          const auto* value = std::get_if<std::string>(&entry.second);
+          if (key == nullptr || value == nullptr || value->empty()) {
+            continue;
+          }
+          // strtoll, not stoll: the runner is built with _HAS_EXCEPTIONS=0,
+          // so a throwing parse would terminate rather than be caught.
+          char* end = nullptr;
+          const long long parsed = std::strtoll(key->c_str(), &end, 10);
+          if (end != key->c_str() && end != nullptr && *end == '\0') {
+            labels[static_cast<std::int64_t>(parsed)] = WideFromUtf8(*value);
+          }
+        }
+      }
+    }
+  }
+
+  const auto displays = clingfy::bridge::devices::EnumerateDisplays();
+
+  std::optional<std::int64_t> target;
+  if (only) {
+    target = only_id;
+    if (!target) {
+      // The "Main display" row: flash whatever THIS platform would actually
+      // capture right now. On Windows that is ResolveHMonitor(nullopt), the
+      // primary monitor — resolving it natively is the only honest way to
+      // confirm a row whose meaning differs per platform.
+      if (const auto primary =
+              clingfy::bridge::devices::ResolveHMonitor(std::nullopt)) {
+        for (const auto& display : displays) {
+          const auto handle =
+              clingfy::bridge::devices::ResolveHMonitor(display.id);
+          if (handle && *handle == *primary) {
+            target = display.id;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  std::vector<clingfy::overlay::IdentifyTarget> overlay_targets;
+  for (const auto& display : displays) {
+    if (only && (!target || *target != display.id)) {
+      continue;
+    }
+    const auto handle = clingfy::bridge::devices::ResolveHMonitor(display.id);
+    if (!handle) {
+      continue;
+    }
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (::GetMonitorInfoW(*handle, &info) == 0) {
+      continue;
+    }
+    const auto label_it = labels.find(display.id);
+    overlay_targets.push_back(
+        {*handle, info.rcMonitor, static_cast<int>(display.ordinal),
+         label_it != labels.end() ? label_it->second
+                                  : WideFromUtf8(display.name)});
+  }
+
+  clingfy::overlay::ShowDisplayIdentify(overlay_targets, duration);
+  // Reply with the snapshot that was painted, so Dart adopts exactly what is
+  // on the glass and the two can never disagree.
+  reply::List(*result, Encode(displays));
 }
 
 void HandleGetAppWindows(
@@ -243,6 +358,7 @@ void HandleClearAreaRecordingSelection(
 void RegisterHandlers(HandlerTable& table) {
   // Discovery — real enumeration in Phase 2.
   table["getDisplays"] = &HandleGetDisplays;
+  table["identifyDisplays"] = &HandleIdentifyDisplays;
   table["getAppWindows"] = &HandleGetAppWindows;
   table["getAudioSources"] = &HandleGetAudioSources;
   table["getVideoSources"] = &HandleGetVideoSources;

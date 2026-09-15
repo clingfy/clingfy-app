@@ -39,6 +39,14 @@ class DeviceController extends ChangeNotifier {
   List<DisplayInfo> _displays = [];
   int? _selectedDisplayId;
 
+  /// False once native has told us it has no `identifyDisplays` handler, which
+  /// hides the Identify control for the rest of the session.
+  bool _displayIdentifySupported = true;
+
+  /// Request token. Guards against an in-flight display enumeration replying
+  /// after a newer one has already been adopted.
+  int _displaysSeq = 0;
+
   List<AppWindowInfo> _appWindows = [];
   int? _selectedAppWindowId;
   bool _loadingAppWindows = false;
@@ -62,6 +70,7 @@ class DeviceController extends ChangeNotifier {
 
   List<DisplayInfo> get displays => _displays;
   int? get selectedDisplayId => _selectedDisplayId;
+  bool get displayIdentifySupported => _displayIdentifySupported;
 
   List<AppWindowInfo> get appWindows => _appWindows;
   int? get selectedAppWindowId => _selectedAppWindowId;
@@ -283,19 +292,47 @@ class DeviceController extends ChangeNotifier {
     }
   }
 
+  /// Replaces the display LIST only, reporting whether anything changed.
+  ///
+  /// Deliberately does NOT touch the selection. The identify reply flows
+  /// through here too, and re-running the preferred-vs-effective pass on it
+  /// would rewrite a deliberate "Main display" choice into an explicit display
+  /// id one frame later — and push that to native, killing the app-window
+  /// fallback the null selection exists to get.
+  bool _adoptDisplays(List<dynamic> raw) {
+    // Total by construction. `_identify` calls this from an unawaited future,
+    // where a throw would surface as an unhandled async error rather than as a
+    // caught PlatformException — so a malformed record is dropped, not raised.
+    final next = <DisplayInfo>[];
+    for (final entry in raw) {
+      if (entry is! Map) {
+        Log.w('Device', 'Dropping a non-map display record: $entry');
+        continue;
+      }
+      final parsed = DisplayInfo.tryFromMap(entry);
+      if (parsed == null) {
+        Log.w('Device', 'Dropping an unparseable display record: $entry');
+        continue;
+      }
+      next.add(parsed);
+    }
+    if (listEquals(_displays, next)) return false;
+    _displays = List<DisplayInfo>.unmodifiable(next);
+    return true;
+  }
+
   Future<void> reloadDisplays() async {
+    final seq = ++_displaysSeq;
     try {
       final raw =
           await _nativeBridge.invokeMethod<List<dynamic>>('getDisplays') ?? [];
       Log.i("Device", "Displays: $raw");
-      final displays = raw
-          .map((e) => DisplayInfo.fromMap(Map<dynamic, dynamic>.from(e)))
-          .toList();
+      if (seq != _displaysSeq) return;
 
       final sp = await SharedPreferences.getInstance();
       final savedDisplayId = sp.getInt(_prefSelectedDisplayId);
 
-      _displays = displays;
+      final changedList = _adoptDisplays(raw);
 
       // Preferred vs effective. The PREFERRED display is whatever the user
       // last chose deliberately, and only setDisplay() — a user action —
@@ -305,11 +342,25 @@ class DeviceController extends ChangeNotifier {
       // built-in display, and re-plugging would never bring the choice back.
       final preferredId = savedDisplayId ?? _selectedDisplayId;
       final preferredIsPresent =
-          preferredId != null && displays.any((d) => d.id == preferredId);
+          preferredId != null && _displays.any((d) => d.id == preferredId);
 
-      final nextId = preferredIsPresent
-          ? preferredId
-          : (displays.isNotEmpty ? displays.first.id : null);
+      // The list arrives ordered by desktop geometry, so `_displays.first` is
+      // the LEFTMOST monitor rather than the menu-bar one. Prefer the primary
+      // display so a fresh profile still defaults to the screen the user thinks
+      // of as theirs. Written as a loop rather than
+      // firstWhere(orElse: () => _displays.first) because orElse runs on
+      // no-match and would throw StateError on an empty list — which is exactly
+      // what the widget-test channel mock returns.
+      DisplayInfo? fallback;
+      for (final d in _displays) {
+        if (d.isPrimary) {
+          fallback = d;
+          break;
+        }
+      }
+      if (fallback == null && _displays.isNotEmpty) fallback = _displays.first;
+
+      final nextId = preferredIsPresent ? preferredId : fallback?.id;
 
       final changed = nextId != _selectedDisplayId;
       _selectedDisplayId = nextId;
@@ -319,15 +370,59 @@ class DeviceController extends ChangeNotifier {
       if (changed) {
         await _nativeBridge.invokeMethod<void>('setDisplay', {'id': nextId});
       }
-      notifyListeners();
+      if (changedList || changed) notifyListeners();
+    } on MissingPluginException catch (e) {
+      Log.w("Device", "reloadDisplays is unavailable on this build: $e");
     } on PlatformException catch (e) {
       Log.e("Device", "Error is $e");
       _errorMessage = e.code;
       notifyListeners();
+    } catch (e, st) {
+      // A malformed payload must not escape as an unhandled async error inside
+      // the device-event listener.
+      Log.e("Device", "reloadDisplays failed: $e", e, st);
     }
   }
 
-  Future<void> setDisplay(int? id) async {
+  /// L2: flash a number on every physical display, then adopt the exact list
+  /// native says it painted so the picker ordinals cannot drift from the glass.
+  Future<void> identifyDisplays({Map<String, String> labels = const {}}) =>
+      _identify(
+        labels: labels,
+        only: false,
+        onlyDisplayId: null,
+        durationMs: 1600,
+      );
+
+  Future<void> _identify({
+    required Map<String, String> labels,
+    required bool only,
+    required int? onlyDisplayId,
+    required int durationMs,
+  }) async {
+    if (!_displayIdentifySupported) return;
+    final seq = ++_displaysSeq;
+    final result = await _nativeBridge.identifyDisplays(
+      durationMs: durationMs,
+      only: only,
+      onlyDisplayId: onlyDisplayId,
+      labels: labels,
+    );
+    if (!result.supported) {
+      _displayIdentifySupported = false;
+      notifyListeners();
+      return;
+    }
+    // A reply that lost a race with a newer enumeration must not overwrite it.
+    if (seq != _displaysSeq) return;
+    final snapshot = result.snapshot;
+    if (snapshot != null && _adoptDisplays(snapshot)) notifyListeners();
+  }
+
+  Future<void> setDisplay(
+    int? id, {
+    Map<String, String> labels = const {},
+  }) async {
     if (_selectedDisplayId != id) {
       _selectedDisplayId = id;
       notifyListeners();
@@ -340,6 +435,19 @@ class DeviceController extends ChangeNotifier {
       } else {
         await sp.setInt(_prefSelectedDisplayId, id);
       }
+      // L3: the choice verifies itself. Lives here rather than in the dropdown
+      // so the native pre-recording bar's display pick — which routes through
+      // this same method — confirms too. A null id means "flash whatever this
+      // platform would actually capture", which is precisely the row the user
+      // cannot identify by reading it.
+      unawaited(
+        _identify(
+          labels: labels,
+          only: true,
+          onlyDisplayId: id,
+          durationMs: 900,
+        ),
+      );
     } on PlatformException catch (e) {
       Log.e("Device", "Error is $e");
       _errorMessage = e.code;

@@ -1912,6 +1912,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String get exportSuccess => 'تم التصدير بنجاح:';
 
   @override
+  String get exportSavedWithoutSubtitles =>
+      'تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:';
+
+  @override
   String get open => 'فتح';
 
   @override
@@ -2385,6 +2389,19 @@ class AppLocalizationsAr extends AppLocalizations {
   String get screen => 'شاشة';
 
   @override
+  String get identifyDisplays => 'تحديد الشاشات';
+
+  @override
+  String get identifyDisplaysTooltip =>
+      'إظهار رقم كبير على كل شاشة لتتمكن من التمييز بينها';
+
+  @override
+  String get displayMarkerMain => 'الرئيسية';
+
+  @override
+  String get displayMarkerThisWindow => 'هذه النافذة';
+
+  @override
   String get app => 'تطبيق';
 
   @override
@@ -2509,6 +2526,10 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get warnCameraDisconnected => 'تم فصل الكاميرا. يستمر التسجيل بدونها.';
+
+  @override
+  String get warnCameraPreviewHidden =>
+      'لا يمكن عرض معاينة الكاميرا المباشرة أثناء التسجيل على هذا الجهاز. يستمر التسجيل — وما زالت الكاميرا تُسجَّل وتظهر في الفيديو النهائي.';
 
   @override
   String get warnEncoderVideoError =>
@@ -2681,4 +2702,131 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get crashReportingNoticeOptOut => 'إيقاف';
+
+  @override
+  String get captions => 'الترجمة';
+
+  @override
+  String get captionsGenerate => 'إنشاء الترجمة';
+
+  @override
+  String get captionsRegenerate => 'إعادة الإنشاء';
+
+  @override
+  String get captionsCancel => 'إيقاف';
+
+  @override
+  String get captionsPreparing => 'جارٍ التحضير…';
+
+  @override
+  String get captionsTranscribing => 'جارٍ التفريغ…';
+
+  @override
+  String get captionsSourceMic => 'الميكروفون';
+
+  @override
+  String get captionsSourceSystem => 'صوت الشاشة';
+
+  @override
+  String get captionsNoneYet => 'لا توجد ترجمة بعد.';
+
+  @override
+  String get captionsNoSpeechFound => 'لم يتم العثور على كلام في هذا التسجيل.';
+
+  @override
+  String get captionsUnavailableOs => 'تتطلب الترجمة إصدارًا أحدث من macOS.';
+
+  @override
+  String get captionsUnavailableIntel =>
+      'تعمل الترجمة ببطء على أجهزة Mac بمعالج Intel لعدم توفر Neural Engine.';
+
+  @override
+  String get captionsUnavailableNoAudio =>
+      'لا يحتوي هذا التسجيل على صوت لتفريغه.';
+
+  @override
+  String get captionsUnavailablePlatform => 'الترجمة متاحة على macOS فقط.';
+
+  @override
+  String get captionsMicOnlyRecording =>
+      'هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.';
+
+  @override
+  String get captionsFirstRunDownload =>
+      'يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.';
+
+  @override
+  String get captionsFailed => 'تعذّر إنشاء الترجمة.';
+
+  @override
+  String captionsCueCount(int count) {
+    return '$count ترجمة';
+  }
+
+  @override
+  String get captionsDestination => 'الترجمة في التصدير';
+
+  @override
+  String get captionsDestinationOff => 'إيقاف';
+
+  @override
+  String get captionsDestinationBurnIn => 'مدمجة';
+
+  @override
+  String get captionsDestinationSidecar => 'ملف';
+
+  @override
+  String get captionsDestinationBoth => 'كلاهما';
+
+  @override
+  String get captionsDestinationHint =>
+      'الترجمة المدمجة تبقى بعد إعادة الرفع. الملف يظل قابلاً للبحث ويمكن إيقافه.';
+
+  @override
+  String get captionsNotInExport => 'محذوف';
+
+  @override
+  String get captionsDownloadingModel => 'جارٍ تنزيل نموذج الكلام';
+
+  @override
+  String get captionsStopping => 'جارٍ الإيقاف…';
+
+  @override
+  String get captionsEngineBusy =>
+      'يجري إنهاء عملية الترجمة السابقة. سيتاح الإنشاء فور توقفها.';
+
+  @override
+  String get storageCaptionModelTitle => 'نموذج الكلام';
+
+  @override
+  String get storageCaptionModelDescription =>
+      'النموذج الذي يحوّل الكلام إلى ترجمات على جهازك. يُنزَّل مرة واحدة عند أول إنشاء للترجمات، ويمكن تنزيله مجددًا في أي وقت.';
+
+  @override
+  String get storageCaptionModelWeights => 'النموذج';
+
+  @override
+  String get storageCaptionModelCompiledCache => 'الذاكرة المؤقتة المُجمَّعة';
+
+  @override
+  String get storageCaptionModelNotDownloaded =>
+      'لم يُنزَّل بعد. عند أول إنشاء للترجمات، ينزّل Clingfy نموذج الكلام.';
+
+  @override
+  String get storageDeleteCaptionModel => 'حذف نموذج الكلام';
+
+  @override
+  String get storageDeleteCaptionModelConfirmTitle => 'حذف نموذج الكلام؟';
+
+  @override
+  String get storageDeleteCaptionModelConfirmMessage =>
+      'تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو 600 ميجابايت.';
+
+  @override
+  String get storageDeleteCaptionModelConfirmAction => 'حذف';
+
+  @override
+  String storageDeleteCaptionModelSuccess(String value) {
+    return 'تم تحرير $value.';
+  }
 }

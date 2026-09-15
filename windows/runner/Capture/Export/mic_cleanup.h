@@ -40,6 +40,39 @@ bool ProduceCleanedMic(const std::wstring& mic_path,
                        const std::function<bool()>& is_cancelled,
                        float wet_mix);
 
+// What the cancellation pass measured. Diagnostics only — the caller logs it
+// so an on-device investigation can tell "no bleed found" from "bleed found
+// and removed" without guessing from the audio.
+struct EchoCancelReport {
+  bool applied = false;
+  float bleed_correlation = 0.0f;
+  double delay_ms = 0.0;
+  double reduction_db = 0.0;
+};
+
+// Export-side speaker-to-mic bleed removal. Decodes both separated sidecars to
+// mono 48 kHz, runs `audio::echo::CancelEcho`, and writes the cleaned mic to
+// `output_path` in the same stereo AAC shape ProduceCleanedMic produces, so the
+// existing mic pump opens it exactly like the raw sidecar.
+//
+// Returns FALSE when there was no measurable bleed — the headphone case, and
+// the overwhelmingly common one. That is not an error: the caller keeps the
+// ORIGINAL mic file, which is both cheaper and avoids a needless AAC
+// generation loss on a recording that needed nothing.
+//
+// Also false on any real failure (unreadable sidecar, writer error, cancel),
+// with the same degrade-to-raw-mic outcome.
+//
+// ORDER MATTERS relative to the other mic passes: cancellation must run BEFORE
+// voice cleanup (whose noise suppression would distort the bleed the
+// correlation needs to find it) and before the normalize peak scan (which
+// would otherwise measure a peak inflated by the echo).
+bool ProduceEchoCancelledMic(const std::wstring& mic_path,
+                             const std::wstring& system_path,
+                             const std::string& output_path,
+                             const std::function<bool()>& is_cancelled,
+                             EchoCancelReport* report);
+
 }  // namespace clingfy::capture::export_
 
 #endif  // RUNNER_CAPTURE_EXPORT_MIC_CLEANUP_H_

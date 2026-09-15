@@ -54,6 +54,18 @@ struct ExportVideoRequest: Equatable {
   /// Flutter payloads or an unedited recording, in which case the export keeps
   /// the whole source (a passthrough, no cutting).
   let clips: [ClipKeptRange]
+  /// Directory of pre-rasterized caption bitmaps, one PNG per cue, written by
+  /// Flutter at export resolution before the export starts. `nil` when captions
+  /// are off or the payload predates them — burn-in is skipped entirely.
+  ///
+  /// Text layout happens in Flutter, not here: the app already shapes every
+  /// script it ships correctly through Flutter's text engine, with no bundled
+  /// font. Native only places the bitmaps.
+  let captionBitmapDirectory: String?
+  /// Caption cues in **source** time, matching `ZoomSegment` and the rest of the
+  /// composition. The render loop looks them up by `sampleTime`, never by the
+  /// remapped output PTS. Empty = no burn-in.
+  let captions: [CaptionCueTrack.Cue]
 
   /// The effective zoom factor after applying the legacy/explicit enable contract.
   var zoomFactor: Double { zoomEffectEnabled ? rawZoomFactor : 1.0 }
@@ -98,7 +110,9 @@ struct ExportVideoRequest: Equatable {
       targetLoudnessDbfs: (args["targetLoudnessDbfs"] as? Double) ?? -16.0,
       cameraPath: args["cameraPath"] as? String,
       colorGrade: ColorGrade.fromFlutter(args["colorGrade"] as? [String: Any]),
-      clips: ClipKeptRange.fromFlutter(args["clips"] as? [[String: Any]])
+      clips: ClipKeptRange.fromFlutter(args["clips"] as? [[String: Any]]),
+      captionBitmapDirectory: args["captionBitmapDirectory"] as? String,
+      captions: CaptionCueTrack.Cue.listFromFlutter(args["captions"] as? [[String: Any]])
     )
   }
 }

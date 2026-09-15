@@ -38,7 +38,12 @@ AppChannel CurrentChannel();
 // Directory name under %LOCALAPPDATA% holding recordings, logs and caches.
 //
 // prod: "Clingfy"      — UNCHANGED from every previously shipped build.
-// dev:  "Clingfy Dev"
+// dev:  "Clingfy-Dev"
+//
+// NO SPACES, either channel. This is a PATH: it is typed, pasted into scripts
+// and passed to command-line tools, where a space obliges every consumer to
+// quote it and the ones that forget fail as though the directory were missing.
+// Pinned by a test. DisplayName is the one that may read "Clingfy Dev".
 std::wstring LocalAppDataFolderName(AppChannel channel);
 
 // Suffix for the single-instance mutex and the receiver window class.
@@ -56,9 +61,14 @@ std::wstring InstanceMutexSuffix(AppChannel channel);
 //
 // prod: "Clingfy"   dev: "Clingfy Dev"
 //
-// Distinct from ProductName in the version resource, which is FROZEN because
-// path_provider derives the data directory from it. This one is display text
-// and safe to change; that one is an identity and is not.
+// Distinct in KIND from ProductName in the version resource, even though both
+// now read "Clingfy": this one is display text and free to change, while that
+// one is the settings-store identity path_provider derives
+// %APPDATA%\<CompanyName>\<ProductName> from. ProductName may be re-cased
+// (NTFS is case-insensitive, so the same directory is reused) but not renamed;
+// see the rule written out in Runner.rc. Do not "tidy" them into one shared
+// constant — they are equal by coincidence, and coupling them would let a
+// display-text edit silently move a released build's data directory.
 //
 // Channel-aware because D9 made side-by-side installs safe: two windows both
 // titled "Clingfy" would be a worse bug than the lowercase title this

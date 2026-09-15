@@ -39,6 +39,7 @@
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
 #include "Core/canvas_composition.h"
+#include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Preview/preview_camera_renderer.h"
 
 #include <atomic>
@@ -376,6 +377,49 @@ class PreviewEngine {
   // Pure decision for one decoded frame. See the tunables above.
   static PacerChaseDecision DecidePacerChase(const PacerChaseInput& input);
 
+  // --- Pacer stall watchdog -------------------------------------------------
+  //
+  // A dev build was once found burning ~0.7 of a core for 35 hours with a
+  // preview session open that had rendered 625 frames in that time, and
+  // NOTHING in the release log said so: the per-window pacer line is Debug,
+  // which release builds do not surface, so the only evidence was Task
+  // Manager. The condition is cheap to name — the pacer is PLAYING yet
+  // emitted no frame across a whole telemetry window — and that is what this
+  // reports, at Info, so the next occurrence is diagnosable from the log
+  // instead of requiring the process to be caught alive.
+  //
+  // Deliberately NOT "promote the 2s line to Info": that would put a line
+  // every 2 seconds into every release log for the entire duration of every
+  // normal playback, which is how a log stops being read at all.
+
+  // Windows are the telemetry cadence (~2s each).
+  static constexpr int kPacerStallOnsetWindows = 15;   // ~30s before the first
+  static constexpr int kPacerStallRepeatWindows = 30;  // then ~every 60s
+
+  enum class PacerStallReport { kNone, kStalled, kRecovered };
+
+  struct PacerStallInput {
+    // Frames emitted during the window that just closed.
+    int rendered_in_window = 0;
+    // Consecutive stalled windows BEFORE this one.
+    int stalled_windows = 0;
+    // A stall has already been reported for this run of windows.
+    bool stall_reported = false;
+  };
+
+  struct PacerStallDecision {
+    PacerStallReport report = PacerStallReport::kNone;
+    int next_stalled_windows = 0;
+    bool next_stall_reported = false;
+  };
+
+  // Pure: rate-limits the stall report so a long stall logs on onset and then
+  // periodically, and logs once on recovery. Recovery is only reported when a
+  // stall was actually reported — a brief gap that never crossed the onset
+  // threshold must not produce a "recovered" line for an event nobody saw.
+  static PacerStallDecision DecidePacerStallReport(
+      const PacerStallInput& input);
+
   // Pure (exposed for tests): the next kept range's source_in_ms strictly
   // AFTER `source_ms`, or -1 when none follows. The monotonic pacer uses it
   // to SEEK across a large cut gap instead of decode-crawling every deleted
@@ -430,6 +474,26 @@ class PreviewEngine {
   // and thread-safe; the actual D2D rebuild happens on the next composited frame.
   void SetCameraComposition(const std::string& session_id,
                             const PreviewCameraComposition& composition);
+
+  // The recording's smart-zoom settings: `factor` is the user's 1.0-3.0
+  // magnitude (postZoomFactor) and `effect_enabled` its on/off toggle. Both
+  // arrive on every processVideo, the same args the EXPORT has always read.
+  //
+  // Until this existed the preview hardcoded kZoomFactorDefault (1.5x) and
+  // ignored the toggle, so the editor's screen zoom silently disagreed with
+  // the exported file for anyone who moved the slider or turned zoom off. A
+  // stale session_id is a silent no-op; a paused preview is nudged to
+  // recomposite so the change is visible without pressing play.
+  // Replace the rendered zoom timeline with the EFFECTIVE one Dart computed
+  // (auto minus overrides, plus the user's manual segments). Empty is
+  // meaningful — it is what deleting every segment looks like — and is kept
+  // distinct from "Dart has not pushed a timeline yet", which still renders
+  // the auto one built at Open.
+  void SetZoomSegments(const std::string& session_id,
+                       const std::vector<capture::ZoomSegment>& segments);
+
+  void SetZoomSettings(const std::string& session_id, double factor,
+                       bool effect_enabled);
 
   // Editing port (color): update the live color grade for the inline preview.
   // Driven by Dart's previewSetColorGrade on every slider tick / auto-enhance
@@ -700,6 +764,21 @@ class PreviewEngine {
   // Compared against incoming Close/Play/Pause/Seek calls to enforce
   // the stale-session no-op contract.
   std::string active_session_id_;
+
+  // The last canvas framing Dart pushed, held at ENGINE level so it outlives
+  // any one `Impl`.
+  //
+  // `Impl` owns the retained copy that ComposeAndHandoffLocked re-resolves, but
+  // `Open` builds a brand new `Impl` whose `has_canvas_framing` defaults to
+  // false. On project open Dart pushes the restored canvas and the preview then
+  // opens, so that push landed on the outgoing `Impl` and died with it: the
+  // preview drew an unpadded canvas, and the camera bubble's border/shadow/
+  // min-side floor stayed at export scale, until the user happened to touch a
+  // canvas control and trigger a second push. Seeding each new `Impl` from
+  // these covers the push-then-Open order; the `Impl` copy still covers
+  // Open-then-push.
+  core::CanvasFramingArgs last_canvas_framing_{};
+  bool has_last_canvas_framing_ = false;
 
   // Step 5.5.3: project path echoed back to Dart in the workflow
   // lifecycle events. Set in Open; cleared in Close. Empty is

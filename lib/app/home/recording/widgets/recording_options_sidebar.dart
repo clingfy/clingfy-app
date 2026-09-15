@@ -128,8 +128,10 @@ class RecordingOptionsSidebar extends StatelessWidget {
   final Rect? areaRect;
 
   final Function(DisplayTargetMode) onTargetModeChanged;
-  final Function(int?) onDisplayChanged;
+  final void Function(int? id, Map<String, String> labels) onDisplayChanged;
   final VoidCallback onRefreshDisplays;
+  final void Function(Map<String, String> labels) onIdentifyDisplays;
+  final bool identifySupported;
   final Function(int?) onAppWindowChanged;
   final VoidCallback onRefreshAppWindows;
   final Function(String?) onAudioSourceChanged;
@@ -240,6 +242,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
     required this.onTargetModeChanged,
     required this.onDisplayChanged,
     required this.onRefreshDisplays,
+    required this.onIdentifyDisplays,
+    required this.identifySupported,
     required this.onAppWindowChanged,
     required this.onRefreshAppWindows,
     required this.onAudioSourceChanged,
@@ -396,6 +400,8 @@ class RecordingOptionsSidebar extends StatelessWidget {
         onTargetModeChanged: onTargetModeChanged,
         onDisplayChanged: onDisplayChanged,
         onRefreshDisplays: onRefreshDisplays,
+        onIdentifyDisplays: onIdentifyDisplays,
+        identifySupported: identifySupported,
         onAppWindowChanged: onAppWindowChanged,
         onRefreshAppWindows: onRefreshAppWindows,
         onPickArea: onPickArea,

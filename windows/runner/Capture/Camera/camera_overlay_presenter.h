@@ -2,6 +2,7 @@
 #define RUNNER_CAPTURE_CAMERA_CAMERA_OVERLAY_PRESENTER_H_
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 // Presenter abstraction for the live floating camera bubble (renderer redesign
@@ -71,9 +72,37 @@ class ICameraOverlayPresenter {
   // True when this presenter has given up rendering and the owner should swap
   // it for the safe-mode GDI presenter (renderer P4c mid-session fallback).
   // Only the DComp presenter can request this — after it exhausts its
-  // device-lost rebuild budget; GDI and the host wrapper never do. Sampled on
+  // device-lost rebuild budget; GDI and the host wrapper never do. Polled on
   // the frame-publish thread, so it must be cheap and lock-free.
+  //
+  // Polling alone is NOT sufficient: this condition is produced on the DComp
+  // presenter's own 33 ms tick, which keeps running when camera frames have
+  // stopped (a pause, a wedged ReadSample, end-of-stream). See SetParkObserver.
   virtual bool needs_fallback() const { return false; }
+
+  // Register a one-shot callback fired the instant needs_fallback() flips true.
+  //
+  // Exists because the producer and the consumer of that flag run on different
+  // clocks: the park is reached from the presenter's own timer tick with no
+  // frame involved, while the only poll of needs_fallback() sits downstream of
+  // a published camera frame. When both stall together the swap never happened.
+  //
+  // CONTRACT — the observer runs on the PRESENTER'S OWN THREAD. It must not
+  // call back synchronously into the presenter, and in particular must not run
+  // work that Stops it: Stop() joins that very thread. Implementations
+  // marshal elsewhere (the host uses PlatformThreadDispatcher::TryPost, which
+  // never falls back to inline execution).
+  //
+  // Installing does NOT fire the observer even if the presenter has ALREADY
+  // parked — owners install under their own lock, and firing synchronously
+  // would re-enter them on the installing thread. Callers must therefore poll
+  // needs_fallback() once right after installing; the poll covers a park that
+  // preceded the install, the push covers every one after it.
+  //
+  // Passing nullptr clears the observer.
+  //
+  // Default no-op: only the DComp presenter ever parks.
+  virtual void SetParkObserver(std::function<void()> /*observer*/) {}
 };
 
 // Compute the creation-time bubble placement for a monitor's work area (all

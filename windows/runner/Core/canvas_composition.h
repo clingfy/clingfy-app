@@ -100,6 +100,21 @@ struct CanvasComposition {
   // renderer and the cache. `has_preset` false means colour/image background.
   capture::background::CanvasPresetSpec preset;
   bool has_preset = false;
+  // The shorter side of the EXPORT canvas the fractions above were normalized
+  // against, in export-output pixels. 0 = not resolved yet (no decoded frame,
+  // so the source dimensions and therefore `ResolveTargetSize` are unknown).
+  //
+  // The fractions do not need this — that is the point of them. It is carried
+  // for the values that are NOT on the fraction contract and cannot be, because
+  // they are indices or table lookups rather than lengths: the camera shadow
+  // preset and the camera bubble's minimum-side floor. Those resolve through
+  // `PreviewCameraEffectScale(surface_short, export_short_side)` instead.
+  //
+  // It lives HERE, on the struct the frame thread already reads under
+  // `render_mutex`, rather than as a loose field on `PreviewEngine::Impl` — a
+  // second field would have to repeat this struct's publish discipline and
+  // would be written outside the lock at the site that computes it.
+  double export_short_side = 0.0;
 };
 
 // Convert a pixel value measured against a surface whose shorter side is
@@ -121,6 +136,60 @@ CanvasComposition MakeCanvasComposition(
     double padding_px, double corner_radius_px, double export_short_side,
     std::optional<std::int64_t> background_argb,
     std::wstring background_image_path = {});
+
+// Resolve a raw Dart framing payload against the SOURCE video dimensions.
+//
+// The payload's lengths are export-output pixels, but the export canvas they
+// are measured against is not in the payload — it falls out of the source size
+// plus the layout/resolution presets via `ResolveTargetSize`. So the resolve
+// cannot happen until the source dimensions are known, which on the preview
+// side means "until a frame has decoded".
+//
+// A non-positive source size yields the UNRESOLVED composition: background
+// fields pass through (they need no reference) while `padding_fraction`,
+// `corner_radius_fraction` and `export_short_side` stay 0. That is a legitimate
+// intermediate state, not an error — but the caller owes a second call once the
+// dimensions land, or the canvas renders unpadded and the camera bubble draws
+// its border, shadow and min-side floor at export scale on a smaller surface.
+// `PreviewEngine::ComposeAndHandoffLocked` does that re-resolve; keep
+// `export_short_side == 0.0` as the "still owed" signal.
+//
+// Pure, so both the first resolve and the re-resolve are pinned by
+// `canvas_composition_test.cpp` without a decoder or a GPU.
+CanvasComposition ResolveCanvasComposition(const CanvasFramingArgs& framing,
+                                           double source_w, double source_h);
+
+// Whether a retained framing must be resolved again before the canvas is read.
+//
+// Pure for the same reason `PreviewCameraNeedsRebuild` is: the frame thread's
+// re-resolve runs under `render_mutex` on a path that needs a decoder and a GPU,
+// so the DECISION is pinned here instead of only through a pixel test.
+//
+// True when a framing has been pushed and the size it was resolved against is
+// not the size now in hand. That covers both cases with one comparison: the
+// first resolve (`resolved_*` still 0 because no frame had decoded when Dart
+// pushed) and a source whose dimensions later change. False with no framing —
+// there is nothing to resolve, and re-resolving a default would overwrite
+// nothing with nothing.
+bool CanvasNeedsReresolve(bool has_framing, unsigned int resolved_source_w,
+                          unsigned int resolved_source_h,
+                          unsigned int live_source_w,
+                          unsigned int live_source_h);
+
+// Whether a `previewSetCanvas` push should be RETAINED for the next preview
+// Open, independent of whether it can be applied right now.
+//
+// On project open Dart restores the canvas and pushes it BEFORE the preview
+// exists. At that moment the engine has no active session and no Impl, so the
+// stale-session guard (`session_id != active_session_id_`) rejected the push
+// and the framing was lost — the preview opened unpadded, with the camera
+// bubble's border, shadow and min-side floor still at export scale, until the
+// user happened to touch a canvas control and push again.
+//
+// "No session is open" is EARLY, not stale. A push naming a different LIVE
+// session is stale and must not clobber the pending framing.
+bool ShouldRetainCanvasFraming(const std::string& session_id,
+                               const std::string& active_session_id);
 
 }  // namespace clingfy::core
 

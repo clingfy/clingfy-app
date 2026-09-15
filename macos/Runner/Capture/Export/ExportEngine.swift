@@ -91,6 +91,12 @@ final class ExportEngine {
     /// Kept source ranges (enabled clips, timeline order) to bake in. Empty =
     /// no cuts, so the export keeps the whole source (a passthrough).
     var clips: [ClipKeptRange] = []
+    /// Directory of pre-rasterized caption bitmaps (one PNG per cue), or `nil`
+    /// when captions are off. Defaults to `nil` so every existing caller and
+    /// every older Flutter payload exports byte-for-byte as before.
+    var captionBitmapDirectory: String? = nil
+    /// Caption cues in source time. Empty = no burn-in.
+    var captions: [CaptionCueTrack.Cue] = []
   }
 
   /// Facade-owned collaborators + ExportPrep helpers, injected per-call.
@@ -301,6 +307,8 @@ final class ExportEngine {
       cameraParams: exportCameraParams,
       colorGrade: input.colorGrade,
       clips: input.clips,
+      captionBitmapDirectory: input.captionBitmapDirectory,
+      captions: input.captions,
       onProgress: renderProgress
     ) { res in
       switch res {
@@ -352,13 +360,16 @@ final class ExportEngine {
   /// dimensions (the H.264 intermediate wants even width/height). Keeps a
   /// 4K/8K selection — or any source larger than the preset cap — from
   /// rendering a giant frame just to downscale it.
+  ///
+  /// Delegates to `GifExportPolicy` rather than computing it here: Flutter asks
+  /// the same question through `resolveExportSize` so it can rasterise caption
+  /// bitmaps at the canvas the frames will really be, and two implementations
+  /// of this would drift into captions composited at the wrong scale.
   nonisolated private static func gifIntermediateSize(
     from target: CGSize,
     maxLongEdge: CGFloat = GifExportPolicy.defaultMaxLongEdge
   ) -> CGSize {
-    let capped = GifExportPolicy.renderSize(canvasSize: target, maxLongEdge: maxLongEdge)
-    func even(_ value: CGFloat) -> CGFloat { max(2, (value / 2).rounded() * 2) }
-    return CGSize(width: even(capped.width), height: even(capped.height))
+    GifExportPolicy.intermediateRenderSize(canvasSize: target, maxLongEdge: maxLongEdge)
   }
 
   nonisolated private static func finishExportSuccess(

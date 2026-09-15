@@ -1929,6 +1929,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get exportSuccess => 'Export successful:';
 
   @override
+  String get exportSavedWithoutSubtitles =>
+      'Exported, but the subtitles could not be burned in:';
+
+  @override
   String get open => 'Open';
 
   @override
@@ -2400,6 +2404,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get screen => 'Screen';
 
   @override
+  String get identifyDisplays => 'Identify screens';
+
+  @override
+  String get identifyDisplaysTooltip =>
+      'Flash a big number on every screen so you can tell them apart';
+
+  @override
+  String get displayMarkerMain => 'Main';
+
+  @override
+  String get displayMarkerThisWindow => 'This window';
+
+  @override
   String get app => 'App';
 
   @override
@@ -2523,6 +2540,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get warnCameraDisconnected =>
       'Your camera was disconnected. Recording continues without it.';
+
+  @override
+  String get warnCameraPreviewHidden =>
+      'Your live camera preview can\'t be shown while recording on this PC. Recording continues — your camera is still captured and appears in the finished video.';
 
   @override
   String get warnEncoderVideoError =>
@@ -2694,4 +2715,134 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get crashReportingNoticeOptOut => 'Turn off';
+
+  @override
+  String get captions => 'Subtitles';
+
+  @override
+  String get captionsGenerate => 'Generate subtitles';
+
+  @override
+  String get captionsRegenerate => 'Generate again';
+
+  @override
+  String get captionsCancel => 'Stop';
+
+  @override
+  String get captionsPreparing => 'Preparing…';
+
+  @override
+  String get captionsTranscribing => 'Transcribing…';
+
+  @override
+  String get captionsSourceMic => 'Microphone';
+
+  @override
+  String get captionsSourceSystem => 'Screen audio';
+
+  @override
+  String get captionsNoneYet => 'No subtitles yet.';
+
+  @override
+  String get captionsNoSpeechFound => 'No speech found in this recording.';
+
+  @override
+  String get captionsUnavailableOs =>
+      'Subtitles need a newer version of macOS.';
+
+  @override
+  String get captionsUnavailableIntel =>
+      'Subtitles run slowly on Intel Macs, which have no Neural Engine.';
+
+  @override
+  String get captionsUnavailableNoAudio =>
+      'This recording has no audio to transcribe.';
+
+  @override
+  String get captionsUnavailablePlatform =>
+      'Subtitles are only available on macOS.';
+
+  @override
+  String get captionsMicOnlyRecording =>
+      'This recording predates separate audio capture, so only your microphone was recorded.';
+
+  @override
+  String get captionsFirstRunDownload =>
+      'The first run downloads a speech model. This happens once.';
+
+  @override
+  String get captionsFailed => 'Couldn’t generate subtitles.';
+
+  @override
+  String captionsCueCount(int count) {
+    return '$count subtitles';
+  }
+
+  @override
+  String get captionsDestination => 'Subtitles in export';
+
+  @override
+  String get captionsDestinationOff => 'Off';
+
+  @override
+  String get captionsDestinationBurnIn => 'Burn in';
+
+  @override
+  String get captionsDestinationSidecar => 'File';
+
+  @override
+  String get captionsDestinationBoth => 'Both';
+
+  @override
+  String get captionsDestinationHint =>
+      'Burned-in subtitles survive re-upload. A file stays searchable and can be turned off.';
+
+  @override
+  String get captionsNotInExport => 'Cut';
+
+  @override
+  String get captionsDownloadingModel => 'Downloading speech model';
+
+  @override
+  String get captionsStopping => 'Stopping…';
+
+  @override
+  String get captionsEngineBusy =>
+      'Finishing the previous subtitle run. Generate becomes available as soon as it stops.';
+
+  @override
+  String get storageCaptionModelTitle => 'Speech model';
+
+  @override
+  String get storageCaptionModelDescription =>
+      'The on-device model that turns speech into subtitles. Downloaded once, the first time you generate subtitles, and re-downloadable at any time.';
+
+  @override
+  String get storageCaptionModelWeights => 'Model';
+
+  @override
+  String get storageCaptionModelCompiledCache => 'Compiled cache';
+
+  @override
+  String get storageCaptionModelNotDownloaded =>
+      'Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.';
+
+  @override
+  String get storageDeleteCaptionModel => 'Delete speech model';
+
+  @override
+  String get storageDeleteCaptionModelConfirmTitle =>
+      'Delete the speech model?';
+
+  @override
+  String get storageDeleteCaptionModelConfirmMessage =>
+      'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.';
+
+  @override
+  String get storageDeleteCaptionModelConfirmAction => 'Delete';
+
+  @override
+  String storageDeleteCaptionModelSuccess(String value) {
+    return 'Freed $value.';
+  }
 }

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:clingfy/core/timeline/model/canvas_state.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/core/timeline/model/timeline.dart';
@@ -19,6 +20,9 @@ class TimelineCodec {
     'timeline': {
       'durationMs': timeline.durationMs,
       'grade': timeline.grade.toMap(),
+      // Omitted when untouched, so a recording with no canvas edits writes the
+      // same bytes it did before v3 carried this block.
+      if (!timeline.canvas.isDefault) 'canvas': timeline.canvas.toMap(),
       'tracks': [for (final track in timeline.tracks) track.toMap()],
     },
   };
@@ -49,6 +53,9 @@ class TimelineCodec {
       grade: body['grade'] is Map
           ? ColorGrade.fromMap(body['grade'] as Map)
           : const ColorGrade(),
+      canvas: body['canvas'] is Map
+          ? CanvasState.fromMap(body['canvas'] as Map)
+          : const CanvasState(),
       tracks: tracks,
     );
   }

@@ -70,6 +70,8 @@ void main() {
   ) async {
     const messageOnly = [
       RecordingWarningCode.cameraDisconnected,
+      // No Windows settings page fixes a SetWindowDisplayAffinity failure.
+      RecordingWarningCode.cameraPreviewHidden,
       RecordingWarningCode.encoderVideoError,
       RecordingWarningCode.encoderAudioError,
     ];
@@ -79,6 +81,28 @@ void main() {
       expect(presentation.message, isNot(code), reason: code);
       expect(presentation.action, isNull, reason: code);
     }
+  });
+
+  testWidgets('preview-hidden copy does not read as camera loss', (
+    tester,
+  ) async {
+    // The failure mode this wording exists to prevent: a user reading the
+    // toast, believing the camera was lost, and stopping the recording. The
+    // camera IS captured and DOES appear in the export — only the live bubble
+    // is missing, and the copy has to say so.
+    final presentation = await mapCode(
+      tester,
+      RecordingWarningCode.cameraPreviewHidden,
+      (_) {},
+    );
+    expect(presentation.message, isNotNull);
+    final message = presentation.message!.toLowerCase();
+    expect(message, contains('preview'));
+    expect(
+      message,
+      anyOf(contains('finished video'), contains('still captured')),
+      reason: 'copy must reassure that the camera still reaches the export',
+    );
   });
 
   testWidgets('permission error copy forks by platform', (tester) async {

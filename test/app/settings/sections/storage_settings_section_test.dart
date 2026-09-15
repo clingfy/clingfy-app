@@ -7,6 +7,7 @@ import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -94,6 +95,21 @@ void main() {
     );
   }
 
+  Map<String, dynamic> captionModelPayload({
+    bool installed = true,
+    int modelBytes = 629485189,
+    int compiledCacheBytes = 271581184,
+    bool busy = false,
+  }) => <String, dynamic>{
+    'installed': installed,
+    'modelBytes': modelBytes,
+    'compiledCacheBytes': compiledCacheBytes,
+    'modelPath': '/tmp/Models',
+    'variant': 'openai_whisper-large-v3-v20240930_626MB',
+    'busy': busy,
+    'loaded': false,
+  };
+
   Future<void> pumpStorageSection(
     WidgetTester tester,
     SettingsController settings, {
@@ -111,6 +127,15 @@ void main() {
         sectionWidth: sectionWidth,
       ),
     );
+  }
+
+  Future<void> scrollToCaptionModelCard(WidgetTester tester) async {
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('storage_caption_model_card')),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
   }
 
   Future<void> scrollToClearButton(WidgetTester tester) async {
@@ -174,6 +199,7 @@ void main() {
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
     await pumpStorageSection(tester, settings);
     await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
 
     expect(find.text('Warning'), findsWidgets);
     expect(
@@ -193,6 +219,7 @@ void main() {
 
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
     await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('storage_system_chart')), findsOneWidget);
@@ -369,6 +396,7 @@ void main() {
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
     await pumpStorageSection(tester, settings);
     await tester.pumpAndSettle();
+    await tester.pumpAndSettle();
 
     expect(find.text('Critical'), findsWidgets);
     expect(
@@ -387,6 +415,7 @@ void main() {
 
     final settings = SettingsController(nativeBridge: NativeBridge.instance);
     await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
     await tester.pumpAndSettle();
 
     expect(find.text('Storage action failed.'), findsOneWidget);
@@ -669,5 +698,127 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(clearCalls, 0);
+  });
+
+  // ---- Speech model ------------------------------------------------------
+  //
+  // The model arrives on first transcription and nothing in the app had ever
+  // shown it or offered to remove it. On a real machine that was ~859 MB across
+  // two directories, invisible to the very page that charts disk usage.
+
+  testWidgets('the speech model card reports both buckets, not just weights', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload();
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+
+    expect(find.byKey(const Key('storage_caption_model_card')), findsOneWidget);
+    expect(find.text('Model'), findsOneWidget);
+    expect(find.text('Compiled cache'), findsOneWidget);
+    expect(
+      find.byKey(const Key('storage_delete_caption_model_button')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'a model that was never downloaded says so and offers no delete',
+    (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getStorageSnapshot') {
+              return storageSnapshotPayload();
+            }
+            if (call.method == 'getCaptionModelInfo') {
+              return captionModelPayload(
+                installed: false,
+                modelBytes: 0,
+                compiledCacheBytes: 0,
+              );
+            }
+            return null;
+          });
+
+      final settings = SettingsController(nativeBridge: NativeBridge.instance);
+      await pumpStorageSection(tester, settings);
+
+      expect(
+        find.byKey(const Key('storage_caption_model_card')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('storage_delete_caption_model_button')),
+        findsNothing,
+        reason: 'nothing to delete',
+      );
+    },
+  );
+
+  testWidgets('delete is disabled while a transcription is using the model', (
+    tester,
+  ) async {
+    // Advisory only — native re-checks and answers MODEL_IN_USE — but a live
+    // button here invites the user to try, and deleting under a loaded model
+    // frees nothing while reporting success.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload(busy: true);
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+
+    final button = tester.widget<AppButton>(
+      find.byKey(const Key('storage_delete_caption_model_button')),
+    );
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('a native failure to report the model does not break the page', (
+    tester,
+  ) async {
+    // Windows and any older native build answer nothing here. The storage page
+    // must still render everything else.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            throw PlatformException(code: 'WINDOWS_NOT_IMPLEMENTED');
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Healthy'), findsWidgets);
+    expect(
+      find.byKey(const Key('storage_delete_caption_model_button')),
+      findsNothing,
+    );
   });
 }
