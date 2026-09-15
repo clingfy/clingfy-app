@@ -86,7 +86,12 @@ $latest = [ordered]@{
   channel          = $Ctx.Channel
   platform         = 'windows-x64'
   fileName         = $Ctx.InstallerName
-  url              = "$downloadBaseUrl$($Ctx.InstallerName)"
+  # '+' is percent-encoded for the same reason the macOS appcast does it (see
+  # ops/release/commands/publish_release.sh): CloudFront mangles a literal '+' in the path on the
+  # way to the S3 origin, so .../Clingfy_Dev_Setup_1.0.7+127.exe 404s while the %2B form returns
+  # 206 for the very same object. Every DEV installer is named <version>+<build>. `fileName` above
+  # stays unencoded — it is the on-disk name, not a URL.
+  url              = "$downloadBaseUrl$($Ctx.InstallerName -replace '\+', '%2B')"
   sha256           = $hash
   sizeBytes        = $installer.Length
   minimumOsVersion = '10.0.18362'

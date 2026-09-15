@@ -21,6 +21,14 @@ safe_mkdir "$RELEASE_ARCHIVE"
 extract_release_notes "$APP_VERSION" "$CHANGELOG_FILE" "$RELEASE_NOTES_TEMP"
 
 release_dmg_path="$RELEASE_ARCHIVE/$FINAL_DMG_NAME"
+
+# The same artefact has TWO spellings and they are not interchangeable:
+#   FINAL_DMG_NAME      the on-disk / object-key spelling, with a literal '+'
+#   FINAL_DMG_URL_NAME  the URL spelling, with '+' percent-encoded as %2B
+# Uploads use the first (the S3 key really does contain '+'); anything that goes into a URL — the
+# feed, the smoke test, a CloudFront invalidation path — uses the second. See the encoding step
+# after the appcast prune for why.
+FINAL_DMG_URL_NAME="${FINAL_DMG_NAME//+/%2B}"
 cp "$DMG_OUTPUT" "$release_dmg_path"
 
 notes_filename="${FINAL_DMG_NAME%.*}.html"
@@ -199,6 +207,42 @@ log_info "Pruning superseded appcast items"
 python3 "$SCRIPT_ROOT/lib/prune_appcast_duplicates.py" "$APPCAST_XML" \
   || die "Appcast prune failed; refusing to publish a feed with stale items."
 
+# Percent-encode '+' in every enclosure URL.
+#
+# PROVEN ON THE LIVE DEV EDGE, 2026-09-15, against clingfy-labs-dev-releases-<account>:
+#   .../Clingfy548-547.delta          (no '+')  -> 206
+#   .../Clingfy_Dev_1.0.7+816.dmg     (bare +)  -> 404
+#   .../Clingfy_Dev_1.0.7%2B816.dmg   (encoded) -> 206
+# The object is present in S3 in all three cases; CloudFront mangles a literal '+' in the path on
+# the way to the S3 origin.
+#
+# This only started mattering when dev moved off Azure. The Azure lane 302'd clients to the blob
+# endpoint, which takes '+' literally, so the feed's URLs never went through CloudFront. Every DEV
+# artefact is named <version>+<build>, so on AWS a bare '+' breaks EVERY dmg and installer the feed
+# advertises while the feed itself still returns 200 — an updater that finds the feed, reads it, and
+# then 404s on the download. Prod names carry no '+', which is why prod never saw this.
+#
+# Done after the prune so the prune keeps matching on plain names, and before the upload so the feed
+# is never published in the broken form.
+log_info "Percent-encoding '+' in appcast enclosure URLs"
+python3 - "$APPCAST_XML" <<'PY' || die "Could not encode '+' in the appcast enclosure URLs."
+import io, re, sys
+path = sys.argv[1]
+s = io.open(path, encoding="utf-8").read()
+n = 0
+def enc(m):
+    global n
+    url = m.group(1)
+    if "+" not in url:
+        return m.group(0)
+    n += 1
+    return m.group(0).replace(url, url.replace("+", "%2B"))
+# Only inside url="..."; never touch the rest of the document (release notes may contain '+').
+s = re.sub(r'url="([^"]+)"', enc, s)
+io.open(path, "w", encoding="utf-8").write(s)
+print(f"   encoded {n} enclosure url(s)")
+PY
+
 log_info "Uploading DMG"
 publish_upload "$AZ_CONTAINER" "$release_dmg_path" "${AZ_BINARIES_FOLDER}/$FINAL_DMG_NAME"
 
@@ -266,10 +310,12 @@ if [[ "$RELEASE_STORAGE_PROVIDER" == "aws" ]]; then
   # is impossible. It used to warn and carry on, which meant the release still reported
   # success while the edge kept serving the previous appcast.
   log_info "Invalidating CloudFront paths"
+  # The encoded name, because an invalidation path has to match the request URI the viewer sends,
+  # and the feed now advertises %2B.
   invalidate_cloudfront_paths \
     "$AWS_CLOUDFRONT_DISTRIBUTION_ID" \
     "/updates/${FEED_PATH}" \
-    "/updates/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
+    "/updates/${AZ_BINARIES_FOLDER}/${FINAL_DMG_URL_NAME}"
 elif [[ -n "$AZ_FRONTDOOR_ENDPOINT_NAME" ]]; then
   log_info "Purging Azure Front Door cache"
   purge_frontdoor_paths \
@@ -287,16 +333,20 @@ log_info "Smoke testing published assets"
 
 appcast_ok="false"
 for _attempt in {1..9}; do
-  if curl -fsS "$FEED_URL" | grep -q "$FINAL_DMG_NAME"; then
+  # Grep for the ENCODED name: that is what the feed now carries, and grepping the raw name would
+  # fail for every dev release (whose names all contain '+') even though the feed is correct.
+  if curl -fsS "$FEED_URL" | grep -q "$FINAL_DMG_URL_NAME"; then
     appcast_ok="true"
     break
   fi
   sleep 5
 done
 
-[[ "$appcast_ok" == "true" ]] || die "Smoke test failed: appcast.xml does not reference $FINAL_DMG_NAME"
+[[ "$appcast_ok" == "true" ]] || die "Smoke test failed: appcast.xml does not reference $FINAL_DMG_URL_NAME"
 
-dmg_url="${DOWNLOAD_BASE_URL}${FINAL_DMG_NAME}"
+# The encoded name again. With the raw one this check would 404 on every dev release and be read as
+# "the upload failed", when the object is present and the URL is simply spelled wrong.
+dmg_url="${DOWNLOAD_BASE_URL}${FINAL_DMG_URL_NAME}"
 dmg_status="$(curl -sSIL -o /dev/null -w "%{http_code}" "$dmg_url" || true)"
 [[ "$dmg_status" == "200" ]] || die "Smoke test failed: DMG returned HTTP $dmg_status"
 
