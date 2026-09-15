@@ -84,4 +84,18 @@ bool CanvasNeedsReresolve(bool has_framing, unsigned int resolved_source_w,
          resolved_source_h != live_source_h;
 }
 
+bool ShouldRetainCanvasFraming(const std::string& session_id,
+                               const std::string& active_session_id) {
+  // Empty incoming id means "whichever session is active" — always retain.
+  if (session_id.empty()) {
+    return true;
+  }
+  // Nothing open yet: the push is early (project open pushes before the
+  // preview exists), not stale.
+  if (active_session_id.empty()) {
+    return true;
+  }
+  return session_id == active_session_id;
+}
+
 }  // namespace clingfy::core

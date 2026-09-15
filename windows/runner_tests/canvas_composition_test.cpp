@@ -253,3 +253,32 @@ TEST(ResolveCanvasCompositionTest, DegenerateSourceIsTreatedAsUnknown) {
 
 }  // namespace
 }  // namespace clingfy::core
+
+// A canvas pushed while NO preview is open must be retained for the next Open.
+//
+// This is the whole reason a reopened recording used to show an unpadded canvas
+// and a camera bubble drawn at export scale: Dart restores the canvas and
+// pushes it before the preview exists, so the engine had no active session, the
+// stale-session guard rejected the push, and the framing was gone by the time
+// Open built its Impl. It only corrected itself when the user touched a canvas
+// control and triggered a second push.
+TEST(ShouldRetainCanvasFramingTest, RetainsAPushThatArrivesBeforeAnySessionIsOpen) {
+  EXPECT_TRUE(clingfy::core::ShouldRetainCanvasFraming("session-a", ""));
+}
+
+TEST(ShouldRetainCanvasFramingTest, RetainsAnEmptyIdMeaningWhicheverIsActive) {
+  EXPECT_TRUE(clingfy::core::ShouldRetainCanvasFraming("", "session-a"));
+  EXPECT_TRUE(clingfy::core::ShouldRetainCanvasFraming("", ""));
+}
+
+TEST(ShouldRetainCanvasFramingTest, RetainsAPushForTheSessionThatIsOpen) {
+  EXPECT_TRUE(clingfy::core::ShouldRetainCanvasFraming("session-a", "session-a"));
+}
+
+// The other half of the contract: "no session open" is EARLY, but a push naming
+// a different LIVE session is genuinely stale and must not clobber the pending
+// framing — otherwise a closing recording would hand its canvas to the next one.
+TEST(ShouldRetainCanvasFramingTest, DropsAPushNamingADifferentLiveSession) {
+  EXPECT_FALSE(
+      clingfy::core::ShouldRetainCanvasFraming("session-old", "session-new"));
+}

@@ -903,7 +903,29 @@ class PostProcessingController extends ChangeNotifier {
   /// `windows/runner/Core/canvas_composition.h`.
   void _pushCanvas() {
     final sessionId = _activeSessionId;
-    if (sessionId == null) return;
+    if (sessionId == null) {
+      // Worth a line: this is the silent path that leaves the preview on a
+      // default canvas after a reopen, and it is indistinguishable from "pushed
+      // fine" without it. The composition request logs either way, which is why
+      // a dropped canvas used to look like a native rendering problem.
+      Log.d(
+        "PostProcessing",
+        "Canvas push skipped: no active preview session",
+        null,
+        null,
+        {'projectPath': _projectPath, 'padding': _videoPadding},
+      );
+      return;
+    }
+    Log.d("PostProcessing", "Pushing canvas to preview", null, null, {
+      'sessionId': sessionId,
+      'projectPath': _projectPath,
+      'padding': _videoPadding,
+      'cornerRadius': _videoRadius,
+      'backgroundKind': _backgroundKind.name,
+      'layoutPreset': _settings.post.layoutPreset.name,
+      'resolutionPreset': _settings.post.resolutionPreset.name,
+    });
     // Best-effort: a stale session is dropped native-side, and a preview that
     // is not open simply has nothing to repaint.
     unawaited(

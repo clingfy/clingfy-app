@@ -935,6 +935,20 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
 
   // ---- 1. Create a D3D11 device + D2D factory. ----
   impl_ = std::make_unique<Impl>();
+  // Carry the last framing Dart pushed into the new Impl. On project open the
+  // push arrives BEFORE this Open, so without seeding it is lost and the
+  // preview renders an unpadded canvas until the user's next canvas edit.
+  // Source dims are unknown here, so resolve against 0x0 and leave
+  // canvas_source_* at 0 — that is exactly the state CanvasNeedsReresolve looks
+  // for, so the first decoded frame re-resolves it against the real size.
+  if (has_last_canvas_framing_) {
+    impl_->canvas_framing = last_canvas_framing_;
+    impl_->has_canvas_framing = true;
+    impl_->canvas_source_w = 0;
+    impl_->canvas_source_h = 0;
+    impl_->canvas = core::ResolveCanvasComposition(last_canvas_framing_, 0.0,
+                                                   0.0);
+  }
   impl_->video_path = args.video_path;
   impl_->cursor_path = args.cursor_path;
   // Audio separation (D9): run the ONE decode probe per sidecar now, so
@@ -2855,6 +2869,23 @@ void PreviewEngine::SetCanvasComposition(
   std::string session_snapshot;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // Retain for the NEXT Open BEFORE the guards below.
+    //
+    // On project open Dart restores the canvas and pushes it while no preview
+    // exists yet: `active_session_id_` is still empty and `impl_` is null, so
+    // both guards dropped the push on the floor. The preview then opened with a
+    // default canvas — unpadded, and with the camera bubble's border, shadow
+    // and min-side floor left at export scale — until the user happened to
+    // touch a canvas control and trigger a second push. `Open` seeds the new
+    // Impl from this.
+    //
+    // A push naming a DIFFERENT live session is genuinely stale and must not
+    // overwrite the pending framing; a push arriving when nothing is open is
+    // not stale, it is early.
+    if (core::ShouldRetainCanvasFraming(session_id, active_session_id_)) {
+      last_canvas_framing_ = framing;
+      has_last_canvas_framing_ = true;
+    }
     // Same stale-session discipline as SetColorGrade.
     if (!session_id.empty() && session_id != active_session_id_) {
       return;
