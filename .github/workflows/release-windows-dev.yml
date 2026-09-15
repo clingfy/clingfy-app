@@ -65,6 +65,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     if: vars.GH_RELEASE_LANES_ENABLED == 'true'
+    # So the OIDC token's `sub` is repo:clingfy/clingfy-app:environment:development, which is what
+    # the dev publish role's trust policy matches on.
+    environment: development
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -160,12 +163,16 @@ jobs:
           pwsh -NoProfile -File ops/release/windows/workflows/local_release.ps1 -Channel dev
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      # Was `azure/login@v2`. The Azure release storage accounts were deleted on 2026-09-15 and
+      # 04_publish_azure.ps1 dispatches on $Ctx.StorageProvider, which is now `aws` for this channel
+      # (ops/release/windows/_config.ps1) - so this step was logging in to a cloud the publish no
+      # longer writes to, leaving the `aws s3 cp` calls below with no credentials.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-release-win-dev-${{ github.run_id }}
 
       - name: Publish to dev blob + smoke
         shell: pwsh

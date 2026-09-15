@@ -1,0 +1,136 @@
+name: Release plumbing check (OIDC + bucket access)
+
+# Proves the things every release lane depends on, without building anything:
+# that OIDC federation to AWS works, that this repo/environment/workflow is
+# accepted by the role's trust policy, and that the role can actually read AND
+# write the release prefixes for the chosen channel.
+#
+# Run this first, per channel. If it is green, a failure in a real lane is a
+# build problem, not a credentials problem -- which is worth knowing up front,
+# because an auth failure surfaces at the publish step, forty minutes into a
+# macOS build.
+#
+# Replaces release-azure-plumbing.yml, which tested Azure blob access. Both Azure
+# release storage accounts were deleted on 2026-09-15 and every publish path now
+# writes to S3 (#492, #494), so that workflow could only fail.
+#
+# The write probe deliberately does NOT clean up after itself. The publish role
+# has no s3:DeleteObject by design -- a release artefact is immutable once
+# published -- so a probe that tried to delete would fail on a correctly
+# configured role and pass on an over-privileged one, which is precisely backwards
+# for a check like this. The probe key is namespaced under updates/ci-plumbing/
+# and is a few bytes; bucket versioning keeps it harmless.
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Which channel's releases bucket to test"
+        type: choice
+        options: [dev, prod]
+        default: dev
+      write_probe:
+        description: "Also upload a probe object (tests write access, not just read)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-plumbing-${{ inputs.channel }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # required to mint the OIDC token for AWS
+  contents: read
+
+jobs:
+  check:
+    name: "Check ${{ inputs.channel }} AWS access"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The environment is load-bearing, not decoration: the role's trust policy
+    # matches on `repo:clingfy/clingfy-app:environment:<env>`, so a run without
+    # it fails to assume with a message that never mentions environments.
+    environment: ${{ inputs.channel == 'prod' && 'production' || 'development' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+          role-session-name: clingfy-plumbing-${{ inputs.channel }}-${{ github.run_id }}
+
+      - name: Who am I
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity
+          echo "OIDC federation works and the trust policy accepted this run."
+
+      - name: Resolve the bucket from the env file
+        env:
+          ENV_B64: ${{ inputs.channel == 'prod' && secrets.ENV_PROD_B64 || secrets.ENV_DEV_B64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ENV_B64:-}" ]; then
+            echo "::error::Secret ENV_${{ inputs.channel == 'prod' && 'PROD' || 'DEV' }}_B64 is not set on this environment."
+            exit 1
+          fi
+          printf '%s' "$ENV_B64" | base64 -d > ".env.${{ inputs.channel }}"
+          test -s ".env.${{ inputs.channel }}"
+
+          # Read only the one key needed. Sourcing the whole file would pull every
+          # Sentry / Telegram / Stripe token in it into this step's environment.
+          BUCKET="$(grep -E '^AWS_RELEASES_BUCKET=' ".env.${{ inputs.channel }}" | tail -1 | cut -d= -f2- | tr -d '"'\''\r ')"
+          if [ -z "$BUCKET" ]; then
+            echo "::error::AWS_RELEASES_BUCKET is not set in .env.${{ inputs.channel }}. configure_storage_provider() in ops/release/lib/env.sh dies on this too, so the real lanes would fail the same way."
+            exit 1
+          fi
+          echo "AWS_RELEASES_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "Bucket: $BUCKET"
+
+      - name: Read access (list the release prefixes)
+        run: |
+          set -euo pipefail
+          echo "Listing up to 5 objects under updates/ in $AWS_RELEASES_BUCKET"
+          aws s3api list-objects-v2 --bucket "$AWS_RELEASES_BUCKET" \
+            --prefix updates/ --max-items 5 --query 'Contents[].Key' --output text
+
+      - name: Read access (the feed the updater actually fetches)
+        run: |
+          set -euo pipefail
+          # head-object, not `s3 ls`: ls matches a PREFIX and this bucket really
+          # does carry appcast.xml.azure-bak-* next to appcast.xml.
+          aws s3api head-object --bucket "$AWS_RELEASES_BUCKET" \
+            --key updates/appcast.xml --query '{len:ContentLength,type:ContentType}' --output json
+
+      - name: Write access (probe object)
+        if: inputs.write_probe
+        run: |
+          set -euo pipefail
+          PROBE="updates/ci-plumbing/oidc-probe-${{ github.run_id }}.txt"
+          printf 'plumbing probe from run %s at %s\n' "${{ github.run_id }}" "$(date -u +%FT%TZ)" > probe.txt
+          aws s3 cp probe.txt "s3://${AWS_RELEASES_BUCKET}/${PROBE}" --content-type text/plain --only-show-errors
+          echo "Wrote s3://${AWS_RELEASES_BUCKET}/${PROBE}"
+          aws s3api head-object --bucket "$AWS_RELEASES_BUCKET" --key "$PROBE" --query ContentLength --output text
+          echo "Publishing works. The object is left in place on purpose (the role has no delete)."
+
+      - name: CloudFront invalidation permission
+        run: |
+          set -euo pipefail
+          # The publish scripts hard-fail without this, so prove it here rather
+          # than at the end of a build. An invalidation of a path that does not
+          # exist is free and harmless.
+          if [ -z "${AWS_CLOUDFRONT_DISTRIBUTION_ID:-}" ]; then
+            AWS_CLOUDFRONT_DISTRIBUTION_ID="$(grep -E '^AWS_CLOUDFRONT_DISTRIBUTION_ID=' ".env.${{ inputs.channel }}" | tail -1 | cut -d= -f2- | tr -d '"'\''\r ')"
+          fi
+          if [ -z "$AWS_CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "::error::AWS_CLOUDFRONT_DISTRIBUTION_ID is not set in .env.${{ inputs.channel }}. configure_storage_provider() dies on this: /updates/* is cached, and a republished feed stays stale at the edge without an invalidation."
+            exit 1
+          fi
+          aws cloudfront create-invalidation \
+            --distribution-id "$AWS_CLOUDFRONT_DISTRIBUTION_ID" \
+            --paths "/updates/ci-plumbing/does-not-exist-${{ github.run_id }}" \
+            --query 'Invalidation.Status' --output text
+          echo "Invalidation permission confirmed."
