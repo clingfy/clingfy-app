@@ -162,11 +162,31 @@ class NativeBridge {
       return;
     }
 
-    final pending = List<String>.from(_pendingProjectOpenRequests);
-    _pendingProjectOpenRequests.clear();
-    for (final projectPath in pending) {
-      cb(projectPath);
-    }
+    // Drain OFF the registering call stack. `HomeBindings.bind()` attaches this
+    // from `_HomePageState.didChangeDependencies`, which runs inside the build
+    // phase, so delivering inline made a cold start from a `.clingfyproj` path
+    // mutate RecordingController / PlayerController / PostProcessingController
+    // mid-build — five "setState() or markNeedsBuild() called during build"
+    // errors before the editor had drawn a frame. A microtask runs after the
+    // frame's synchronous build/layout/paint, so the callback sees a settled
+    // tree.
+    //
+    // The queue is read and cleared INSIDE the microtask, not before it: if the
+    // callback is detached in between, the request stays queued for the next
+    // listener instead of being dropped. A request that arrives in that window
+    // goes straight to the live path above (the callback is already non-null)
+    // and is never added to the queue, so it cannot be delivered twice.
+    scheduleMicrotask(() {
+      final current = _onProjectOpenRequested;
+      if (current == null) {
+        return;
+      }
+      final pending = List<String>.from(_pendingProjectOpenRequests);
+      _pendingProjectOpenRequests.clear();
+      for (final projectPath in pending) {
+        current(projectPath);
+      }
+    });
   }
 
   void setOnPreRecordingBarAction(
