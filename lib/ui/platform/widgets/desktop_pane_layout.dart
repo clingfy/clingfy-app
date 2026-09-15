@@ -555,20 +555,43 @@ class _DesktopSplitLayoutState extends State<DesktopSplitLayout> {
     final preservedLayoutWidth =
         _lastPositivePaneWidths[pane.presentation.id] ??
         pane.slot.spec.minWidth;
-    final child = preserveChildLayout
-        ? Align(
-            alignment: Alignment.centerLeft,
-            child: OverflowBox(
-              alignment: Alignment.centerLeft,
-              minWidth: math.max(targetWidth, preservedLayoutWidth),
-              maxWidth: math.max(targetWidth, preservedLayoutWidth),
-              child: SizedBox(
-                width: math.max(targetWidth, preservedLayoutWidth),
-                child: pane.slot.builder(context, pane.presentation),
-              ),
-            ),
-          )
-        : pane.slot.builder(context, pane.presentation);
+    // The wrapper chain is emitted UNCONDITIONALLY and only its width varies.
+    //
+    // This used to be a ternary that dropped Align/OverflowBox/SizedBox when
+    // `preserveChildLayout` was false. That changed the widget TYPE at this slot
+    // (Align vs. whatever the pane builds), so `Widget.canUpdate` failed on every
+    // flip, the pane's element was deactivated and a fresh one mounted, and the
+    // new subtree retook its GlobalKey — `HomeLeftSidebar` carries one for the
+    // quick-tour anchors. A GlobalKey retake runs `Element._activateRecursively`
+    // over the whole old subtree, which re-activates any `OverlayPortal` showing
+    // inside it. A Material `Tooltip` is an OverlayPortal, so hovering a sidebar
+    // button while the rail width settled re-adopted the tooltip's overlay child
+    // into the root `_RenderTheater` and called `markNeedsLayout` on it — all
+    // from inside this LayoutBuilder's `performLayout`. That throws
+    // "A _RenderLayoutBuilder was mutated in _RenderLayoutBuilder.performLayout",
+    // and in debug it poisons the Overlay for the rest of the session: every
+    // later tooltip and menu silently fails to appear.
+    //
+    // Keeping one shape makes `canUpdate` succeed, so the pane is updated in
+    // place, nothing is deactivated, and no portal is ever re-adopted mid-layout.
+    // At `layoutWidth == targetWidth` the three wrappers are a no-op, so the
+    // non-preserving case is unchanged; `preserveChildLayout` already covers the
+    // hidden-pane case (`effectiveWidth <= 0`), which took this branch before.
+    final layoutWidth = preserveChildLayout
+        ? math.max(targetWidth, preservedLayoutWidth)
+        : targetWidth;
+    final child = Align(
+      alignment: Alignment.centerLeft,
+      child: OverflowBox(
+        alignment: Alignment.centerLeft,
+        minWidth: layoutWidth,
+        maxWidth: layoutWidth,
+        child: SizedBox(
+          width: layoutWidth,
+          child: pane.slot.builder(context, pane.presentation),
+        ),
+      ),
+    );
 
     return AnimatedContainer(
       key: ValueKey('desktop_pane_slot_${pane.presentation.id.name}'),

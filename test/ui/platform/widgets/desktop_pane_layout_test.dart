@@ -151,6 +151,45 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
+    "a pane width change updates the pane in place instead of remounting it",
+    (tester) async {
+      _setDesktopWindow(tester);
+      final controller = DesktopPaneController();
+      final anchorKey = GlobalKey();
+      var mounts = 0;
+
+      await tester.pumpWidget(
+        _buildMountCountingHarness(
+          controller: controller,
+          anchorKey: anchorKey,
+          onMount: () => mounts += 1,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(mounts, 1, reason: "sanity: mounted once on the first pump");
+
+      // Collapsing the inspector moves the other panes resolved widths, which is
+      // what flips preserveChildLayout for a frame and then flips it back.
+      await tester.tap(find.byKey(const Key("toggle_recording_sidebar")));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 60));
+      await tester.pumpAndSettle();
+
+      expect(
+        mounts,
+        1,
+        reason:
+            "the pane child must be UPDATED across a width change, not remounted. "
+            "A remount retakes the pane GlobalKey, which runs "
+            "Element._activateRecursively and re-adopts any showing OverlayPortal "
+            "(a Tooltip) into the root _RenderTheater during performLayout.",
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'drag resize clamps width to pane max and commits only on drag end',
     (tester) async {
       _setDesktopWindow(tester);
@@ -570,4 +609,104 @@ void _setDesktopWindow(
     tester.view.resetPhysicalSize();
     tester.view.resetDevicePixelRatio();
   });
+}
+
+/// Counts how many times it is MOUNTED (not rebuilt), and hangs a GlobalKey
+/// below itself the way `HomeLeftSidebar` hangs the quick-tour anchor key.
+///
+/// A pane whose wrapper chain changes shape fails `Widget.canUpdate`, so the
+/// element is deactivated and a fresh one mounted — which is what drives the
+/// GlobalKey retake and, in the real app, re-activates any `OverlayPortal`
+/// (a Material `Tooltip`) showing inside the pane, mid-layout.
+class _MountCounter extends StatefulWidget {
+  const _MountCounter({required this.onMount, required this.anchorKey});
+
+  final VoidCallback onMount;
+  final GlobalKey anchorKey;
+
+  @override
+  State<_MountCounter> createState() => _MountCounterState();
+}
+
+class _MountCounterState extends State<_MountCounter> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onMount();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: widget.anchorKey,
+      child: const ColoredBox(
+        key: Key('pane_mount_counter'),
+        color: Colors.indigo,
+      ),
+    );
+  }
+}
+
+/// Same shape as `_buildHarness`, but the left pane builds a [_MountCounter] so
+/// a test can tell an in-place update from a remount.
+Widget _buildMountCountingHarness({
+  required DesktopPaneController controller,
+  required GlobalKey anchorKey,
+  required VoidCallback onMount,
+  double width = 900,
+  double height = 500,
+}) {
+  return MaterialApp(
+    home: Scaffold(
+      body: Center(
+        child: SizedBox(
+          width: width,
+          height: height,
+          child: DesktopSplitLayout(
+            controller: controller,
+            gap: 4,
+            minHeight: height,
+            onLayoutCommitted: (_) {},
+            panes: [
+              DesktopPaneSlot(
+                spec: _leftSpec,
+                builder: (context, presentation) => const ColoredBox(
+                  key: Key('pane_home_left_sidebar'),
+                  color: Colors.blueGrey,
+                ),
+              ),
+              DesktopPaneSlot(
+                spec: _inspectorSpec,
+                builder: (context, presentation) {
+                  return Stack(
+                    children: [
+                      const ColoredBox(
+                        key: Key('pane_recording_sidebar'),
+                        color: Colors.teal,
+                      ),
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: IconButton(
+                          key: const Key('toggle_recording_sidebar'),
+                          onPressed: () =>
+                              controller.togglePaneCollapsed(_inspectorSpec),
+                          icon: const Icon(Icons.chevron_right_rounded),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              DesktopPaneSlot(
+                spec: _workspaceSpec,
+                builder: (context, presentation) =>
+                    _MountCounter(onMount: onMount, anchorKey: anchorKey),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
 }
