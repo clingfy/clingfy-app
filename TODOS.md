@@ -86,6 +86,15 @@ which are the only recorded numbers for this defect.
 
 ### The clips lane is below the fold in the editor, at every window height tested
 
+> **STATUS 2026-09-15 — DOES NOT REPRODUCE on develop @ `a01467f`. Not closed.**
+> Re-measured with the same project and the same window size, and the ruler, clips
+> lane and zoom lane all render fully on screen. Details in "Re-measured" below.
+> Left open rather than deleted because the 2026-09-12 sighting was a human looking
+> at a real screen, and because every Dart file behind this layout is byte-identical
+> between that sighting and this clean result — so nothing was fixed, and the cause
+> is still unknown. Close it once a second session (ideally at a different display
+> scale) confirms a clean editor; re-open with a DPI-aware capture if it returns.
+
 - **What:** open a recording, and the timeline toolbar and transport bar render but the
   TimelineEditorViewport (ruler + clips/zoom lanes) sits below the bottom of the window.
   No cutting, trimming, reordering or zoom editing is reachable.
@@ -108,14 +117,70 @@ which are the only recorded numbers for this defect.
   (`video_timeline.dart:~540-612`), and the viewport computes its own height as
   `ruler + lanes*laneHeight + gaps` (`timeline_editor_viewport.cpp:155-160` / `:412-420`).
   The toolbar and transport render; only the viewport does not.
-- **Next step:** dump the render tree (`debugDumpRenderTree()`) with a project open and find who
-  gives the viewport a zero/negative height box, or which ancestor clips it. Reading the widget
-  code did not settle it - three plausible theories were each disproved by measurement.
+- **Re-measured 2026-09-15, develop @ `a01467f`, Debug build, same project
+  rec_1784676792947794.** The lane renders. Two window sizes, both DPI-aware captures:
+  - **1937x1037 real px** (client 1919x990) — this IS the "1550x830 on a 1536x864 display"
+    case above, written in real pixels rather than virtualized ones. Ruler 0:00-0:25,
+    Clips lane with the clip labelled "1", Zoom lane with three segments. All visible.
+  - **1250x800 real px** (client 1232x753) — the smallest window the app allows
+    (`kMinimumDesktopWindowSize = Size(960, 640)`, `lib/app/bootstrap/desktop_window.dart:8`).
+    Same three, all visible. If the defect were height-driven it would show here first.
+  - The render tree agrees and always did: `VideoTimeline` sits at column offset
+    (0, 525.3) with height 251.5 = header 48.0 + 5.5 + transport 42.2 + 5.5 +
+    **viewport 150.3**, inside a tight 776.8-tall `home_workspace_column` whose five
+    children sum to exactly 776.8. No overflow, nothing clipped, viewport on screen.
+  - **No layout fix landed in between, and this is checked, not assumed.**
+    `git diff eef38a5 a01467f -- lib/` returns exactly one file:
+    `lib/core/bridges/native_bridge.dart` (the unrelated project-open drain fix,
+    #493). `eef38a5` is the density fix #484 — i.e. the very commit this entry's own
+    "after the density fix ... still not visible" line was measured against. So every
+    Dart file that produces this layout is **byte-identical** between the 2026-09-12
+    sighting and the 2026-09-15 clean result. Same code, same project, same window
+    size, opposite outcome. (Native changed over that window — #486-#490 — but that
+    is the camera render-plan seam in `Capture/Camera/`, which has no part in
+    Flutter-side timeline layout.)
+  - That is the useful lead for whoever picks this up: since the code is identical,
+    the difference has to be environmental or in the original measurement. Prime
+    suspects, in order: display scale / which monitor the window was on (this box has
+    a 1920x1080 @125% primary and a 2560x1440 @125% secondary), and the possibility
+    that the 09-12 numbers were themselves read through a DPI-unaware tool — the same
+    trap documented below, which produces this exact symptom.
+
+- **BEWARE the instrument — this cost an afternoon.** An initial re-measurement
+  "reproduced" the bug perfectly, matching this entry detail for detail including a
+  convincing inverse-height ladder. It was an artifact. Screenshots were taken from a
+  **DPI-unaware** PowerShell: `GetWindowRect`/`GetClientRect` returned virtualized
+  1550x830 / 1536x792 while the real window was 1937x1037 / client 1919x990, the
+  capture bitmap was allocated at the virtualized size, and `PrintWindow` **crops**
+  into an undersized DC instead of scaling. That silently removed the bottom ~20% of
+  every screenshot — exactly where the viewport lives. Before trusting any capture
+  here, call `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`
+  as the FIRST statement, and multiply any size a DPI-unaware tool quotes by the
+  display scale. When a screenshot and the render tree disagree, suspect the capture.
+  (Unrelated red herring: `debugDumpRenderTree` prints `device pixel ratio: 1.3` because
+  it formats to one decimal. The real ratio is 1.25. There is no double-scaling defect.)
+
+- **The widget test does NOT cover this.**
+  `test/app/home/preview/widgets/timeline/timeline_viewport_visibility_test.dart` (#491)
+  pins the viewport on screen at 1550x830 under the real Windows `ResponsiveShellScope`
+  and is green — it was green while this entry described a live bug, and it would stay
+  green if the bug returned in whatever form the harness does not model. Do not read
+  that suite passing as evidence about this entry either way.
+
+- **Next step:** confirm on a second machine, ideally one at a different display scale
+  (this box is 125%). If it stays clean, close this entry. If it returns, capture it
+  DPI-aware and dump the render tree (`debugDumpRenderTree()`) with a project open to
+  find who gives the viewport a zero/negative height box or which ancestor clips it —
+  reading the widget code did not settle it, and three plausible theories were each
+  disproved by measurement.
 - **Severity:** if this reproduces on a tester's machine it blocks the whole editor, which is the
   half of the product that is not the recorder. Worth confirming on a second machine before the
-  beta invite, since it did not reproduce as a simple height problem.
-- **Effort:** unknown until the render tree is dumped; the investigation above cost ~1h and
-  disproved the obvious causes rather than finding the real one.
+  beta invite, since it did not reproduce as a simple height problem. Severity is unchanged by
+  the 09-15 re-measurement — a defect that cannot be reproduced is not the same as one that is
+  understood, and this one is still not understood.
+- **Effort:** unknown. The 09-12 investigation cost ~1h and disproved the obvious causes without
+  finding the real one; the 09-15 re-measurement cost an afternoon, most of it spent chasing a
+  false repro manufactured by the capture tool.
 
 ## Windows — capture exclusion
 
