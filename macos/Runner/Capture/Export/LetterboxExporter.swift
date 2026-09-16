@@ -990,8 +990,26 @@ final class LetterboxExporter {
     validationInfo: CompositionBuilder.ExportValidationInfo,
     finalExportAsset: AVAsset,
     captions: [CaptionCueTrack.Cue] = [],
-    keptRanges: [ClipKeptRange] = []
+    keptRanges: [ClipKeptRange] = [],
+    colorGrade: ColorGrade = .identity
   ) -> NSError? {
+    // Same grade blindness as `evaluateFinalExportReferenceRender`, and it
+    // deletes the export too -- so it has to be gated in the same change or
+    // the deletion simply moves here for every pre-styled-camera user.
+    //
+    // This one is arguably worse: on the pre-styled path there is no inline
+    // camera render plan, so the writer takes the whole-canvas branch and
+    // grades the very camera bubble this validator crops to, with no ungraded
+    // background left in the crop to dilute the delta.
+    guard colorGrade.isIdentity else {
+      NativeLogger.i(
+        "Export",
+        "Final styled camera colour validation skipped: colour grade active",
+        context: ["exposure": colorGrade.exposure, "saturation": colorGrade.saturation]
+      )
+      return nil
+    }
+
     // The same two corrections `validateFinalExportReferenceRender` already
     // carries, and for the same reasons -- this validator crops to the camera
     // bubble, but a wide caption over a bottom-corner bubble lands inside that
@@ -1363,7 +1381,8 @@ final class LetterboxExporter {
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
     captions: [CaptionCueTrack.Cue] = [],
-    keptRanges: [ClipKeptRange] = []
+    keptRanges: [ClipKeptRange] = [],
+    colorGrade: ColorGrade = .identity
   ) -> NSError? {
     evaluateFinalExportReferenceRender(
       referenceAsset: referenceAsset,
@@ -1374,7 +1393,8 @@ final class LetterboxExporter {
       backgroundImagePath: backgroundImagePath,
       backgroundPreset: backgroundPreset,
       captions: captions,
-      keptRanges: keptRanges
+      keptRanges: keptRanges,
+      colorGrade: colorGrade
     ).error
   }
 
@@ -1387,8 +1407,52 @@ final class LetterboxExporter {
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
     captions: [CaptionCueTrack.Cue] = [],
-    keptRanges: [ClipKeptRange] = []
+    keptRanges: [ClipKeptRange] = [],
+    colorGrade: ColorGrade = .identity
   ) -> FinalExportReferenceEvaluation {
+    // A colour grade is applied in the WRITER LOOP (`ColorGradeRenderer.apply`,
+    // this file), never in the composition: `CompositionParams.colorGrade`
+    // (CompositionBuilder.swift) was added as forward plumbing for an export
+    // bake that went somewhere else, and has never been read by anything. So
+    // the reference render below is UNGRADED while the file it is compared
+    // against IS graded, and the entire difference the user deliberately asked
+    // for is charged to a budget sized for pipeline transfer error -- by a
+    // validator that DELETES what it rejects.
+    //
+    // Measured on light-mode screen content at the thresholds actually in
+    // force (0.14 luma / 0.18 channel -- every single-source export carries an
+    // animation tool, see `validationThresholds(for:)`):
+    //
+    //     identity           luma 0.0014   <- the real headroom
+    //     Auto button        luma 0.0410   survives
+    //     exposure -0.25     luma 0.1757   DELETED
+    //     exposure -0.50     luma 0.3071   DELETED
+    //     tint     +1.00     chan 0.3058   DELETED
+    //
+    // A quarter of one slider, darkening a bright recording, destroys the
+    // export. That has shipped since 1.0.5.
+    //
+    // Skipping is the same remedy the caption case takes just below: refuse to
+    // measure rather than risk deleting a correct file. It is a stop-gap. The
+    // real fix is to grade the reference at the matching seat (whole frame on
+    // the direct path, screen sub-image only on the inline-camera path) and
+    // restore the check; this parameter is where that lands.
+    guard colorGrade.isIdentity else {
+      NativeLogger.i(
+        "Export",
+        "Final export reference-render colour validation skipped: colour grade active",
+        context: [
+          "exposure": colorGrade.exposure,
+          "contrast": colorGrade.contrast,
+          "saturation": colorGrade.saturation,
+          "temperature": colorGrade.temperature,
+          "tint": colorGrade.tint,
+        ]
+      )
+      return FinalExportReferenceEvaluation(
+        lumaDelta: nil, maxChannelDelta: nil, error: nil)
+    }
+
     do {
       let referenceDurationSeconds = referenceAsset.duration.seconds
       let finalDurationSeconds = finalExportAsset.duration.seconds
@@ -3490,7 +3554,8 @@ final class LetterboxExporter {
             backgroundImagePath: backgroundImagePath,
             backgroundPreset: backgroundPreset,
             captions: captions,
-            keptRanges: keptRanges
+            keptRanges: keptRanges,
+            colorGrade: colorGrade
           ) {
             NativeLogger.e(
               "Export",
@@ -3511,7 +3576,8 @@ final class LetterboxExporter {
               validationInfo: validationInfo,
               finalExportAsset: AVAsset(url: finalURL),
               captions: captions,
-              keptRanges: keptRanges
+              keptRanges: keptRanges,
+              colorGrade: colorGrade
             )
           {
             NativeLogger.e(
@@ -4095,7 +4161,8 @@ final class LetterboxExporter {
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
     captions: [CaptionCueTrack.Cue] = [],
-    keptRanges: [ClipKeptRange] = []
+    keptRanges: [ClipKeptRange] = [],
+    colorGrade: ColorGrade = .identity
   ) -> FinalExportReferenceEvaluation {
     evaluateFinalExportReferenceRender(
       referenceAsset: referenceResult.asset,
@@ -4106,7 +4173,8 @@ final class LetterboxExporter {
       backgroundImagePath: backgroundImagePath,
       backgroundPreset: backgroundPreset,
       captions: captions,
-      keptRanges: keptRanges
+      keptRanges: keptRanges,
+      colorGrade: colorGrade
     )
   }
 
