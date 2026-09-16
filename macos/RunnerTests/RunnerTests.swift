@@ -4347,6 +4347,110 @@ final class LetterboxExporterTests: XCTestCase {
   /// is tagged, which makes it a bad foundation for an assertion — and is a
   /// large part of why this branch's defect was invisible to the suite for as
   /// long as it was.
+  /// A colour-graded export must survive the final-export validator.
+  ///
+  /// The grade is applied in the WRITER LOOP (`ColorGradeRenderer.apply`),
+  /// never in the composition -- `CompositionParams.colorGrade` has never been
+  /// read by anything. So the validator renders an UNGRADED reference and
+  /// compares it against a GRADED file, charging the whole difference the user
+  /// deliberately asked for to a budget sized for pipeline transfer error. The
+  /// validator deletes what it rejects, so this destroyed finished exports;
+  /// measured on light-mode screen content, exposure -0.25 -- a quarter of one
+  /// slider -- lands at luma 0.176 against a 0.14 budget. Shipped in 1.0.5.
+  ///
+  /// BOTH halves are asserted, and the first is what keeps the second honest:
+  /// if this fixture ever stopped tripping the validator, "the gate saved it"
+  /// would pass for the wrong reason and pin nothing.
+  func testAColourGradedExportIsNotDeletedByTheReferenceValidator() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeColorPatchVideo(
+      url: screenURL,
+      size: CGSize(width: 320, height: 180),
+      durationSeconds: 1.0
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 320, height: 180),
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.0,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: nil,
+        params: params,
+        cameraParams: nil,
+        cursorRecording: nil
+      )
+    )
+
+    // Slider-maximum darkening. A quarter of this slider already crosses the
+    // budget on bright content; the maximum is used so the fixture trips on
+    // any reasonable source, not only a light-mode one.
+    let grade = ColorGrade(
+      autoEnabled: false, exposure: -1.0, contrast: 0, saturation: 0,
+      temperature: 0, tint: 0
+    )
+
+    let outputURL = tempDir.appendingPathComponent("graded.mov")
+    let exporter = LetterboxExporter()
+    let rendered = expectation(description: "graded render")
+    var outcome: Result<URL, Error>?
+    exporter._testRenderFinalExport(
+      result: composition,
+      outputURL: outputURL,
+      colorGrade: grade
+    ) { result in
+      outcome = result
+      rendered.fulfill()
+    }
+    wait(for: [rendered], timeout: 120.0)
+    _ = try XCTUnwrap(try outcome?.get())
+
+    // HALF ONE -- the fixture really is hot. Evaluated the way this validator
+    // behaved before the gate, knowing nothing about the grade, it rejects the
+    // file and production would have deleted it.
+    let ungated = exporter._testEvaluateFinalExportReferenceRender(
+      referenceResult: composition,
+      finalExportURL: outputURL
+    )
+    XCTAssertNotNil(
+      ungated.error,
+      "this fixture no longer trips the validator, so the gate assertion below "
+        + "would pass for the wrong reason -- pick a harsher grade or fixture")
+    let worstDelta = max(ungated.lumaDelta ?? 0, ungated.maxChannelDelta ?? 0)
+    XCTAssertGreaterThan(
+      worstDelta, 0.14,
+      "the rejection should be a real colour delta, not a sampling failure")
+
+    // HALF TWO -- told that a grade is active, the validator declines to
+    // measure and the export survives. Deleting the guard fails this.
+    let gated = exporter._testEvaluateFinalExportReferenceRender(
+      referenceResult: composition,
+      finalExportURL: outputURL,
+      colorGrade: grade
+    )
+    XCTAssertNil(
+      gated.error,
+      "a colour-graded export must never be rejected for looking graded")
+    XCTAssertNil(gated.lumaDelta, "skipped means not measured, not measured-as-zero")
+    XCTAssertNil(gated.maxChannelDelta)
+  }
+
   func testFinalExportReferenceValidatorComparesInTheFilesTransferSpace() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }

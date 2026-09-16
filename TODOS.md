@@ -55,6 +55,58 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 
 ## Export — colour
 
+### Grade the validator's reference render, and restore the colour check
+
+- **What:** `evaluateFinalExportReferenceRender` and `validateFinalStyledCameraExport`
+  currently SKIP entirely when a colour grade is active (the `colorGrade:` parameter
+  on both). Replace that skip by grading the reference so the check runs again.
+- **Why:** the skip is a stop-gap. It was shipped because the ungraded reference was
+  causing the validator to DELETE correct graded exports, and stopping the data loss
+  could not wait. But it blinds the only end-to-end colour check exactly when colour
+  is being changed: a black or mis-placed camera composite in a graded export now
+  ships unnoticed.
+- **Context:** the grade is applied in the writer loop, never in the composition.
+  `CompositionParams.colorGrade` (`CompositionBuilder.swift:1217`) was added by #182
+  as forward plumbing for an export bake that #183 then routed through the manual
+  reader/writer instead, leaving the field written once and never read. The plan doc
+  (`docs/editing-platform-plan.md:369-375`) still names `CompositionBuilder` as the
+  bake seat. Decide whether the composition will ever be grade-aware before deleting
+  the field.
+- **Measured severity of the original defect** (light-mode screen content, at the
+  in-force 0.14 luma / 0.18 channel thresholds — every single-source export carries
+  an animation tool):
+
+  | grade | lumaΔ | chanΔ | |
+  |---|---|---|---|
+  | identity | 0.0014 | 0.0018 | the real headroom |
+  | Auto button | 0.0410 | 0.0428 | safe |
+  | exposure −0.25 | 0.1757 | 0.1791 | **deleted** |
+  | exposure −0.50 | 0.3071 | 0.3120 | **deleted** |
+  | tint +1.00 | 0.0309 | 0.3058 | **deleted** |
+
+- **The fix has two seats, not one.** Direct path: grade the WHOLE reference frame.
+  Inline-camera path: grade the screen sub-image ONLY, before `makeCompositedImage`
+  — `CameraStyledIntermediatePipeline.swift:927-932` deliberately leaves the camera
+  bubble ungraded to match the live preview. One global `ColorGradeRenderer.apply`
+  over the reference would over-grade the bubble and background and leave the same
+  asymmetry with the opposite sign.
+- **Gotchas:** render through `VideoColorPipeline.makeCIContext()` (gamma-encoded
+  sRGB working space — Core Image's linear default gives different numbers from
+  `CIExposureAdjust`/`CIColorControls`); apply the grade only AFTER the sRGB retag
+  at `normalizeForColorAnalysis`, because the camera branch currently feeds a
+  GenericRGB-tagged CGImage straight into `CIImage(cgImage:)`; and on paths with no
+  animation tool the reference is generated at 64x64, so a grade applied there runs
+  after downsampling while the writer grades at full resolution — the two do not
+  commute exactly.
+- **How to verify:** the sweep harness that produced the table above. Re-run it after
+  the fix and every row must read `kept`, including `SLIDER MAX, all five`.
+- **Start at:** `macos/Runner/Capture/Export/LetterboxExporter.swift` — the two
+  `guard colorGrade.isIdentity` blocks, and the reference sampling at the
+  `inlineCameraRenderPlan` branch just below.
+- **Open question for the owner:** should the pre-styled camera bubble receive the
+  grade at all? The inline path explicitly does not grade it; the pre-styled path
+  grades it as part of the whole canvas. Those disagree today.
+
 ### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 
 Filed 2026-07-28 (#369), closed by the 1.0.7 cycle. Kept for the measurements,
