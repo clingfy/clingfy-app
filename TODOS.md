@@ -317,10 +317,31 @@ which are the only recorded numbers for this defect.
   narrower than this repro (on a Start-failure path the sidecar writers are
   often null, and `finalize_one` returns immediately when so) -- but that is
   reasoning, not a measurement.
-- **Next step:** add a breadcrumb INSIDE `FinalizeAudioSidecars` around each
-  `writer->Finalize()` / `writer->Cancel()` to separate the two, then reproduce
-  with the two-process recipe above. The hang is now reproducible on demand,
-  which is the part that was missing all along.
+- **Narrowed 2026-09-16 — it is NOT the MF Finalize call.** Breadcrumbs inside
+  `FinalizeAudioSidecars` (now permanent, same opt-in gate) caught one hang:
+
+  ```
+  [teardown] FinalizeAudioSidecars
+  [teardown] sidecar Finalize mic     <- Finalize entered AND returned
+  [teardown] sidecar reset mic        <- printed BEFORE writer.reset() runs
+  ```
+
+  then silence. So `IMFSinkWriter::Finalize` completed and the block is at or
+  after `writer.reset()` for the MIC sidecar — the `AudioSidecarWriter`
+  destructor, or the `std::filesystem::remove` of the temp file just after it.
+  The loopback writer is never reached.
+  `~AudioSidecarWriter` calls `Cancel()`, which takes `mutex_` and resets an
+  already-null ComPtr, so the interesting question is WHO ELSE holds that
+  writer's `mutex_` at that moment — the audio mixer thread is supposed to have
+  been joined two phases earlier.
+- **Intermittent.** A second identical two-process run completed on both sides
+  (5 and 3 assertion failures, no hang). One occurrence in two attempts, so
+  expect to run the recipe several times.
+- **Next step:** re-run the two-process recipe until it hangs again, then attach
+  a debugger to the stuck process and dump thread stacks — the breadcrumbs have
+  taken this as far as printf can. A post-reset breadcrumb was added and did not
+  fire in the one captured hang, which is what places the block at `reset()`
+  rather than at the file delete.
 
 
 ### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)

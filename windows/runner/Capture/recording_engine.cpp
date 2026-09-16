@@ -50,8 +50,40 @@
 #include "Graphics/d3d_device.h"
 #include "Permissions/camera_readiness.h"
 #include "Permissions/permission_probe.h"
+#include <string>
 
 namespace clingfy::capture {
+
+namespace {
+
+// Phase breadcrumbs for `TeardownPipeline`, to stderr, opt-in via
+// CLINGFY_TEARDOWN_TRACE.
+//
+// Teardown stops five capture producers and joins two threads, and had no
+// phase visibility at all: when it blocks, the process simply stops. CI run
+// 35007670584 sat 43 minutes inside one RecordingEngineTest and named nothing
+// -- ctest printed `Start 1311:` and then silence until the 60-minute job
+// timeout killed the suite with ~200 tests unrun. A hang has to say which
+// phase it died in BEFORE it dies, so these print ahead of each step.
+//
+// Off unless the env var is set, so the shipping app is untouched. The
+// recording-engine test fixture sets it, which is what puts these lines into
+// CI`s captured ctest output without editing the workflow file.
+void TeardownTrace(const char* phase) {
+  // Deliberately NOT cached in a static. The fixture's SetUp calls
+  // ForceResetForTesting() -> TeardownPipeline BEFORE it sets the env var, so a
+  // one-shot static reads "off" on that first call and stays off for the whole
+  // process — which is exactly how this silently produced no output the first
+  // time. Teardown runs a handful of times per process, never in a loop, so
+  // re-reading the variable costs nothing worth caching.
+  if (::GetEnvironmentVariableA("CLINGFY_TEARDOWN_TRACE", nullptr, 0) == 0) {
+    return;
+  }
+  std::fprintf(stderr, "[teardown] %s\n", phase);
+  std::fflush(stderr);
+}
+
+}  // namespace
 
 namespace {
 
@@ -1717,6 +1749,7 @@ void RecordingEngine::FinalizeAudioSidecars(bool keep_output) {
         const bool healthy =
             keep_output && !failed.load() && writer->samples_written() > 0;
         if (healthy) {
+          TeardownTrace((std::string("sidecar Finalize ") + label).c_str());
           if (auto err = writer->Finalize()) {
             char buf[640];
             std::snprintf(buf, sizeof(buf),
@@ -1731,14 +1764,18 @@ void RecordingEngine::FinalizeAudioSidecars(bool keep_output) {
             ok_flag = true;
           }
         } else {
+          TeardownTrace((std::string("sidecar Cancel ") + label).c_str());
           writer->Cancel();
         }
+        TeardownTrace((std::string("sidecar reset ") + label).c_str());
         writer.reset();
+        TeardownTrace((std::string("sidecar post-reset ") + label).c_str());
         if (!ok_flag && !path.empty()) {
           // A cancelled / failed sidecar temp is never usable (headerless
           // MP4) — delete it now rather than leaving a strand.
           std::error_code ec;
           std::filesystem::remove(std::filesystem::u8path(path), ec);
+          TeardownTrace((std::string("sidecar deleted ") + label).c_str());
           path.clear();
         }
       };
@@ -1956,37 +1993,6 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
         writer_result.message);
   }
 }
-
-namespace {
-
-// Phase breadcrumbs for `TeardownPipeline`, to stderr, opt-in via
-// CLINGFY_TEARDOWN_TRACE.
-//
-// Teardown stops five capture producers and joins two threads, and had no
-// phase visibility at all: when it blocks, the process simply stops. CI run
-// 35007670584 sat 43 minutes inside one RecordingEngineTest and named nothing
-// -- ctest printed `Start 1311:` and then silence until the 60-minute job
-// timeout killed the suite with ~200 tests unrun. A hang has to say which
-// phase it died in BEFORE it dies, so these print ahead of each step.
-//
-// Off unless the env var is set, so the shipping app is untouched. The
-// recording-engine test fixture sets it, which is what puts these lines into
-// CI`s captured ctest output without editing the workflow file.
-void TeardownTrace(const char* phase) {
-  // Deliberately NOT cached in a static. The fixture's SetUp calls
-  // ForceResetForTesting() -> TeardownPipeline BEFORE it sets the env var, so a
-  // one-shot static reads "off" on that first call and stays off for the whole
-  // process — which is exactly how this silently produced no output the first
-  // time. Teardown runs a handful of times per process, never in a loop, so
-  // re-reading the variable costs nothing worth caching.
-  if (::GetEnvironmentVariableA("CLINGFY_TEARDOWN_TRACE", nullptr, 0) == 0) {
-    return;
-  }
-  std::fprintf(stderr, "[teardown] %s\n", phase);
-  std::fflush(stderr);
-}
-
-}  // namespace
 
 void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   TeardownTrace("begin");
