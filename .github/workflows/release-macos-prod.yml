@@ -197,8 +197,37 @@ jobs:
           flutter-version: 3.41.1
           channel: stable
 
+      # Was `brew install --cask sparkle`. Homebrew DISABLED that cask on 2026-09-01
+      # ("Cask 'sparkle' has been disabled because it does not pass the macOS Gatekeeper
+      # check!"), so the step fails outright — observed in run 35094504373. Nothing to do
+      # with this project; the same line breaks the Azure DevOps lanes identically, which
+      # means the macOS release path has been unusable since that date.
+      #
+      # Install from Sparkle's own signed release tarball instead, which is what the cask
+      # wrapped anyway. Pinned by version AND sha256 — this toolchain signs what every
+      # installed Mac will accept as an update, so an unpinned download is not acceptable
+      # here even over HTTPS.
+      #
+      # 2.9.6 rather than the newest (2.10.0, released 3 days before this change): the app
+      # pins Sparkle upToNextMajorVersion from 2.8.1, so any 2.x works, and a settled
+      # release is the right call in a signing path.
+      #
+      # BinaryDelta is installed alongside: generate_appcast shells out to it to build the
+      # delta updates, and expects to find it next to itself.
       - name: Install Sparkle tools
-        run: brew install --cask sparkle
+        run: |
+          set -euo pipefail
+          VER=2.9.6
+          SHA=52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192
+          curl -fsSL -o /tmp/Sparkle.tar.xz             "https://github.com/sparkle-project/Sparkle/releases/download/${VER}/Sparkle-${VER}.tar.xz"
+          echo "${SHA}  /tmp/Sparkle.tar.xz" | shasum -a 256 -c -
+          mkdir -p /tmp/sparkle
+          tar -xJf /tmp/Sparkle.tar.xz -C /tmp/sparkle
+          for T in generate_appcast sign_update BinaryDelta generate_keys; do
+            sudo install -m 0755 "/tmp/sparkle/bin/$T" "/usr/local/bin/$T"
+          done
+          # lib/sparkle.sh looks in /usr/local/bin first, so this needs no resolver change.
+          command -v generate_appcast
 
       - name: Install create-dmg
         run: |
