@@ -224,6 +224,59 @@ which are the only recorded numbers for this defect.
   finding the real one; the 09-15 re-measurement cost an afternoon, most of it spent chasing a
   false repro manufactured by the capture tool.
 
+## Windows — recording engine teardown
+
+### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)
+
+- **What:** under capture/audio device contention, most `RecordingEngineTest`
+  Start/Stop cases throw
+  `C++ exception with description "resource deadlock would occur"`.
+  That is `EDEADLK` from `std::thread::join()`, which C++ raises for exactly one
+  reason: **a thread joining itself**. So `RecordingEngine::TeardownPipeline`
+  (`recording_engine.cpp:1960`) is reachable from a thread it then tries to join.
+- **10-second repro (2026-09-16).** Run two copies of the recording tests at once
+  so they contend for the real screen/audio devices:
+
+  ```bash
+  EXE=./build/windows-tests/runner_tests/Debug/runner_tests.exe
+  "$EXE" --gtest_filter='RecordingEngineTest.*' > a.log 2>&1 &
+  "$EXE" --gtest_filter='RecordingEngineTest.*' > b.log 2>&1 &
+  wait; grep -c "resource deadlock" a.log b.log
+  ```
+
+  Measured over three rounds: **17-20 deadlock throws and 35-41 failed tests per
+  process, every round.** A single process passes cleanly (963 ms), so this is
+  device contention, not test ordering.
+- **Likely path:** `TeardownPipeline` is called from failure/callback sites, not
+  just from `Stop`. The target-loss handler at `recording_engine.cpp:1844`
+  ("window closed" / "display disconnected") tears down from what is plausibly a
+  capture-backend callback thread. Note the ordering inside `TeardownPipeline`:
+  `camera_floating_->Stop()`, `capture_backend_->Stop()`, `mic_capture_->Stop()`,
+  `loopback_capture_->Stop()` all run BEFORE the joins, so a blocking `Stop()`
+  never reaches them at all.
+- **NOT the same thing as the CI hang — do not conflate them.** The CI failure
+  (run 35007670584, `RecordingEngineTest.StartAfterStopIsAllowed`) was a SILENT
+  43-minute hang with no exception. This repro throws and FAILS in ~23ms. They
+  may share a root cause — device absence on a headless runner and device
+  contention here could reach the same failure path — but that is a hypothesis,
+  not a finding.
+- **Ruled out by measurement:** the fixture's shared sandbox
+  (`%TEMP%\clingfy_engine_test_recordings`, `recording_engine_test.cpp:39`) is a
+  real cross-process isolation smell — every process `remove_all`s the same
+  directory — but making it per-PID left the deadlock counts **identical**
+  (19/18 → 20/18). It is not the cause. Worth tidying for `ctest -j`, but do not
+  sell it as a fix.
+- **Severity:** in a test it is a failed assertion. In the app, an exception
+  escaping a capture callback during teardown is a crash, and teardown runs on
+  the path that finalizes the user's recording. Worth understanding before the
+  beta widens.
+- **Next step:** capture a stack at the throw (run under a debugger with
+  `--gtest_filter='RecordingEngineTest.StopReturnsToIdle'` and the contending
+  process running) to confirm which thread calls `TeardownPipeline`. Fix shape,
+  once confirmed: never join the calling thread — compare
+  `std::this_thread::get_id()` against each thread id and defer or detach — but
+  do not change teardown threading on the hypothesis alone.
+
 ## Windows — capture exclusion
 
 ### The other four capture-excluded windows never re-verify WDA after a mutation
