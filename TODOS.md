@@ -55,57 +55,75 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 
 ## Export — colour
 
-### Grade the validator's reference render, and restore the colour check
+### Grade the validator's reference on the two CAMERA paths
 
-- **What:** `evaluateFinalExportReferenceRender` and `validateFinalStyledCameraExport`
-  currently SKIP entirely when a colour grade is active (the `colorGrade:` parameter
-  on both). Replace that skip by grading the reference so the check runs again.
-- **Why:** the skip is a stop-gap. It was shipped because the ungraded reference was
-  causing the validator to DELETE correct graded exports, and stopping the data loss
-  could not wait. But it blinds the only end-to-end colour check exactly when colour
-  is being changed: a black or mis-placed camera composite in a graded export now
-  ships unnoticed.
-- **Context:** the grade is applied in the writer loop, never in the composition.
-  `CompositionParams.colorGrade` (`CompositionBuilder.swift:1217`) was added by #182
-  as forward plumbing for an export bake that #183 then routed through the manual
-  reader/writer instead, leaving the field written once and never read. The plan doc
-  (`docs/editing-platform-plan.md:369-375`) still names `CompositionBuilder` as the
-  bake seat. Decide whether the composition will ever be grade-aware before deleting
-  the field.
-- **Measured severity of the original defect** (light-mode screen content, at the
-  in-force 0.14 luma / 0.18 channel thresholds — every single-source export carries
-  an animation tool):
+The direct (screen-only) path is DONE: `evaluateFinalExportReferenceRender` now
+grades its own reference via `gradeReferenceImage`, so a graded export is measured
+again instead of skipped. Measured across the whole slider range, every grade
+collapses onto the identity floor — light-mode SLIDER MAX went 0.2784 → 0.0032,
+exposure −1.00 went 0.4789 → 0.0015, and the worst residual anywhere is 0.0252 on
+the dark fixture against a 0.18 budget. `ColorGradeValidatorMarginTests` pins it.
 
-  | grade | lumaΔ | chanΔ | |
-  |---|---|---|---|
-  | identity | 0.0014 | 0.0018 | the real headroom |
-  | Auto button | 0.0410 | 0.0428 | safe |
-  | exposure −0.25 | 0.1757 | 0.1791 | **deleted** |
-  | exposure −0.50 | 0.3071 | 0.3120 | **deleted** |
-  | tint +1.00 | 0.0309 | 0.3058 | **deleted** |
+**Two paths still SKIP when a grade is active, and both should eventually measure.**
 
-- **The fix has two seats, not one.** Direct path: grade the WHOLE reference frame.
-  Inline-camera path: grade the screen sub-image ONLY, before `makeCompositedImage`
-  — `CameraStyledIntermediatePipeline.swift:927-932` deliberately leaves the camera
-  bubble ungraded to match the live preview. One global `ColorGradeRenderer.apply`
-  over the reference would over-grade the bubble and background and leave the same
-  asymmetry with the opposite sign.
-- **Gotchas:** render through `VideoColorPipeline.makeCIContext()` (gamma-encoded
-  sRGB working space — Core Image's linear default gives different numbers from
-  `CIExposureAdjust`/`CIColorControls`); apply the grade only AFTER the sRGB retag
-  at `normalizeForColorAnalysis`, because the camera branch currently feeds a
-  GenericRGB-tagged CGImage straight into `CIImage(cgImage:)`; and on paths with no
-  animation tool the reference is generated at 64x64, so a grade applied there runs
-  after downsampling while the writer grades at full resolution — the two do not
-  commute exactly.
-- **How to verify:** the sweep harness that produced the table above. Re-run it after
-  the fix and every row must read `kept`, including `SLIDER MAX, all five`.
-- **Start at:** `macos/Runner/Capture/Export/LetterboxExporter.swift` — the two
-  `guard colorGrade.isIdentity` blocks, and the reference sampling at the
-  `inlineCameraRenderPlan` branch just below.
-- **Open question for the owner:** should the pre-styled camera bubble receive the
-  grade at all? The inline path explicitly does not grade it; the pre-styled path
-  grades it as part of the whole canvas. Those disagree today.
+**1. The inline-camera reference** (`evaluateFinalExportReferenceRender`, the
+`inlineCameraRenderPlan != nil` branch).
+- Its reference is not a sampled composition frame but a re-composite via
+  `InlineCameraRenderer.makeCompositedImage`, and the writer grades only the SCREEN
+  sub-image there — `CameraStyledIntermediatePipeline.swift:927-932` deliberately
+  leaves the camera bubble and resolved background ungraded to match the live
+  preview. So the grade has to go on the screen input, not the composite.
+- **Watch the margins.** Inline compositions render the screen on a transparent
+  background. If `AVAssetImageGenerator` hands back an OPAQUE image, grading it
+  grades the padding margins too — pixels the writer effectively leaves alone
+  because alpha-0 survives its filter chain. Measure `screenImage.alphaInfo` and the
+  minimum alpha in the margin on a padded fixture BEFORE grading the whole frame.
+- **There is also a pre-existing colour-space wrinkle here**, worth fixing in the
+  same pass: the branch feeds a GenericRGB-tagged CGImage straight into
+  `CIImage(cgImage:)`, so Core Image applies a gamma-1.8 → sRGB conversion the
+  writer never does (pure blue 0,0,255 → 5,51,255, up to ~0.2 — wider than the
+  budget). Declare `.colorSpace: VideoColorPipeline.workingColorSpace`
+  unconditionally so identity and graded share one baseline, and re-baseline the
+  inline exporter tests in the same change rather than keeping a known-wrong
+  ungraded path for byte-identity's sake.
+
+**2. `validateFinalStyledCameraExport`.**
+- Same skip, and it also deletes the export.
+- It CROPS to the camera bubble, and the two sides are cropped out of images at very
+  different resolutions: the reference off the composition, the final off a 64-capped
+  sample. `cropCandidates` scales the rect by image width and snaps with `.integral`,
+  so on a 960x540 canvas a 160px bubble becomes an ~11px window whose rounding is ~9%
+  of the crop — and a grade multiplies that misalignment by its own gain. The direct
+  path has no crop and no such amplifier, so do NOT assume the direct path's 0.0252
+  residual carries over.
+- `_testValidateFinalStyledCameraExport` does not accept a `colorGrade` yet. Add it
+  (plus `captions:`/`keptRanges:`) and build a pre-styled-camera fixture —
+  `cameraAsset:` non-nil with `cameraParams:` set so `comp.validationInfo` is
+  populated and `comp.inlineCameraRenderPlan == nil` — then print that validator's
+  crop-pair deltas per grade alongside an identity control. If the graded row is more
+  than ~3x its own identity control, the crop alignment is the cause and the bubble
+  crop needs padding, not a looser threshold.
+
+**Do not un-skip either one without a fixture that measures it first.** Un-skipping a
+validator that calls `removeFileIfExists` with nothing measured behind it is exactly
+how the original defect shipped.
+
+**Do not "fix" this by forcing full-resolution reference sampling.** That was tried on
+paper and is backwards: the final file is always sampled with `videoComposition: nil`,
+so it is ALWAYS 64-capped by `sampleFrameImage`, and it was graded at full resolution
+by the writer before that. Both sides are already grade-then-downsample in that order,
+which is what has to match — forcing the reference full-size breaks the symmetry.
+
+**Still unanswered:** should the pre-styled camera bubble receive the grade at all?
+The inline path explicitly does not grade it; the pre-styled path grades it as part of
+the whole canvas. Those disagree today, and that is a product question, not a
+validator one.
+
+**Also still open:** `CompositionParams.colorGrade` (`CompositionBuilder.swift:1217`)
+is still declared and never read. Deleting it is behaviourally inert — nothing compares
+two `CompositionParams` — but `docs/editing-platform-plan.md:369-375` still names
+`CompositionBuilder` as the export-bake seat. Decide whether the composition will ever
+be grade-aware before removing the field.
 
 ### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 
