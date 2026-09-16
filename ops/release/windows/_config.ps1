@@ -262,6 +262,10 @@ function Initialize-WindowsReleaseContext {
     StagingMarkerPath = Join-Path $distDir 'app.channel.json'
     InstallerOutDir = Join-Path $distDir 'installer'
     InstallerName   = $installerName
+    # Same artefact, URL spelling. CloudFront 404s a literal '+' in a path, so anything that
+    # goes into a URL uses this, while the S3 key and the on-disk path keep the literal '+'.
+    # Defined here so the two spellings are named once rather than re-derived at each call site.
+    InstallerUrlName = ($installerName -replace '\+', '%2B')
     InstallerPath   = Join-Path $distDir 'installer' $installerName
     Sha256Path      = Join-Path $distDir 'installer' "$installerName.sha256"
     LatestJsonPath  = Join-Path $distDir 'installer' 'latest-windows.json'
