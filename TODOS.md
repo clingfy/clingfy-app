@@ -226,6 +226,51 @@ which are the only recorded numbers for this defect.
 
 ## Windows — recording engine teardown
 
+### `FinalizeAudioSidecars` can block forever during teardown
+
+- **What:** teardown reaches `FinalizeAudioSidecars` and never returns. Silent:
+  no exception, no log, the process simply stops. Almost certainly the same
+  family as the CI failure on run 35007670584, where ctest printed
+  `Start 1311:` and nothing else for 43 minutes until the job timeout.
+- **Caught by the #503 breadcrumbs on their first real occurrence**, which is
+  exactly what they were added for:
+
+  ```
+  [teardown] join encoder_thread
+  [teardown] join audio_mixer_thread
+  [teardown] FinalizeAudioSidecars     <- last line, then silence
+  ```
+
+- **Repro (2026-09-16):** two `runner_tests` processes running
+  `--gtest_filter=RecordingEngineTest.*` at once, so they contend for the real
+  screen and audio devices. One process completed (34 passed, 2 legitimate
+  assertion failures); the other hung at the line above and was killed after
+  10 minutes.
+- **Where:** `FinalizeAudioSidecars` (`recording_engine.cpp:1706`) calls
+  `writer->Finalize()` when the output is kept and `writer->Cancel()` otherwise.
+  Both are Media Foundation calls on an `AudioSidecarWriter`. The hang was on a
+  Start-FAILURE path, where `keep_output` is false, so `Cancel()` is the prime
+  suspect -- not confirmed, and `Finalize()` is reachable the same way on the
+  normal stop path.
+- **It was previously MASKED, and by a bug.** Until the encoder fix that landed
+  with this entry, `MfSinkWriterEncoder::Open` threw
+  `resource_deadlock_would_occur` on every failure path (it called the public
+  `Cancel()` while holding `mutex_`). Under contention Open failed, threw, and
+  execution never reached the sidecars. Fixing Open so it returns its error is
+  correct on its own merits -- a failure path must not throw -- but it is what
+  let execution reach this hang. Recorded plainly so the sequence is not
+  mistaken for a regression introduced by that fix.
+- **Severity:** teardown runs on the path that finalizes a recording. A block
+  there is an app that never returns from Stop. Production exposure is probably
+  narrower than this repro (on a Start-failure path the sidecar writers are
+  often null, and `finalize_one` returns immediately when so) -- but that is
+  reasoning, not a measurement.
+- **Next step:** add a breadcrumb INSIDE `FinalizeAudioSidecars` around each
+  `writer->Finalize()` / `writer->Cancel()` to separate the two, then reproduce
+  with the two-process recipe above. The hang is now reproducible on demand,
+  which is the part that was missing all along.
+
+
 ### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)
 
 - **What:** under capture/audio device contention, most `RecordingEngineTest`

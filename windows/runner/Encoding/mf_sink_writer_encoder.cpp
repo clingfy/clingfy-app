@@ -92,7 +92,7 @@ std::optional<EncoderError> MfSinkWriterEncoder::Open(
   Microsoft::WRL::ComPtr<IMFAttributes> writer_attrs;
   HRESULT hr = ::MFCreateAttributes(writer_attrs.GetAddressOf(), 4);
   if (FAILED(hr) || writer_attrs == nullptr) {
-    Cancel();
+    CancelLocked();
     return ToError("MFCreateAttributes failed for SinkWriter config.", hr);
   }
   writer_attrs->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
@@ -103,7 +103,7 @@ std::optional<EncoderError> MfSinkWriterEncoder::Open(
   hr = ::MFCreateSinkWriterFromURL(path.c_str(), nullptr, writer_attrs.Get(),
                                     sink_writer_.GetAddressOf());
   if (FAILED(hr) || sink_writer_ == nullptr) {
-    Cancel();
+    CancelLocked();
     return ToError(
         "MFCreateSinkWriterFromURL failed — output path may be unwritable "
         "or the container is not recognized.",
@@ -122,19 +122,19 @@ std::optional<EncoderError> MfSinkWriterEncoder::Open(
   has_audio_stream_ = false;
 
   if (auto err = ConfigureVideoMediaTypes()) {
-    Cancel();
+    CancelLocked();
     return err;
   }
   if (audio_config_.has_value()) {
     if (auto err = ConfigureAudioMediaTypes()) {
-      Cancel();
+      CancelLocked();
       return err;
     }
   }
 
   hr = sink_writer_->BeginWriting();
   if (FAILED(hr)) {
-    Cancel();
+    CancelLocked();
     return ToError("IMFSinkWriter::BeginWriting failed.", hr);
   }
 
@@ -446,6 +446,10 @@ std::optional<EncoderError> MfSinkWriterEncoder::Finalize() {
 
 void MfSinkWriterEncoder::Cancel() {
   std::lock_guard<std::mutex> lock(mutex_);
+  CancelLocked();
+}
+
+void MfSinkWriterEncoder::CancelLocked() {
   sink_writer_.Reset();
   dxgi_manager_.Reset();
   open_ = false;
