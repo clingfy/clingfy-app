@@ -43,6 +43,13 @@ class RecordingEngineTest : public ::testing::Test {
     std::filesystem::create_directories(sandbox_root_, ec);
     ::SetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT",
                               sandbox_root_.c_str());
+    // Teardown phase breadcrumbs (see TeardownTrace in recording_engine.cpp).
+    // Enabled for these tests ONLY: a hang inside TeardownPipeline is the one
+    // failure this suite has produced in CI that named nothing, and ctest
+    // captures stderr, so the next occurrence reports the phase it died in.
+    // Set here rather than in the workflow so the shipping app stays silent
+    // and .github/workflows needs no edit.
+    ::SetEnvironmentVariableW(L"CLINGFY_TEARDOWN_TRACE", L"1");
   }
   void TearDown() override {
     RecordingEngine::Instance().ForceResetForTesting();
@@ -52,6 +59,7 @@ class RecordingEngineTest : public ::testing::Test {
     // ClearSink). Idempotent when no sink is set.
     clingfy::bridge::WorkflowEventPublisher::Instance().ClearSink();
     ::SetEnvironmentVariableW(L"CLINGFY_RECORDINGS_ROOT", nullptr);
+    ::SetEnvironmentVariableW(L"CLINGFY_TEARDOWN_TRACE", nullptr);
     std::error_code ec;
     std::filesystem::remove_all(sandbox_root_, ec);
   }
