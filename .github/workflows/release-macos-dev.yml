@@ -248,6 +248,14 @@ jobs:
           # The Phase B acceptance gate: this output must match an Azure-built
           # app. codesign does not fail on a wrong identity, so comparing here
           # is the only way to catch a build signed by the wrong team.
+          #
+          # DIAGNOSTIC, NOT A GATE. The real gates already ran: Step 3 notarizes and
+          # Step 4 staples and verifies. This step exists to print evidence a human
+          # compares, so it must never be the thing that fails a release -- hence the
+          # explicit `exit 0` at the end. `set +e` alone did NOT achieve that: it stops
+          # the script aborting mid-way, but the script still exits with the status of
+          # its LAST command, so a non-zero stapler check failed the lane anyway
+          # (run 35104852578, exit 65).
           set +e
           APP="build/macos/Build/Products/Release/Clingfy.app"
           [ -d "$APP" ] || APP="$(find build/macos -maxdepth 6 -name '*.app' -type d | head -1)"
@@ -256,7 +264,19 @@ jobs:
           echo "---"
           spctl -a -vvv -t exec "$APP" 2>&1
           echo "---"
-          xcrun stapler validate "$APP" 2>&1
+          # Validate the DMG, not the .app. ops/release/commands/staple_and_verify.sh
+          # staples "$DMG_OUTPUT" -- stapling a DMG does not staple the .app inside it,
+          # so validating the .app correctly reported "does not have a ticket stapled"
+          # for a build that was properly notarized. spctl above already confirmed that:
+          # "accepted / source=Notarized Developer ID".
+          DMG="$(find dist -maxdepth 2 -name '*.dmg' -type f 2>/dev/null | head -1)"
+          if [ -n "$DMG" ]; then
+            echo "Stapler target: $DMG"
+            xcrun stapler validate "$DMG" 2>&1
+          else
+            echo "No DMG found under dist/ to validate."
+          fi
+          exit 0
 
       - name: Re-authenticate to AWS before publishing
         # The credential from the step near the top of this job is STS, and

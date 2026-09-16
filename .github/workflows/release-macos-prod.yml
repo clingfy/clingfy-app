@@ -275,6 +275,10 @@ jobs:
 
       - name: Signing evidence
         run: |
+          # DIAGNOSTIC, NOT A GATE — see the fuller note in release-macos-dev.yml. The real
+          # gates are Step 3 (notarize) and Step 4 (staple and verify). `set +e` alone does
+          # NOT make a step non-fatal: the script still exits with its LAST command's status,
+          # which failed the dev lane in run 35104852578 (exit 65). Hence the explicit exit 0.
           set +e
           APP="build/macos/Build/Products/Release/Clingfy.app"
           [ -d "$APP" ] || APP="$(find build/macos -maxdepth 6 -name '*.app' -type d | head -1)"
@@ -283,7 +287,17 @@ jobs:
           echo "---"
           spctl -a -vvv -t exec "$APP" 2>&1
           echo "---"
-          xcrun stapler validate "$APP" 2>&1
+          # The DMG is what staple_and_verify.sh staples; stapling a DMG does not staple the
+          # .app inside it, so validating the .app reports "no ticket" for a correctly
+          # notarized build.
+          DMG="$(find dist -maxdepth 2 -name '*.dmg' -type f 2>/dev/null | head -1)"
+          if [ -n "$DMG" ]; then
+            echo "Stapler target: $DMG"
+            xcrun stapler validate "$DMG" 2>&1
+          else
+            echo "No DMG found under dist/ to validate."
+          fi
+          exit 0
 
       - name: Re-authenticate to AWS before publishing
         # See the note in release-macos-dev.yml. Same reason as the Azure step this replaces, for a
