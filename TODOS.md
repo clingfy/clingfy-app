@@ -91,9 +91,14 @@ which are the only recorded numbers for this defect.
 > lane and zoom lane all render fully on screen. Details in "Re-measured" below.
 > Left open rather than deleted because the 2026-09-12 sighting was a human looking
 > at a real screen, and because every Dart file behind this layout is byte-identical
-> between that sighting and this clean result — so nothing was fixed, and the cause
-> is still unknown. Close it once a second session (ideally at a different display
-> scale) confirms a clean editor; re-open with a DPI-aware capture if it returns.
+> between that sighting and this clean result.
+>
+> **2026-09-16: that byte-identical diff is no longer evidence of "nothing changed".**
+> #496 fixed an INTERMITTENT layout exception that was present on both dates, so the
+> same code legitimately misbehaves one day and not the next. See "Candidate cause"
+> below — it fits, it is not proven, and its one weak spot is named there. Close this
+> entry once a second machine confirms a clean editor; re-open with a DPI-aware
+> capture if it returns.
 
 - **What:** open a recording, and the timeline toolbar and transport bar render but the
   TimelineEditorViewport (ruler + clips/zoom lanes) sits below the bottom of the window.
@@ -167,12 +172,49 @@ which are the only recorded numbers for this defect.
   green if the bug returned in whatever form the harness does not model. Do not read
   that suite passing as evidence about this entry either way.
 
+- **Candidate cause found 2026-09-16: the pane-remount layout exception fixed by #496.**
+  Not proven — but it is the first hypothesis that fits the awkward facts, and it is
+  falsifiable, so it beats "unexplained".
+  - #496 fixed `_buildPane` swapping the pane child's widget TYPE when
+    `preserveChildLayout` flipped. `Widget.canUpdate` failed, the pane was
+    deactivated and remounted, its GlobalKey was retaken, and
+    `Element._activateRecursively` re-adopted any showing `OverlayPortal`
+    (a Material `Tooltip`) into the root `_RenderTheater` — calling
+    `markNeedsLayout` from inside `DesktopSplitLayout`'s
+    `LayoutBuilder.performLayout` (`desktop_pane_layout.dart:379-382`).
+  - **Why the byte-identical diff above is not evidence against it.** That defect
+    was present on BOTH dates. It is intermittent: it needs an OverlayPortal
+    actually showing at the instant the rail width settles. So identical code
+    producing a sighting one day and not the next is exactly what it predicts —
+    which is what made the 09-15 "does not reproduce" so confusing.
+  - **The subtree matches.** The LayoutBuilder that throws is the one laying out
+    every pane slot, including `desktop_pane_slot_homeWorkspaceColumn` → the
+    `home_workspace_column` whose child 5 IS the timeline. A `performLayout` that
+    throws mid-way leaves that subtree incomplete.
+  - **It also explains who saw it.** Seven occurrences were logged on this machine
+    in a single day during ordinary use (hovering sidebar buttons). Automated
+    driving — open by argv, screenshot, resize — almost never hovers, which is
+    why the bug reproduced for a human and not for a scripted repro.
+  - **The honest weakness, stated so nobody treats this as closed.** The 09-12
+    symptom was SELECTIVE: toolbar and transport rendered, only the viewport did
+    not. A layout abort would be expected to disturb the whole column, not just its
+    last child. Until that is explained, this is a lead, not a cause.
+  - **What would settle it:** on a pre-#496 build, make the exception fire with a
+    project open and see whether the viewport disappears. Attempted 2026-09-16 and
+    NOT achieved — the exception could not be provoked on demand (a synthetic
+    cursor park did not raise a real tooltip; the natural occurrences all came from
+    ordinary interactive use). Do not repeat the synthetic-hover approach; drive it
+    by hand, or add a temporary counter at the `_activateRecursively` site.
+
 - **Next step:** confirm on a second machine, ideally one at a different display scale
   (this box is 125%). If it stays clean, close this entry. If it returns, capture it
   DPI-aware and dump the render tree (`debugDumpRenderTree()`) with a project open to
   find who gives the viewport a zero/negative height box or which ancestor clips it —
   reading the widget code did not settle it, and three plausible theories were each
-  disproved by measurement.
+  disproved by measurement. Also check the log sink for
+  `_RenderLayoutBuilder was mutated` around the sighting: since #496 landed that
+  should be absent, and if the lane ever goes missing WITH that error absent, the
+  candidate above is refuted.
 - **Severity:** if this reproduces on a tester's machine it blocks the whole editor, which is the
   half of the product that is not the recorder. Worth confirming on a second machine before the
   beta invite, since it did not reproduce as a simple height problem. Severity is unchanged by
