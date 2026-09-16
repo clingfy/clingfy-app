@@ -107,6 +107,17 @@ class MfSinkWriterEncoder {
   std::optional<EncoderError> ConfigureVideoMediaTypes();
   std::optional<EncoderError> ConfigureAudioMediaTypes();
 
+  // The body of [Cancel], for callers that ALREADY hold `mutex_`.
+  //
+  // `Open` cleans up through this on each of its failure paths. It used to call
+  // the public `Cancel()` while still holding the lock, and `mutex_` is a plain
+  // `std::mutex`: re-locking it on the same thread throws
+  // `std::system_error(resource_deadlock_would_occur)`. So every failure inside
+  // `Open` threw instead of returning its `EncoderError`, and the exception
+  // escaped `RecordingEngine::Start` — a user whose encoder could not open got
+  // a crash rather than a refusal.
+  void CancelLocked();
+
   mutable std::mutex mutex_;
   EncoderConfig config_;
   std::optional<AudioEncoderConfig> audio_config_;
