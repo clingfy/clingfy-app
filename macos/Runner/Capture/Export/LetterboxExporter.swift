@@ -2553,7 +2553,12 @@ final class LetterboxExporter {
               // timeline order, not source order). The caption cursor only
               // walks forward, so without this it stays parked past every
               // earlier cue and silently renders no captions for the rest of
-              // the export. Covered by CaptionCueTrackTests' reset pair.
+              // the export. Covered by
+              // CaptionBurnInSeatTests.testAReorderedExportPaintsCaptionsOnTheRangeItReadsSecond,
+              // which renders a real reordered export and reads the pixels.
+              // CaptionCueTrackTests' reset pair pins the STRUCT only: it calls
+              // reset() in its own test body, so it stays green if this line
+              // goes.
               captionCueTrack?.reset()
               captionRenderer?.reset()
               switch makeWindowReader(
