@@ -19,6 +19,7 @@
 #include "test_support.h"
 
 namespace clingfy::capture {
+
 namespace {
 
 // Engine is a process-level singleton. Each test resets it to a clean Idle
@@ -36,8 +37,10 @@ class RecordingEngineTest : public ::testing::Test {
     // developer's real `%LOCALAPPDATA%\Clingfy\recordings`, and a test that
     // starts without stopping would leave a `capturing` tombstone the app's
     // next-launch recovery sweep dutifully reports to the user.
-    sandbox_root_ = std::filesystem::temp_directory_path() /
-                    L"clingfy_engine_test_recordings";
+    sandbox_root_ =
+            std::filesystem::temp_directory_path() /
+            (L"clingfy_engine_test_recordings_" +
+             std::to_wstring(::GetCurrentProcessId()));
     std::error_code ec;
     std::filesystem::remove_all(sandbox_root_, ec);
     std::filesystem::create_directories(sandbox_root_, ec);
