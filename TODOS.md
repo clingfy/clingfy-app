@@ -296,72 +296,48 @@ which are the only recorded numbers for this defect.
 
 ## Windows — recording engine teardown
 
-### `FinalizeAudioSidecars` can block forever during teardown
+### A recording Start/Stop/Start can hang — in product code, cause still unknown
 
-- **What:** teardown reaches `FinalizeAudioSidecars` and never returns. Silent:
-  no exception, no log, the process simply stops. Almost certainly the same
-  family as the CI failure on run 35007670584, where ctest printed
-  `Start 1311:` and nothing else for 43 minutes until the job timeout.
-- **Caught by the #503 breadcrumbs on their first real occurrence**, which is
-  exactly what they were added for:
+- **What:** `RecordingEngineTest.StartAfterStopIsAllowed` hangs indefinitely.
+  Silent: no exception, no log, the process stops. Same test and same signature
+  as the 43-minute CI timeout on run 35007670584.
+- **It is in the TEST BODY, not the harness — measured, not assumed.** Fixture
+  probes showed `[fixture] SetUp done` with no `TearDown begin`, so the block is
+  inside the body's real `Start` -> `Stop` -> `Start` on the engine. This is a
+  product path: stop a recording, immediately start another.
+- **Repro:** two `runner_tests` processes running
+  `--gtest_filter=RecordingEngineTest.*` concurrently, so they contend for the
+  real capture devices. See the frequency table below.
+- **SEVEN hypotheses refuted by measurement.** Each looked right and each was
+  wrong; do not re-chase them without new evidence:
+  1. sidecar `Cancel()` mutex contention — `Cancel: locking` -> `locked` printed
+  2. `FinalizeAudioSidecars` blocking — `FinalizeAudioSidecars done` printed
+  3. `IMFSinkWriter::Finalize` blocking — `IMFSinkWriter returned` printed
+  4. DXGI device-manager release — `dxgi_manager released` printed
+  5. teardown generally — `teardown complete` printed, every time
+  6. shared test sandbox as the CAUSE — still hangs with per-process dirs
+  7. fixture cleanup (`remove_all`) — `TearDown begin` never reached
+- **Where it has NOT been narrowed past:** after `Stop()`'s teardown completes.
+  Remaining candidates are the rest of `Stop` (project-bundle write, workflow
+  events, temp cleanup) and the SECOND `Start`. Probes for those were added but
+  the run that carried them went 25/25 clean, so they never fired.
+- **Test isolation changes the ODDS, measured over seven runs:**
 
-  ```
-  [teardown] join encoder_thread
-  [teardown] join audio_mixer_thread
-  [teardown] FinalizeAudioSidecars     <- last line, then silence
-  ```
+  | sandbox | hang first seen at iteration |
+  |---|---|
+  | shared `%TEMP%clingfy_engine_test_recordings` | 5, 2, 4, 1 |
+  | per-process (PID-suffixed) | 15, 14, none in 25 |
 
-- **Repro (2026-09-16):** two `runner_tests` processes running
-  `--gtest_filter=RecordingEngineTest.*` at once, so they contend for the real
-  screen and audio devices. One process completed (34 passed, 2 legitimate
-  assertion failures); the other hung at the line above and was killed after
-  10 minutes.
-- **Where:** `FinalizeAudioSidecars` (`recording_engine.cpp:1706`) calls
-  `writer->Finalize()` when the output is kept and `writer->Cancel()` otherwise.
-  Both are Media Foundation calls on an `AudioSidecarWriter`. The hang was on a
-  Start-FAILURE path, where `keep_output` is false, so `Cancel()` is the prime
-  suspect -- not confirmed, and `Finalize()` is reachable the same way on the
-  normal stop path.
-- **It was previously MASKED, and by a bug.** Until the encoder fix that landed
-  with this entry, `MfSinkWriterEncoder::Open` threw
-  `resource_deadlock_would_occur` on every failure path (it called the public
-  `Cancel()` while holding `mutex_`). Under contention Open failed, threw, and
-  execution never reached the sidecars. Fixing Open so it returns its error is
-  correct on its own merits -- a failure path must not throw -- but it is what
-  let execution reach this hang. Recorded plainly so the sequence is not
-  mistaken for a regression introduced by that fix.
-- **Severity:** teardown runs on the path that finalizes a recording. A block
-  there is an app that never returns from Stop. Production exposure is probably
-  narrower than this repro (on a Start-failure path the sidecar writers are
-  often null, and `finalize_one` returns immediately when so) -- but that is
-  reasoning, not a measurement.
-- **Narrowed 2026-09-16 — it is NOT the MF Finalize call.** Breadcrumbs inside
-  `FinalizeAudioSidecars` (now permanent, same opt-in gate) caught one hang:
-
-  ```
-  [teardown] FinalizeAudioSidecars
-  [teardown] sidecar Finalize mic     <- Finalize entered AND returned
-  [teardown] sidecar reset mic        <- printed BEFORE writer.reset() runs
-  ```
-
-  then silence. So `IMFSinkWriter::Finalize` completed and the block is at or
-  after `writer.reset()` for the MIC sidecar — the `AudioSidecarWriter`
-  destructor, or the `std::filesystem::remove` of the temp file just after it.
-  The loopback writer is never reached.
-  `~AudioSidecarWriter` calls `Cancel()`, which takes `mutex_` and resets an
-  already-null ComPtr, so the interesting question is WHO ELSE holds that
-  writer's `mutex_` at that moment — the audio mixer thread is supposed to have
-  been joined two phases earlier.
-- **Intermittent.** A second identical two-process run completed on both sides
-  (5 and 3 assertion failures, no hang). One occurrence in two attempts, so
-  expect to run the recipe several times.
-- **Next step:** re-run the two-process recipe until it hangs again, then attach
-  a debugger to the stuck process and dump thread stacks — the breadcrumbs have
-  taken this as far as printf can. A post-reset breadcrumb was added and did not
-  fire in the one captured hang, which is what places the block at `reset()`
-  rather than at the file delete.
-
-
+  Every shared-dir run hung by iteration 5; no per-PID run hung before 14. The
+  per-PID change has landed, so the repro is now RARER — budget more iterations.
+  It is a flakiness reduction, NOT a fix: rounds 6 and 7 hung with it in place.
+- **Severity:** a hang in Start/Stop is an app that never returns from stopping a
+  recording. Under contention here; a headless CI runner reaches it too.
+- **Next step:** re-run the recipe with the `Stop:`/`Start: enter` probes until it
+  hangs (expect 15+ iterations). If it lands on `Start: enter`, the bug is
+  restarting capture too soon after releasing the device — which is exactly what
+  this test's name describes. A debugger would be faster than printf from here;
+  this machine has no cdb/windbg/procdump.
 ### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)
 
 - **What:** under capture/audio device contention, most `RecordingEngineTest`

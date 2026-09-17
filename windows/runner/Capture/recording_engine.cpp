@@ -2060,6 +2060,7 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   // gating below: failed-start paths (finalize_encoder=false) cancel.
   TeardownTrace("FinalizeAudioSidecars");
   FinalizeAudioSidecars(/*keep_output=*/finalize_encoder);
+  TeardownTrace("FinalizeAudioSidecars done");
 
   // Phase 10.4: capture the encoder outcome for the finalize paths' gating
   // BEFORE the encoder is destroyed. The Finalize() result used to be
@@ -2067,8 +2068,10 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   teardown_samples_written_ = 0;
   teardown_finalize_ok_ = true;
   if (encoder_) {
+      TeardownTrace("encoder samples_written");
     teardown_samples_written_ = encoder_->samples_written();
     if (finalize_encoder) {
+        TeardownTrace("encoder Finalize");
       if (auto finalize_err = encoder_->Finalize()) {
         teardown_finalize_ok_ = false;
         char buf[640];
@@ -2085,17 +2088,22 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
     // Failed-start paths skip Finalize: destroying the writer un-finalized
     // is a Cancel (see ~MfSinkWriterEncoder) — no zero-sample footer gets
     // written to %TEMP%.
+    TeardownTrace("encoder_.reset");
     encoder_.reset();
   }
   if (frame_queue_) frame_queue_.reset();
   if (mic_queue_) mic_queue_.reset();
   if (loopback_queue_) loopback_queue_.reset();
   if (d3d_device_) {
+    TeardownTrace("d3d_device->Reset");
     d3d_device_->Reset();
+    TeardownTrace("d3d_device_.reset");
     d3d_device_.reset();
   }
   // The session reached a terminal state — let the machine sleep again.
+  TeardownTrace("keep_awake_.reset");
   keep_awake_.reset();
+  TeardownTrace("teardown complete");
 }
 
 void RecordingEngine::CleanupSessionTempFiles(const std::string& session_id,
