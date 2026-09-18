@@ -254,7 +254,28 @@ final class CaptionsService {
     onProgress(JobProgress.captions(nil, stage: .preparing))
 
     queue.async { [self] in
-      defer { endRun(token) }
+      // `endRun` must run BEFORE `completion`, and that ordering is the whole
+      // point of this dance.
+      //
+      // It used to be a plain `defer`, so it fired when this closure EXITED --
+      // after `completion` had already returned. For that window the caller had
+      // been told the job was finished while `isRunning` was still true, so a
+      // caller that starts the next transcription from its completion handler
+      // hit `beginRun` returning nil and was refused with "A transcription is
+      // already running". `testAJobCanRunAfterThepreviousOneFinished` only
+      // caught it when it lost the race, which it finally did on CI; the
+      // chained-completion test pins it deterministically.
+      //
+      // Still deferred as well, as a safety net: a future early return or an
+      // unexpected throw must not leave the service permanently busy. `finish`
+      // is idempotent, so running it twice is harmless.
+      var hasEnded = false
+      func finish() {
+        guard !hasEnded else { return }
+        hasEnded = true
+        endRun(token)
+      }
+      defer { finish() }
 
       var micOptions = TranscriptionOptions.default
       var systemOptions = TranscriptionOptions.strict
@@ -292,6 +313,7 @@ final class CaptionsService {
         NativeLogger.i(
           "Captions", "Transcription finished",
           context: ["cues": cues.count])
+        finish()
         completion(.success(cues))
       } catch {
         if let transcriptionError = error as? TranscriptionError,
@@ -301,6 +323,7 @@ final class CaptionsService {
         } else {
           NativeLogger.e("Captions", "Transcription failed: \(error)")
         }
+        finish()
         completion(.failure(error))
       }
     }
