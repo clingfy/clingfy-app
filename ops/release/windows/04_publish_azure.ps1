@@ -91,7 +91,7 @@ $latest = [ordered]@{
   # way to the S3 origin, so .../Clingfy_Dev_Setup_1.0.7+127.exe 404s while the %2B form returns
   # 206 for the very same object. Every DEV installer is named <version>+<build>. `fileName` above
   # stays unencoded — it is the on-disk name, not a URL.
-  url              = "$downloadBaseUrl$($Ctx.InstallerName -replace '\+', '%2B')"
+  url              = "$downloadBaseUrl$($Ctx.InstallerUrlName)"
   sha256           = $hash
   sizeBytes        = $installer.Length
   minimumOsVersion = '10.0.18362'
@@ -217,8 +217,8 @@ if ($Ctx.StorageProvider -eq 'aws') {
   # which shipped a release nobody could receive while printing success.
   Write-Step 'Invalidating CloudFront paths'
   $invalidatePaths = @(
-    "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerName)",
-    "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerName).sha256",
+    "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerUrlName)",
+    "/$($Ctx.AzContainer)/$prefix/$($Ctx.InstallerUrlName).sha256",
     "/$($Ctx.AzContainer)/$prefix/latest-windows.json"
   )
   & aws cloudfront create-invalidation `
@@ -299,7 +299,8 @@ Write-Info "feed verified through $($Ctx.PublicEndpoint): $($Ctx.InstallerName)"
 
 # The installer itself must be reachable at the URL the feed advertises. The feed can be correct
 # while the binary 404s if the key prefix and the CDN path behaviour ever disagree.
-$installerUrl = "$downloadBaseUrl$($Ctx.InstallerName)"
+# The URL spelling: a literal '+' here 404s at CloudFront even though the object exists.
+$installerUrl = "$downloadBaseUrl$($Ctx.InstallerUrlName)"
 try {
   $head = Invoke-WebRequest -Uri $installerUrl -Method Head -UseBasicParsing -TimeoutSec 30
   $installerStatus = [int]$head.StatusCode
@@ -313,7 +314,7 @@ if ($installerStatus -ne 200) {
 Write-Info "installer reachable: HTTP 200"
 
 Write-Step 'Publish summary'
-Write-Info "Download URL: $downloadBaseUrl$($Ctx.InstallerName)"
+Write-Info "Download URL: $downloadBaseUrl$($Ctx.InstallerUrlName)"
 Write-Info "Feed URL:     $feedUrl"
 Write-Host 'Publish completed successfully.' -ForegroundColor Green
 exit 0
