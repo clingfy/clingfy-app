@@ -267,6 +267,63 @@ final class CaptionsServiceTests: XCTestCase {
     wait(for: [firstDone], timeout: 10)
   }
 
+  /// Chaining the next transcription from inside the completion handler must
+  /// work.
+  ///
+  /// This is the deterministic twin of
+  /// `testAJobCanRunAfterThepreviousOneFinished`. That one starts the second
+  /// job from the test thread after `wait(for:)` returns, so it only fails when
+  /// it LOSES a race against the service queue -- which it does not do on a
+  /// fast machine (5 of 5 local runs passed while CI was red).
+  ///
+  /// Here the second job starts from INSIDE the first completion, which is the
+  /// worst case rather than a likely one, so the ordering is pinned instead of
+  /// sampled. `endRun` used to run in a `defer` that fired when the queue
+  /// closure exited -- after `completion` had returned -- so `isRunning` was
+  /// still true here and `beginRun` refused the second job with "A
+  /// transcription is already running". Against that ordering this fails every
+  /// time, not sometimes.
+  ///
+  /// It matters beyond the test: "generate again when this finishes" is a
+  /// thing the UI can legitimately do, and it was silently refused.
+  func testTheNextJobCanStartFromInsideTheCompletionHandler() throws {
+    let fake = FakeTranscriber()
+    let service = CaptionsService(transcriber: fake)
+    let sources = TranscriptionJob.Sources(
+      micURL: URL(fileURLWithPath: "/tmp/mic.m4a"), systemURL: nil, embeddedURL: nil)
+
+    let secondDone = expectation(description: "second run, chained from the first")
+    var secondResult: Result<[Caption], Error>?
+
+    service.generateCaptions(
+      sources: sources, language: nil, onProgress: { _ in },
+      completion: { _ in
+        // Deliberately re-entrant: started before the first completion returns.
+        service.generateCaptions(
+          sources: sources, language: nil, onProgress: { _ in },
+          completion: { result in
+            secondResult = result
+            secondDone.fulfill()
+          })
+      })
+
+    // A refusal still calls completion, so this cannot hang -- it fails on the
+    // assertions below instead, which is the failure mode we want.
+    wait(for: [secondDone], timeout: 10)
+
+    switch try XCTUnwrap(secondResult) {
+    case .success:
+      break
+    case .failure(let error):
+      XCTFail(
+        "the chained job was refused rather than run: \(error). The service "
+          + "told the caller it had finished while it still considered itself busy.")
+    }
+    XCTAssertEqual(
+      fake.callCount, 2,
+      "the chained job must actually have reached the transcriber")
+  }
+
   func testAJobCanRunAfterThepreviousOneFinished() {
     let fake = FakeTranscriber()
     let service = CaptionsService(transcriber: fake)
