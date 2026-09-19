@@ -167,7 +167,8 @@ void main() {
     });
 
     final bundle = await Directory.systemTemp.createTemp('clingfy_caps_probe');
-    addTearDown(() {
+    addTearDown(() async {
+      await PostStateStore.settled();
       if (bundle.existsSync()) bundle.deleteSync(recursive: true);
     });
     post.attachToRecording(sessionId: 's', projectPath: bundle.path);
@@ -599,7 +600,10 @@ void main() {
     final other = Directory(
       '${Directory.systemTemp.path}/clingfy_captions_undo_${DateTime.now().microsecondsSinceEpoch}',
     )..createSync(recursive: true);
-    addTearDown(() => other.deleteSync(recursive: true));
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (other.existsSync()) other.deleteSync(recursive: true);
+    });
     post.attachToRecording(sessionId: 's2', projectPath: other.path);
 
     expect(post.canUndoCaptions, isFalse);
