@@ -336,13 +336,40 @@ final class CaptionTrack extends EditTrack {
     style: m['style'] is Map
         ? CaptionStyle.fromMap(m['style'] as Map)
         : const CaptionStyle(),
-    captions: m['captions'] is List
-        ? <Caption>[
-            for (final e in m['captions'] as List)
-              if (e is Map) Caption.fromMap(e),
-          ]
-        : const <Caption>[],
+    captions: _decodeCues(m['captions']),
   );
+
+  /// Decodes the cue list, refusing one whose ids cannot address it.
+  ///
+  /// The edit path finds a cue by id (`indexWhere((c) => c.id == cueId)`), and
+  /// the panel keys each row by id. So a cue with no id cannot be corrected at
+  /// all, and a duplicated id means correcting the second row silently
+  /// rewrites the first — while in a debug build two identical keys as
+  /// siblings trip Flutter's duplicate-key assertion and the whole sidebar
+  /// fails to build.
+  ///
+  /// The legacy `captions_state.json` loader validated exactly this and
+  /// refused the file outright; the check was left behind when captions moved
+  /// into the unified `post/state.json`. Refusing the whole track rather than
+  /// dropping the bad cues is that loader's deliberate choice, kept: a
+  /// partially loaded transcript looks complete, and the lines it lost are
+  /// missing from anything burned in from it.
+  ///
+  /// Today's transcriber cannot produce this — native assigns sequential ids
+  /// and the merge paths reuse them — so this guards a bundle written by
+  /// another build, or edited by hand.
+  static List<Caption> _decodeCues(Object? raw) {
+    if (raw is! List) return const <Caption>[];
+    final cues = <Caption>[
+      for (final e in raw)
+        if (e is Map) Caption.fromMap(e),
+    ];
+    final seen = <String>{};
+    for (final cue in cues) {
+      if (cue.id.isEmpty || !seen.add(cue.id)) return const <Caption>[];
+    }
+    return cues;
+  }
 
   CaptionTrack copyWith({
     String? id,

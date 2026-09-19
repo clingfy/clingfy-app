@@ -869,11 +869,21 @@ class PostProcessingController extends ChangeNotifier {
   }) {
     unawaited(
       PostStateStore.update(projectPath, (state) {
-        if (onlyWhenAbsent) {
-          final stored = state.trackOfType<CaptionTrack>();
-          if (stored != null && stored.captions.isNotEmpty) return state;
+        final stored = state.trackOfType<CaptionTrack>();
+        if (onlyWhenAbsent && stored != null && stored.captions.isNotEmpty) {
+          return state;
         }
-        return state.withTrack(CaptionTrack(captions: captions));
+        // Through copyWith, so a correction replaces only the cues. Building a
+        // fresh CaptionTrack reverted `enabled`, `language`, `sourceLanguage`
+        // and the whole style block to their constructor defaults on every
+        // persist — which is every completed transcription and every single
+        // text correction. Nothing in the app writes those fields yet, so this
+        // is reachable today only through a bundle written by another build or
+        // edited by hand; it stops being latent the moment anything does.
+        return state.withTrack(
+          stored?.copyWith(captions: captions) ??
+              CaptionTrack(captions: captions),
+        );
       }),
     );
   }

@@ -174,6 +174,61 @@ void main() {
       expect(caption.captions, isEmpty);
     });
 
+    test('a cue with no id refuses the whole caption track', () {
+      // The edit path addresses cues by id and the panel keys rows by id, so
+      // an idless cue cannot be corrected. The legacy loader refused such a
+      // file outright; that check was lost when captions moved into the
+      // unified state and is restored here.
+      final track = CaptionTrack.fromMap({
+        'kind': 'caption',
+        'captions': [
+          {'id': 'c1', 'startMs': 0, 'endMs': 1000, 'text': 'first'},
+          {'startMs': 1000, 'endMs': 2000, 'text': 'no id'},
+        ],
+      });
+      expect(track.captions, isEmpty);
+    });
+
+    test('duplicate cue ids refuse the whole caption track', () {
+      // Correcting the second row would silently rewrite the first, and two
+      // identical keys as siblings trip Flutter's duplicate-key assertion.
+      final track = CaptionTrack.fromMap({
+        'kind': 'caption',
+        'captions': [
+          {'id': 'c1', 'startMs': 0, 'endMs': 1000, 'text': 'first'},
+          {'id': 'c1', 'startMs': 1000, 'endMs': 2000, 'text': 'second'},
+        ],
+      });
+      expect(track.captions, isEmpty);
+    });
+
+    test('a refused cue list does not take the rest of the track with it', () {
+      // Style and language still decode: the track is kept, its cues are not,
+      // so a later regeneration writes into the settings already on disk.
+      final track = CaptionTrack.fromMap({
+        'kind': 'caption',
+        'language': 'ar',
+        'enabled': false,
+        'captions': [
+          {'startMs': 0, 'endMs': 1000, 'text': 'no id'},
+        ],
+      });
+      expect(track.captions, isEmpty);
+      expect(track.language, 'ar');
+      expect(track.enabled, isFalse);
+    });
+
+    test('well-formed cues decode unchanged', () {
+      final track = CaptionTrack.fromMap({
+        'kind': 'caption',
+        'captions': [
+          {'id': 'c1', 'startMs': 0, 'endMs': 1000, 'text': 'first'},
+          {'id': 'c2', 'startMs': 1000, 'endMs': 2000, 'text': 'second'},
+        ],
+      });
+      expect(track.captions.map((c) => c.text), ['first', 'second']);
+    });
+
     test('an empty timeline round-trips', () {
       const empty = Timeline();
       expect(

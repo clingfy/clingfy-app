@@ -522,6 +522,37 @@ void main() {
     expect(stored?.captions.first.text, 'hello there');
   });
 
+  test('a correction keeps the track settings already on disk', () async {
+    // Every persist used to build a brand-new CaptionTrack with only the cues
+    // supplied, so `enabled`, `language`, `sourceLanguage` and the whole style
+    // block reverted to constructor defaults on every single correction.
+    final post = await createController();
+    await post.generateCaptions();
+    await PostStateStore.settled();
+
+    await PostStateStore.update(
+      attachedProjectPath,
+      (t) => t.withTrack(
+        t.trackOfType<CaptionTrack>()!.copyWith(
+          enabled: false,
+          language: 'ar',
+          style: const CaptionStyle(fontSizePx: 42),
+        ),
+      ),
+    );
+
+    post.updateCaptionText('c1', 'corrected');
+    await PostStateStore.settled();
+
+    final track = PostStateStore.load(
+      attachedProjectPath,
+    ).trackOfType<CaptionTrack>()!;
+    expect(track.captions.first.text, 'corrected');
+    expect(track.enabled, isFalse);
+    expect(track.language, 'ar');
+    expect(track.style.fontSizePx, 42);
+  });
+
   test('a no-op edit records no history entry', () async {
     // Committing the same text is not an edit; recording it would make the
     // user press undo twice to step back over one real change.
