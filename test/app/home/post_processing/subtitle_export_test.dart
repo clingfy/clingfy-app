@@ -5,6 +5,7 @@ import 'package:clingfy/app/home/post_processing/post_processing_controller.dart
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/timeline/post_state_store.dart';
@@ -182,8 +183,14 @@ void main() {
     PostProcessingController post,
     SubtitleMode mode, {
     String? outputPath,
+    ExportFormat format = ExportFormat.mp4,
   }) async {
-    await post.writeSubtitleSidecars(outputPath ?? exportedPath, mode);
+    await post.writeSubtitleSidecars(
+      outputPath ?? exportedPath,
+      mode,
+      null,
+      format,
+    );
   }
 
   File srt([String? path]) =>
@@ -319,6 +326,29 @@ void main() {
     await exportWith(post, SubtitleMode.sidecar, outputPath: video);
 
     expect(File('$video.srt').existsSync(), isTrue);
+  });
+
+  test('a GIF export writes no sidecar at all', () async {
+    // No GIF viewer, browser or platform loads a sidecar, so the two files
+    // were inert — and their presence suggested the GIF was captioned. Burn-in
+    // is the destination that works for GIF, and it does.
+    final post = await createController(mode: SubtitleMode.both);
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.both, format: ExportFormat.gif);
+
+    expect(srt().existsSync(), isFalse);
+    expect(vtt().existsSync(), isFalse);
+  });
+
+  test('a non-GIF export still writes its sidecars', () async {
+    final post = await createController(mode: SubtitleMode.both);
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.both, format: ExportFormat.mov);
+
+    expect(srt().existsSync(), isTrue);
+    expect(vtt().existsSync(), isTrue);
   });
 
   test('a sidecar failure does not throw at the export', () async {

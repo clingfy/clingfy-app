@@ -2230,12 +2230,19 @@ class PostProcessingController extends ChangeNotifier {
   /// A sidecar failure never fails the export. The video is already on disk
   /// and re-running the whole render to retry two small text files would be a
   /// far worse outcome than a missing subtitle track the user can regenerate.
+  ///
+  /// [format] is consulted because a GIF has nowhere to read one from: no GIF
+  /// viewer, browser or platform loads a sidecar. Writing them anyway left two
+  /// inert files next to the output whose presence suggested the GIF was
+  /// captioned. Burn-in is the destination that works for GIF, and it does.
   @visibleForTesting
   Future<void> writeSubtitleSidecars(
     String videoPath,
     SubtitleMode mode, [
     ReflowedCaptions? reflowed,
+    ExportFormat format = ExportFormat.mp4,
   ]) async {
+    if (format == ExportFormat.gif) return;
     // The sidecar view: timestamps on the EXPORTED timeline. Writing source
     // times here would put every subtitle at the wrong moment the instant a
     // recording has a single cut.
@@ -2526,7 +2533,12 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
-        await writeSubtitleSidecars(newPath, subtitleMode, reflowed);
+        await writeSubtitleSidecars(
+          newPath,
+          subtitleMode,
+          reflowed,
+          _settings.export.exportFormatType,
+        );
         ClingfyAnalytics.capture(
           AnalyticsEvents.exportJobComplete,
           properties: {
