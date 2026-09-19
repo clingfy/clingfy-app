@@ -1933,6 +1933,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Exported, but the subtitles could not be burned in:';
 
   @override
+  String get exportSavedWithoutSubtitleFile =>
+      'Exported, but the subtitle file could not be written:';
+
+  @override
+  String get exportSavedWithoutAnySubtitles =>
+      'Exported, but no subtitles could be added:';
+
+  @override
   String get open => 'Open';
 
   @override

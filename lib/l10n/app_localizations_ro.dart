@@ -1952,6 +1952,14 @@ class AppLocalizationsRo extends AppLocalizations {
       'Exportat, dar subtitrările nu au putut fi incluse în imagine:';
 
   @override
+  String get exportSavedWithoutSubtitleFile =>
+      'Exportat, dar fișierul de subtitrare nu a putut fi scris:';
+
+  @override
+  String get exportSavedWithoutAnySubtitles =>
+      'Exportat, dar nicio subtitrare nu a putut fi adăugată:';
+
+  @override
   String get open => 'Deschide';
 
   @override

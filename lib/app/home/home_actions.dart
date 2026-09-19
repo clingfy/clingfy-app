@@ -462,13 +462,27 @@ class HomeActions {
       // byte-identical to a captionless one, so native renders happily and
       // everything downstream reports success. Saying "Export successful" here
       // is how someone publishes a video they believe is subtitled.
+      // The sidecar half fails independently and means something different:
+      // with the destination set to "Subtitle file", the `.srt`/`.vtt` IS the
+      // deliverable, so a silent failure means the export produced nothing the
+      // user asked for while the toast named a video path and said success.
+      final burnInFailed = postProcessingController.lastExportBurnInFailed;
+      final sidecarFailed = postProcessingController.lastExportSidecarFailed;
+      final String prefix;
+      if (burnInFailed && sidecarFailed) {
+        prefix = l10n.exportSavedWithoutAnySubtitles;
+      } else if (burnInFailed) {
+        prefix = l10n.exportSavedWithoutSubtitles;
+      } else if (sidecarFailed) {
+        prefix = l10n.exportSavedWithoutSubtitleFile;
+      } else {
+        prefix = l10n.exportSuccess;
+      }
       _showSavedFileNotice(
         context,
-        prefix: postProcessingController.lastExportBurnInFailed
-            ? l10n.exportSavedWithoutSubtitles
-            : l10n.exportSuccess,
+        prefix: prefix,
         path: path,
-        tone: postProcessingController.lastExportBurnInFailed
+        tone: burnInFailed || sidecarFailed
             ? HomeUiNoticeTone.warning
             : HomeUiNoticeTone.success,
       );

@@ -656,6 +656,8 @@
   "externalProjectOpenFailed": "Couldn't open that Clingfy project.",
   "exportSuccess": "Export successful:",
   "exportSavedWithoutSubtitles": "Exported, but the subtitles could not be burned in:",
+  "exportSavedWithoutSubtitleFile": "Exported, but the subtitle file could not be written:",
+  "exportSavedWithoutAnySubtitles": "Exported, but no subtitles could be added:",
   "open": "Open",
   "cursorDataMissing": "Cursor data missing",
   "voiceBoost": "Voice Boost",

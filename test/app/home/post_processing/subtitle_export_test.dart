@@ -337,6 +337,71 @@ void main() {
     );
   });
 
+  test('a sidecar failure is recorded so the notice can say so', () async {
+    // Not failing the export is right. Saying nothing is the defect: in
+    // sidecar-only mode the `.srt` IS the deliverable, so the export produced
+    // nothing the user asked for while the toast named a video and said
+    // "Export successful".
+    final post = await createController(mode: SubtitleMode.sidecar);
+    await post.generateCaptions();
+
+    await exportWith(
+      post,
+      SubtitleMode.sidecar,
+      outputPath: '${tempDir.path}/no such dir/clip.mp4',
+    );
+
+    expect(post.lastExportSidecarFailed, isTrue);
+  });
+
+  test('a sidecar that wrote is not flagged', () async {
+    final post = await createController(mode: SubtitleMode.sidecar);
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(post.lastExportSidecarFailed, isFalse);
+  });
+
+  test('a transcript blanked by hand writes no sidecar at all', () async {
+    // The captions panel has no delete affordance, so clearing every cue is
+    // how a transcript gets removed. A blank cue still has a duration and so
+    // survives reflow — counting spans wrote a 0-byte `.srt`, which a platform
+    // reads as a broken subtitle track rather than an absent one.
+    final post = await createController(
+      mode: SubtitleMode.sidecar,
+      transcript: const [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': '   '},
+        {'id': 'c2', 'startMs': 1500, 'endMs': 3000, 'text': ''},
+      ],
+    );
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(srt().existsSync(), isFalse);
+    expect(vtt().existsSync(), isFalse);
+    // A no-op, not a failure — warning here would train the warning away.
+    expect(post.lastExportSidecarFailed, isFalse);
+  });
+
+  test('one surviving cue is still written', () async {
+    // The guard is "nothing survived serialization", not "something was
+    // blanked" — a transcript the user partly cleared still has a sidecar.
+    final post = await createController(
+      mode: SubtitleMode.sidecar,
+      transcript: const [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': '   '},
+        {'id': 'c2', 'startMs': 1500, 'endMs': 3000, 'text': 'still here'},
+      ],
+    );
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(srt().readAsStringSync(), contains('still here'));
+  });
+
   // ---- Edited recordings -------------------------------------------------
 
   Clip clip(String id, int inMs, int outMs) =>

@@ -1916,6 +1916,14 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:';
 
   @override
+  String get exportSavedWithoutSubtitleFile =>
+      'تم التصدير، لكن تعذّر كتابة ملف الترجمة:';
+
+  @override
+  String get exportSavedWithoutAnySubtitles =>
+      'تم التصدير، لكن تعذّر إضافة أي ترجمات:';
+
+  @override
   String get open => 'فتح';
 
   @override
