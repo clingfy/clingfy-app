@@ -392,4 +392,51 @@ void main() {
       expect(File('${unified().path}.tmp').existsSync(), isFalse);
     },
   );
+
+  // ---- hasStoredCanvas ---------------------------------------------------
+
+  test('a caption-only project reports no stored canvas', () async {
+    // `post/state.json` is shared with the caption, clip and zoom tracks, so
+    // writing a transcript creates it on a recording that has never had a
+    // canvas or colour edit. Answering "yes" there made the restore put pure
+    // defaults over an edit the user made during the scene-load window, and
+    // clear the colour history so it could not be undone back.
+    await PostStateStore.save(
+      project.path,
+      const Timeline(
+        durationMs: 5000,
+        tracks: [
+          CaptionTrack(
+            captions: [Caption(id: 'c1', startMs: 0, endMs: 900, text: 'hi')],
+          ),
+        ],
+      ),
+    );
+
+    expect(PostStateStore.hasStoredCanvas(project.path), isFalse);
+  });
+
+  test('a stored canvas edit reports true', () async {
+    await PostStateStore.save(
+      project.path,
+      const Timeline(durationMs: 5000, canvas: CanvasState(padding: 24)),
+    );
+
+    expect(PostStateStore.hasStoredCanvas(project.path), isTrue);
+  });
+
+  test('a stored colour grade alone reports true', () async {
+    // Grade and canvas are restored together, so either one being present is
+    // reason to run the restore.
+    await PostStateStore.save(
+      project.path,
+      const Timeline(durationMs: 5000, grade: ColorGrade(exposure: 0.3)),
+    );
+
+    expect(PostStateStore.hasStoredCanvas(project.path), isTrue);
+  });
+
+  test('a project with nothing stored reports false', () async {
+    expect(PostStateStore.hasStoredCanvas(project.path), isFalse);
+  });
 }
