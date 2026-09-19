@@ -17,6 +17,27 @@ import 'package:flutter/material.dart';
 /// Stateless and value-driven like every other post-processing section — no
 /// controller access, no provider import; the container binds it.
 class PostCaptionsSection extends StatelessWidget {
+  /// Cue count up to which every row is built inline.
+  ///
+  /// Below this the rows stay children of the section's own Column, so the
+  /// sidebar scrolls as one surface — which is how it has always felt and is
+  /// the shape almost every recording produces.
+  ///
+  /// Above it they would all mount at once: the sidebar's own ListView
+  /// virtualises its children, but the cue rows are nested inside ONE of them,
+  /// so its laziness never reaches them. A 30-minute recording is 300-400
+  /// cues, and 400 cues built 400 EditableTexts with a FocusNode and a
+  /// TextEditingController each on first open — then paid for the whole list
+  /// again on every correction, because a commit replaces the cue list.
+  static const int _inlineCueLimit = 40;
+
+  /// Height of the cue viewport once the inline limit is passed.
+  ///
+  /// Fixed rather than measured because a bounded height is what makes the
+  /// list lazy at all: sizing to the content (`shrinkWrap`) would build every
+  /// row again and undo the point.
+  static const double _cueViewportHeight = 360;
+
   const PostCaptionsSection({
     super.key,
     required this.capability,
@@ -249,12 +270,12 @@ class PostCaptionsSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSidebarTokens.rowGap),
-          AppSettingsGroup(
-            title: l10n.captionsCueCount(captions.length),
-            showHeader: true,
-            children: [
-              for (final entry in _rowsInPlaybackOrder())
-                _CueRow(
+          Builder(
+            builder: (context) {
+              final rows = _rowsInPlaybackOrder();
+              Widget rowAt(int index) {
+                final entry = rows[index];
+                return _CueRow(
                   key: Key('captions_cue_${entry.caption.id}'),
                   caption: entry.caption,
                   // Null when an edit removed every moment this cue covered:
@@ -264,8 +285,31 @@ class PostCaptionsSection extends StatelessWidget {
                   enabled: !isGenerating && !isProcessing,
                   onTextChanged: (text) =>
                       onCueTextChanged(entry.caption.id, text),
-                ),
-            ],
+                );
+              }
+
+              return AppSettingsGroup(
+                title: l10n.captionsCueCount(captions.length),
+                showHeader: true,
+                children: [
+                  if (rows.length <= _inlineCueLimit)
+                    for (var i = 0; i < rows.length; i++) rowAt(i)
+                  else
+                    // Past the limit the rows move into a viewport of their
+                    // own so only the visible ones inflate. Every row is still
+                    // there — this scrolls, it does not cap.
+                    SizedBox(
+                      height: _cueViewportHeight,
+                      child: ListView.builder(
+                        key: const Key('captions_cue_list'),
+                        padding: EdgeInsets.zero,
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) => rowAt(index),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ] else if (hasEverGenerated && !isGenerating) ...[
           const SizedBox(height: AppSidebarTokens.compactGap),

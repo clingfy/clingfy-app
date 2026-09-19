@@ -767,4 +767,81 @@ void main() {
       reason: 'no strong character at all falls back to LTR',
     );
   });
+
+  // ---- Long transcripts -------------------------------------------------
+
+  testWidgets('a long transcript does not inflate every cue field', (
+    tester,
+  ) async {
+    // A 30-minute recording is 300-400 cues. Nested in the section's own
+    // Column every one of them mounted an EditableText, a FocusNode and a
+    // TextEditingController on first open, and every correction replaces the
+    // cue list, so each commit paid for the whole rebuild.
+    final many = [
+      for (var i = 0; i < 400; i++) cue('c$i', 'line $i', startMs: i * 2000),
+    ];
+
+    await tester.pumpWidget(host(section(captions: many)));
+    await tester.pump();
+
+    final live = tester.widgetList(find.byType(EditableText)).length;
+    expect(
+      live,
+      lessThan(80),
+      reason: 'only the rows near the viewport should be mounted, not all 400',
+    );
+  });
+
+  testWidgets('every cue is still reachable in a long transcript', (
+    tester,
+  ) async {
+    // Virtualising must not become a cap: the last cue has to be scrollable
+    // into view, not dropped.
+    final many = [
+      for (var i = 0; i < 400; i++) cue('c$i', 'line $i', startMs: i * 2000),
+    ];
+
+    await tester.pumpWidget(host(section(captions: many)));
+    await tester.pump();
+
+    final list = find.byKey(const Key('captions_cue_list'));
+    expect(list, findsOneWidget);
+
+    // Not a cap: the list knows about all 400, it just builds the visible
+    // ones. `ListView.builder` reports its itemCount as semanticChildCount.
+    expect(tester.widget<ListView>(list).semanticChildCount, 400);
+
+    // And a row far down really does inflate once scrolled to. Driven through
+    // the ScrollPosition rather than a gesture: the section sits inside the
+    // sidebar's own scroll view in this host, so a drag lands in the wrong
+    // arena. `.first` because every cue's TextField carries its own Scrollable.
+    expect(find.byKey(const Key('captions_cue_c399')), findsNothing);
+    final inner = find
+        .descendant(of: list, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(inner).position;
+    position.jumpTo(position.maxScrollExtent);
+    await tester.pump();
+    expect(find.byKey(const Key('captions_cue_c399')), findsOneWidget);
+  });
+
+  testWidgets('a short transcript keeps every row mounted', (tester) async {
+    // Below the threshold the rows stay in the section's own Column, so the
+    // sidebar scrolls as one surface and nothing about the common case
+    // changes.
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [
+            cue('a', 'first'),
+            cue('b', 'second', startMs: 3000),
+            cue('c', 'third', startMs: 6000),
+          ],
+        ),
+      ),
+    );
+
+    expect(find.byType(EditableText), findsNWidgets(3));
+    expect(find.byKey(const Key('captions_cue_list')), findsNothing);
+  });
 }
