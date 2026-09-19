@@ -2020,6 +2020,18 @@ abstract class AppLocalizations {
   /// **'Redo color edit'**
   String get colorRedo;
 
+  /// No description provided for @captionsUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo subtitle edit'**
+  String get captionsUndo;
+
+  /// No description provided for @captionsRedo.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo subtitle edit'**
+  String get captionsRedo;
+
   /// No description provided for @autoEnhance.
   ///
   /// In en, this message translates to:

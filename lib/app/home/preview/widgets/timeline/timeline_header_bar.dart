@@ -38,6 +38,11 @@ class TimelineHeaderBar extends StatelessWidget {
     this.canRedoColor = false,
     this.onUndoColor,
     this.onRedoColor,
+    this.showCaptionsControls = false,
+    this.canUndoCaptions = false,
+    this.canRedoCaptions = false,
+    this.onUndoCaptions,
+    this.onRedoCaptions,
   });
 
   final bool snappingEnabled;
@@ -76,6 +81,15 @@ class TimelineHeaderBar extends StatelessWidget {
   final bool canRedoColor;
   final VoidCallback? onUndoColor;
   final VoidCallback? onRedoColor;
+
+  /// Shown only once a transcript exists. Unlike color, which every loaded
+  /// recording can edit, captions are absent until the user generates them,
+  /// and a permanently-disabled pair would read as a broken feature.
+  final bool showCaptionsControls;
+  final bool canUndoCaptions;
+  final bool canRedoCaptions;
+  final VoidCallback? onUndoCaptions;
+  final VoidCallback? onRedoCaptions;
 
   @override
   Widget build(BuildContext context) {
@@ -227,6 +241,25 @@ class TimelineHeaderBar extends StatelessWidget {
                       canRedo: canRedoColor,
                       onUndo: onUndoColor,
                       onRedo: onRedoColor,
+                    ),
+                  ],
+                  if (showCaptionsControls) ...[
+                    SizedBox(width: sectionGap),
+                    _sectionDivider(
+                      theme,
+                      const Key('timeline_captions_controls_divider'),
+                    ),
+                    SizedBox(width: sectionGap),
+                    _HistoryButtonPair(
+                      label: l10n.captions,
+                      undoKey: const Key('timeline_captions_undo_button'),
+                      redoKey: const Key('timeline_captions_redo_button'),
+                      undoTooltip: l10n.captionsUndo,
+                      redoTooltip: l10n.captionsRedo,
+                      canUndo: canUndoCaptions,
+                      canRedo: canRedoCaptions,
+                      onUndo: onUndoCaptions,
+                      onRedo: onRedoCaptions,
                     ),
                   ],
                 ],

@@ -422,6 +422,8 @@
   "colorCorrection": "تصحيح الألوان",
   "colorUndo": "تراجع عن تعديل الألوان",
   "colorRedo": "إعادة تعديل الألوان",
+  "captionsUndo": "تراجع عن تعديل الترجمة",
+  "captionsRedo": "إعادة تعديل الترجمة",
   "autoEnhance": "تحسين تلقائي",
   "exposure": "التعريض",
   "contrast": "التباين",

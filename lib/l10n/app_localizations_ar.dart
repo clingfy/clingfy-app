@@ -1019,6 +1019,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get colorRedo => 'إعادة تعديل الألوان';
 
   @override
+  String get captionsUndo => 'تراجع عن تعديل الترجمة';
+
+  @override
+  String get captionsRedo => 'إعادة تعديل الترجمة';
+
+  @override
   String get autoEnhance => 'تحسين تلقائي';
 
   @override
