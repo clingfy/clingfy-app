@@ -2084,8 +2084,21 @@ class PostProcessingController extends ChangeNotifier {
   /// Only a dot in the last path segment counts: `~/My.Videos/clip` has no
   /// extension, and naively cutting at the last dot would write the sidecar
   /// into a sibling of the directory rather than beside the video.
+  ///
+  /// Windows accepts BOTH `/` and `\` as separators, and paths reaching here
+  /// mix them — native returns the export path with backslashes, while paths
+  /// built by joining in Dart carry forward slashes. Matching only
+  /// `Platform.pathSeparator` therefore missed every forward slash on
+  /// Windows: `C:/vids/My.Videos/clip` found no separator after the dot, cut
+  /// the stem to `C:/vids/My`, and wrote both sidecars one directory up from
+  /// the video. macOS was unaffected, so CI could not see it.
+  ///
+  /// `\` is only treated as a separator on Windows, because it is a legal
+  /// character in a POSIX filename.
   static String _withoutExtension(String path) {
-    final lastSeparator = path.lastIndexOf(Platform.pathSeparator);
+    final slash = path.lastIndexOf('/');
+    final backslash = Platform.isWindows ? path.lastIndexOf(r'\') : -1;
+    final lastSeparator = slash > backslash ? slash : backslash;
     final dot = path.lastIndexOf('.');
     if (dot <= lastSeparator + 1) return path;
     return path.substring(0, dot);
