@@ -212,6 +212,65 @@ hello there
     );
   });
 
+  // ---- WebVTT markup ---------------------------------------------------
+
+  test('a < in cue text is escaped for WebVTT', () {
+    // The WebVTT tokenizer enters tag state at `<` and consumes to `>` or to
+    // end of input, so an unescaped `<` swallows the rest of the cue in every
+    // conforming player while the file still reads correctly in an editor.
+    final vtt = SubtitleSerializer.toWebVtt([cue(0, 2000, 'if x < y then')]);
+    expect(vtt, contains('if x &lt; y then'));
+    expect(vtt, isNot(contains('if x < y then')));
+  });
+
+  test('a < in cue text stays literal in SubRip', () {
+    // SubRip parsers do not decode entities, so escaping here would print a
+    // literal `&lt;` to the viewer — a different wrong rendering, not a fix.
+    final srt = SubtitleSerializer.toSrt([cue(0, 2000, 'if x < y then')]);
+    expect(srt, contains('if x < y then'));
+    expect(srt, isNot(contains('&lt;')));
+  });
+
+  test('an ampersand the user typed is escaped once, not twice', () {
+    final vtt = SubtitleSerializer.toWebVtt([cue(0, 2000, 'Tom & Jerry')]);
+    expect(vtt, contains('Tom &amp; Jerry'));
+    expect(vtt, isNot(contains('&amp;amp;')));
+  });
+
+  test('an ampersand next to a bracket is not double-escaped', () {
+    // `&` must be replaced before `<`, otherwise the `&` of the `&lt;` this
+    // pass introduces gets escaped by its own later rule.
+    final vtt = SubtitleSerializer.toWebVtt([cue(0, 2000, 'a & b < c')]);
+    expect(vtt, contains('a &amp; b &lt; c'));
+    expect(vtt, isNot(contains('&amp;lt;')));
+  });
+
+  test('a > in cue text is escaped for WebVTT and left alone in SubRip', () {
+    expect(
+      SubtitleSerializer.toWebVtt([cue(0, 2000, 'a > b')]),
+      contains('a &gt; b'),
+    );
+    expect(
+      SubtitleSerializer.toSrt([cue(0, 2000, 'a > b')]),
+      contains('a > b'),
+    );
+  });
+
+  test('escaping runs after the --> guard, not before it', () {
+    // `-->` becomes `→` first, so the arrow is never turned into `--&gt;`,
+    // which would still read as a timing line to a lenient parser.
+    final vtt = SubtitleSerializer.toWebVtt([cue(0, 2000, 'a --> b')]);
+    expect(vtt, contains('a → b'));
+    expect(vtt, isNot(contains('--&gt;')));
+  });
+
+  test('markup-shaped text survives as text, not as a tag', () {
+    final vtt = SubtitleSerializer.toWebVtt([
+      cue(0, 2000, 'wrap it in <div> tags'),
+    ]);
+    expect(vtt, contains('wrap it in &lt;div&gt; tags'));
+  });
+
   // ---- Mode ------------------------------------------------------------
 
   test('mode flags say what each destination does', () {
