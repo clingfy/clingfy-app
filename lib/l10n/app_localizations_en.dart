@@ -1028,6 +1028,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get colorRedo => 'Redo color edit';
 
   @override
+  String get captionsUndo => 'Undo subtitle edit';
+
+  @override
+  String get captionsRedo => 'Redo subtitle edit';
+
+  @override
   String get autoEnhance => 'Auto-enhance';
 
   @override

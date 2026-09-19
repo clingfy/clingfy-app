@@ -1036,6 +1036,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get colorRedo => 'Refă editarea culorii';
 
   @override
+  String get captionsUndo => 'Anulează editarea subtitrării';
+
+  @override
+  String get captionsRedo => 'Refă editarea subtitrării';
+
+  @override
   String get autoEnhance => 'Auto-îmbunătățire';
 
   @override

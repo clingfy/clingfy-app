@@ -13,6 +13,7 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/commands/set_captions_command.dart';
 import 'package:clingfy/core/timeline/commands/set_color_grade_command.dart';
 import 'package:clingfy/core/timeline/edit_command.dart';
 import 'package:clingfy/core/timeline/edit_session.dart';
@@ -271,6 +272,14 @@ class PostProcessingController extends ChangeNotifier {
   // zoom editors own theirs) — the unified cross-track stack is a later step.
   late final EditSession _colorSession = EditSession(
     onFlush: _onColorEditFlushed,
+  );
+  // Undo/redo history for the caption track, on its own session like the
+  // color, clip and zoom editors. Before this existed, a corrected cue had
+  // no way back at all: the machine's original wording is gone the moment
+  // the commit lands, and the only other recovery was "Generate again",
+  // which discards every OTHER correction too.
+  late final EditSession _captionsSession = EditSession(
+    onFlush: _onCaptionEditFlushed,
   );
   // Grade as it was when the current slider gesture started, i.e. before the
   // live drag ticks. Non-null only between the first tick and the matching
@@ -692,10 +701,22 @@ class PostProcessingController extends ChangeNotifier {
       // here — it could not fire, and pretending otherwise described a hazard
       // that cannot happen. If a future change ever lets a live job outlive the
       // switch, this needs that guard back before [_captions] is assigned.
+      // Persisted against the CAPTURED project rather than the live one, which
+      // is the invariant argued above; the flush below writes the same content
+      // to the same path, so this is a duplicate write, not a second truth.
       _persistCaptions(projectPath, cues);
-      _captions = cues;
+      // Through the session, so "Generate again" is one undo away. It is the
+      // same button, in the same place, that said "Generate subtitles" before
+      // cues existed, and pressing it replaces every hand correction with
+      // machine text. Reasons to press it are ordinary — the mic/system source
+      // was wrong, or one section came out badly — and the previous wording is
+      // gone the instant it lands, so this was minutes of typing destroyed by
+      // one click with no dialog and nothing to step back to.
+      //
+      // A run the user stopped never reaches here: the cancel branch above
+      // returns first, so an abandoned regeneration leaves no history entry.
+      _executeCaptionsEdit(cues);
       _hasEverGeneratedCaptions = true;
-      unawaited(pushPreviewCaptions());
     } on PlatformException catch (e) {
       // Cancelling is a normal outcome, not a failure worth surfacing.
       if (e.code != 'CAPTIONS_CANCELLED') {
@@ -786,10 +807,44 @@ class PostProcessingController extends ChangeNotifier {
       words: existing.words,
       translatedText: existing.translatedText,
     );
-    _captions = next;
+    // Through the session rather than assigned directly, so the correction is
+    // reversible. Persist and preview push both happen in the flush, which
+    // undo and redo go through too — otherwise stepping back would change the
+    // screen and leave the old text on disk.
+    _executeCaptionsEdit(next);
+  }
+
+  /// Steps the caption track back to the state before the last edit. No-op
+  /// when the history is empty.
+  void undoCaptions() {
+    if (!_captionsSession.canUndo) return;
+    _captionsSession.undo();
+  }
+
+  /// Re-applies the last undone caption edit. No-op when nothing was undone.
+  void redoCaptions() {
+    if (!_captionsSession.canRedo) return;
+    _captionsSession.redo();
+  }
+
+  void _executeCaptionsEdit(List<Caption> next) {
+    _captionsSession.execute(
+      SetCaptionsCommand(
+        get: () => _captions,
+        set: (cues) => _captions = cues,
+        next: next,
+      ),
+    );
+  }
+
+  /// Every history-recorded caption change lands here via
+  /// [EditSession.onFlush] — execute, undo and redo alike — so all three
+  /// persist and reach the preview by the same path.
+  void _onCaptionEditFlushed(Set<EditDomain> dirtyDomains) {
+    if (!dirtyDomains.contains(EditDomain.captions)) return;
     notifyListeners();
     final projectPath = _projectPath;
-    if (projectPath != null) _persistCaptions(projectPath, next);
+    if (projectPath != null) _persistCaptions(projectPath, _captions);
     unawaited(pushPreviewCaptions());
   }
 
@@ -830,6 +885,11 @@ class PostProcessingController extends ChangeNotifier {
   /// in flight does not count until [commitColorGrade] closes it.
   bool get canUndoColorGrade => _colorSession.canUndo;
   bool get canRedoColorGrade => _colorSession.canRedo;
+
+  /// True when there is a caption edit to step back to. Corrections are
+  /// debounced in the panel, so a half-typed word is not its own entry.
+  bool get canUndoCaptions => _captionsSession.canUndo;
+  bool get canRedoCaptions => _captionsSession.canRedo;
   String? get cameraPath => _cameraPath;
   bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
   CameraCompositionState? get cameraState => _cameraState;
@@ -1683,6 +1743,7 @@ class PostProcessingController extends ChangeNotifier {
     // History belongs to the recording that produced it — never let an undo
     // from the previous project reach into this one.
     _colorSession.clear();
+    _captionsSession.clear();
     _colorGestureBaseline = null;
     _cameraPath = null;
     _cameraState = null;
@@ -1761,6 +1822,7 @@ class PostProcessingController extends ChangeNotifier {
     // lands asynchronously (scene load) after [attachToRecording], so any entry
     // recorded in that window would now point at a stale pre-restore grade.
     _colorSession.clear();
+    _captionsSession.clear();
     _colorGestureBaseline = null;
   }
 

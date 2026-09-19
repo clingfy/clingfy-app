@@ -360,6 +360,8 @@
   "colorCorrection": "Color Correction",
   "colorUndo": "Undo color edit",
   "colorRedo": "Redo color edit",
+  "captionsUndo": "Undo subtitle edit",
+  "captionsRedo": "Redo subtitle edit",
   "autoEnhance": "Auto-enhance",
   "exposure": "Exposure",
   "contrast": "Contrast",

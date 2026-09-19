@@ -422,6 +422,8 @@
   "colorCorrection": "Corecție culoare",
   "colorUndo": "Anulează editarea culorii",
   "colorRedo": "Refă editarea culorii",
+  "captionsUndo": "Anulează editarea subtitrării",
+  "captionsRedo": "Refă editarea subtitrării",
   "autoEnhance": "Auto-îmbunătățire",
   "exposure": "Expunere",
   "contrast": "Contrast",
