@@ -100,6 +100,27 @@ class PostProcessingController extends ChangeNotifier {
     unawaited(pushPreviewCaptions());
   }
 
+  /// Swallows a notify that arrives after [dispose].
+  ///
+  /// The controller is app-root scoped and never recreated, so the realistic
+  /// trigger is teardown: a transcription (or a preview render) started before
+  /// the app quits or hot-restarts returns to a `finally` that notifies a
+  /// controller which is already gone. In a debug build — which is what the
+  /// team's own test builds are — `ChangeNotifier`'s `debugAssertNotDisposed`
+  /// fires "A PostProcessingController was used after being disposed", and the
+  /// global handler reports it to Sentry. In release the asserts are stripped
+  /// and the listener list is empty, so shipped users see nothing.
+  ///
+  /// Done once here rather than at each `finally`: the generate path and the
+  /// preview-render path both had this shape and neither guarded, while three
+  /// call sites in the caption push path did. One override covers every
+  /// notifier in the class, including ones added later.
+  @override
+  void notifyListeners() {
+    if (_isDisposed) return;
+    super.notifyListeners();
+  }
+
   @override
   void dispose() {
     _isDisposed = true;
