@@ -44,6 +44,10 @@ void main() {
 
   Future<PostProcessingController> createController({
     bool attach = true,
+    // Off for the test that disposes mid-flight itself: disposing a
+    // ChangeNotifier twice trips the same assert this file is about, which
+    // would look like the fix failing rather than the harness double-firing.
+    bool disposeInTearDown = true,
   }) async {
     calls = [];
     final messenger =
@@ -75,7 +79,7 @@ void main() {
       channel: nativeBridge,
     );
     addTearDown(() {
-      post.dispose();
+      if (disposeInTearDown) post.dispose();
       player.dispose();
       settings.dispose();
     });
@@ -185,6 +189,24 @@ void main() {
       reason: 'a raise is not the same answer as "this platform cannot"',
     );
     expect(post.isGeneratingCaptions, isFalse);
+  });
+
+  test('a transcription finishing after dispose does not throw', () async {
+    // Start a transcription, quit the app before it lands. The `finally` in
+    // generateCaptions notifies a controller that is already gone, which trips
+    // ChangeNotifier's debugAssertNotDisposed in a debug build — the build the
+    // team's own tests run — and the global handler reports it to Sentry.
+    final post = await createController(disposeInTearDown: false);
+    generateGate = Completer<List<Map<String, Object?>>>();
+
+    final inFlight = post.generateCaptions();
+    await pumpEventQueue();
+    expect(post.isGeneratingCaptions, isTrue);
+
+    post.dispose();
+    generateGate!.complete(transcriptReply);
+
+    await expectLater(inFlight, completes);
   });
 
   test('a retried probe that succeeds restores the panel', () async {
