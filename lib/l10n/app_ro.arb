@@ -649,6 +649,8 @@
   "externalProjectOpenFailed": "Acest proiect Clingfy nu a putut fi deschis.",
   "exportSuccess": "Export reușit:",
   "exportSavedWithoutSubtitles": "Exportat, dar subtitrările nu au putut fi incluse în imagine:",
+  "exportSavedWithoutSubtitleFile": "Exportat, dar fișierul de subtitrare nu a putut fi scris:",
+  "exportSavedWithoutAnySubtitles": "Exportat, dar nicio subtitrare nu a putut fi adăugată:",
   "open": "Deschide",
   "cursorDataMissing": "Datele cursorului lipsesc",
   "voiceBoost": "Amplificare Voce",

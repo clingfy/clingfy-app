@@ -3628,6 +3628,18 @@ abstract class AppLocalizations {
   /// **'Exported, but the subtitles could not be burned in:'**
   String get exportSavedWithoutSubtitles;
 
+  /// No description provided for @exportSavedWithoutSubtitleFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported, but the subtitle file could not be written:'**
+  String get exportSavedWithoutSubtitleFile;
+
+  /// No description provided for @exportSavedWithoutAnySubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported, but no subtitles could be added:'**
+  String get exportSavedWithoutAnySubtitles;
+
   /// No description provided for @open.
   ///
   /// In en, this message translates to:

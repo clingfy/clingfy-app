@@ -649,6 +649,8 @@
   "externalProjectOpenFailed": "تعذّر فتح مشروع Clingfy هذا.",
   "exportSuccess": "تم التصدير بنجاح:",
   "exportSavedWithoutSubtitles": "تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:",
+  "exportSavedWithoutSubtitleFile": "تم التصدير، لكن تعذّر كتابة ملف الترجمة:",
+  "exportSavedWithoutAnySubtitles": "تم التصدير، لكن تعذّر إضافة أي ترجمات:",
   "open": "فتح",
   "cursorDataMissing": "بيانات المؤشر مفقودة",
   "voiceBoost": "تعزيز الصوت",

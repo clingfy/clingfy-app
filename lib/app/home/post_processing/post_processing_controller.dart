@@ -156,6 +156,13 @@ class PostProcessingController extends ChangeNotifier {
   /// ships a file they believe is subtitled. This is the only signal that says
   /// otherwise, which is why the saved-file notice reads it.
   bool _lastExportBurnInFailed = false;
+
+  /// True when the export was asked for a `.srt`/`.vtt` and could not
+  /// write one. Separate from [_lastExportBurnInFailed] because the two
+  /// destinations fail independently and mean different things: a failed
+  /// burn-in leaves a video without captions, while a failed sidecar in
+  /// `sidecar` mode means the deliverable itself is missing.
+  bool _lastExportSidecarFailed = false;
   bool _hasExportedCurrentRecording = false;
   double? _exportProgress; // null = indeterminate, 0.0-1.0 = determinate
 
@@ -311,6 +318,11 @@ class PostProcessingController extends ChangeNotifier {
   /// True when the file that was just written was supposed to have subtitles
   /// burned in and does not. See [_lastExportBurnInFailed].
   bool get lastExportBurnInFailed => _lastExportBurnInFailed;
+
+  /// True when the file that was just written was supposed to have a
+  /// subtitle sidecar written beside it and does not. See
+  /// [_lastExportSidecarFailed].
+  bool get lastExportSidecarFailed => _lastExportSidecarFailed;
   bool get hasExportedCurrentRecording => _hasExportedCurrentRecording;
   double? get exportProgress => _exportProgress;
 
@@ -2129,16 +2141,38 @@ class PostProcessingController extends ChangeNotifier {
 
     final stem = _withoutExtension(videoPath);
 
-    for (final entry in {
+    // Serialize first, then decide whether there is anything to write. The
+    // span count is the wrong oracle: the captions panel has no delete
+    // affordance, so clearing the text is how a transcript gets removed, and
+    // a blank cue still has a duration and still survives reflow. It is
+    // dropped only at serialization time — after a span-counting guard has
+    // already committed to writing. That produced a 0-byte `.srt` and a
+    // header-only `.vtt` beside the video, and a 0-byte `.srt` uploaded to a
+    // platform reads as a broken subtitle track rather than an absent one.
+    //
+    // Burn-in already treats "every cue blanked by hand" as a legitimate
+    // no-op rather than a failure; this makes the sidecar path agree.
+    final files = {
       '$stem.srt': SubtitleSerializer.toSrt(cues),
       '$stem.vtt': SubtitleSerializer.toWebVtt(cues),
-    }.entries) {
+    };
+    // SubRip has no header, so an empty body means no cue survived
+    // serialization — the same condition that leaves the WebVTT output at its
+    // bare `WEBVTT` header.
+    if (files['$stem.srt']!.isEmpty) return;
+
+    for (final entry in files.entries) {
       try {
         // Written as UTF-8 without a BOM: WebVTT requires UTF-8, and SubRip
         // has no encoding declaration at all, so UTF-8 is what every modern
         // parser assumes.
         await File(entry.key).writeAsString(entry.value, encoding: utf8);
       } catch (e, st) {
+        // Deliberately does not fail the export — see the doc comment. But it
+        // must not pass silently either: in sidecar-only mode the `.srt` IS
+        // the deliverable, so a swallowed failure means the export produced
+        // nothing the user asked for while reporting success.
+        _lastExportSidecarFailed = true;
         Log.e("PostProcessing", "Failed to write ${entry.key}", e, st);
       }
     }
@@ -2149,6 +2183,7 @@ class PostProcessingController extends ChangeNotifier {
     // Belongs to the export about to run, not to the last one — the notice this
     // drives is shown against the file this call produces.
     _lastExportBurnInFailed = false;
+    _lastExportSidecarFailed = false;
 
     if (_isExporting) {
       await ClingfyTelemetry.addUiBreadcrumb(
