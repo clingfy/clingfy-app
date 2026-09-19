@@ -219,6 +219,10 @@ class PostProcessingSidebar extends StatelessWidget {
   final ValueChanged<bool> onCaptionsUseSystemChanged;
   final VoidCallback onGenerateCaptions;
   final VoidCallback onCancelCaptions;
+
+  /// Re-runs the capability probe after it raised. See
+  /// [PostCaptionsSection.onRetryProbe].
+  final VoidCallback onRetryCaptionsProbe;
   final void Function(String cueId, String text) onCaptionTextChanged;
   final ValueChanged<SubtitleMode> onSubtitleModeChanged;
   final ColorGrade colorGrade;
@@ -333,6 +337,7 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.onCaptionsUseSystemChanged,
     required this.onGenerateCaptions,
     required this.onCancelCaptions,
+    required this.onRetryCaptionsProbe,
     required this.onCaptionTextChanged,
     required this.onSubtitleModeChanged,
     required this.onAudioVolumeChanged,
@@ -549,6 +554,7 @@ class PostProcessingSidebar extends StatelessWidget {
         onUseSystemChanged: onCaptionsUseSystemChanged,
         onGenerate: onGenerateCaptions,
         onCancel: onCancelCaptions,
+        onRetryProbe: onRetryCaptionsProbe,
         onCueTextChanged: onCaptionTextChanged,
         subtitleMode: subtitleMode,
         reflowed: reflowedCaptions,

@@ -59,6 +59,7 @@ void main() {
     SubtitleMode subtitleMode = SubtitleMode.burnIn,
     ValueChanged<SubtitleMode>? onSubtitleModeChanged,
     List<Clip>? clips,
+    VoidCallback? onRetryProbe,
   }) {
     return PostCaptionsSection(
       capability: capability,
@@ -76,6 +77,7 @@ void main() {
       onUseSystemChanged: (_) {},
       onGenerate: onGenerate ?? () {},
       onCancel: onCancel ?? () {},
+      onRetryProbe: onRetryProbe,
       onCueTextChanged: onCueTextChanged ?? (_, _) {},
       subtitleMode: subtitleMode,
       onSubtitleModeChanged: onSubtitleModeChanged ?? (_) {},
@@ -144,6 +146,62 @@ void main() {
         ),
       );
       expect(find.text(entry.value), findsOneWidget, reason: '${entry.key}');
+    }
+  });
+
+  testWidgets('a failed probe explains itself and offers a retry', (
+    tester,
+  ) async {
+    // Before this the capability was left null, and null renders as nothing:
+    // the panel vanished with no notice and no way back short of reopening
+    // the recording, while every other unavailable case got a sentence.
+    var retried = 0;
+    await tester.pumpWidget(
+      host(
+        section(
+          capability: const CaptionsCapabilityInfo(
+            available: false,
+            reason: CaptionsUnavailableReason.probeFailed,
+          ),
+          onRetryProbe: () => retried++,
+        ),
+      ),
+    );
+
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    expect(find.text(l10n.captionsUnavailableProbeFailed), findsOneWidget);
+
+    await tester.tap(find.text(l10n.captionsRetryProbe));
+    await tester.pump();
+    expect(retried, 1);
+  });
+
+  testWidgets('the other unavailable reasons offer no retry', (tester) async {
+    // They are facts about the machine or the recording. A retry there would
+    // fail the same way and teach the user the button does nothing.
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    for (final reason in [
+      CaptionsUnavailableReason.unsupportedOs,
+      CaptionsUnavailableReason.intelSlowPath,
+      CaptionsUnavailableReason.noAudio,
+      CaptionsUnavailableReason.platformNotSupported,
+    ]) {
+      await tester.pumpWidget(
+        host(
+          section(
+            capability: CaptionsCapabilityInfo(
+              available: false,
+              reason: reason,
+            ),
+            onRetryProbe: () {},
+          ),
+        ),
+      );
+      expect(
+        find.text(l10n.captionsRetryProbe),
+        findsNothing,
+        reason: '$reason',
+      );
     }
   });
 

@@ -2777,6 +2777,13 @@ class AppLocalizationsEn extends AppLocalizations {
       'Subtitles are only available on macOS.';
 
   @override
+  String get captionsUnavailableProbeFailed =>
+      'Couldn\'t check whether subtitles can run for this recording.';
+
+  @override
+  String get captionsRetryProbe => 'Try again';
+
+  @override
   String get captionsMicOnlyRecording =>
       'This recording predates separate audio capture, so only your microphone was recorded.';
 

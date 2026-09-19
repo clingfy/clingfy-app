@@ -916,6 +916,8 @@
   "captionsUnavailableIntel": "تعمل الترجمة ببطء على أجهزة Mac بمعالج Intel لعدم توفر Neural Engine.",
   "captionsUnavailableNoAudio": "لا يحتوي هذا التسجيل على صوت لتفريغه.",
   "captionsUnavailablePlatform": "الترجمة متاحة على macOS فقط.",
+  "captionsUnavailableProbeFailed": "تعذّر التحقق ممّا إذا كانت الترجمات تعمل لهذا التسجيل.",
+  "captionsRetryProbe": "أعد المحاولة",
   "captionsMicOnlyRecording": "هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.",
   "captionsFirstRunDownload": "يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.",
   "captionsFailed": "تعذّر إنشاء الترجمة.",

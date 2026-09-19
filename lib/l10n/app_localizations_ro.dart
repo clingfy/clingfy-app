@@ -2813,6 +2813,13 @@ class AppLocalizationsRo extends AppLocalizations {
       'Subtitrările sunt disponibile doar pe macOS.';
 
   @override
+  String get captionsUnavailableProbeFailed =>
+      'Nu s-a putut verifica dacă subtitrările pot rula pentru această înregistrare.';
+
+  @override
+  String get captionsRetryProbe => 'Încearcă din nou';
+
+  @override
   String get captionsMicOnlyRecording =>
       'Această înregistrare este anterioară capturii audio separate, deci s-a înregistrat doar microfonul.';
 

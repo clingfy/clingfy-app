@@ -12,6 +12,7 @@ import '../../../test_helpers/native_test_setup.dart';
 import '../../../test_helpers/wait_until.dart';
 import 'dart:io';
 import 'package:clingfy/core/captions/caption_state_store.dart';
+import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 /// Caption state on the controller: what it asks native, what it refuses to
@@ -174,8 +175,55 @@ void main() {
     post.attachToRecording(sessionId: 's', projectPath: bundle.path);
     await pumpEventQueue();
 
-    expect(post.captionsCapability, isNull);
+    // Not null any more: null renders as nothing, so the whole Subtitles
+    // panel vanished with no notice, no explanation and no way to retry —
+    // while every other unavailable case gets its own sentence.
+    expect(post.captionsCapability?.available, isFalse);
+    expect(
+      post.captionsCapability?.reason,
+      CaptionsUnavailableReason.probeFailed,
+      reason: 'a raise is not the same answer as "this platform cannot"',
+    );
     expect(post.isGeneratingCaptions, isFalse);
+  });
+
+  test('a retried probe that succeeds restores the panel', () async {
+    // The reachable trigger is SCENE_INPUT_MISSING — a bundle that could not
+    // be read — which a moved or still-copying project produces and a second
+    // attempt can clear. That is why this reason gets a retry and the others
+    // do not.
+    capabilityReply = {};
+    var failNext = true;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final post = await createController(attach: false);
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      calls.add(call);
+      if (call.method == 'captionsCapability') {
+        if (failNext) {
+          throw PlatformException(code: 'SCENE_INPUT_MISSING');
+        }
+        return {'available': true, 'hasMicAudio': true, 'hasSystemAudio': true};
+      }
+      return null;
+    });
+
+    final bundle = await Directory.systemTemp.createTemp('clingfy_caps_retry');
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (bundle.existsSync()) bundle.deleteSync(recursive: true);
+    });
+    post.attachToRecording(sessionId: 's', projectPath: bundle.path);
+    await pumpEventQueue();
+    expect(
+      post.captionsCapability?.reason,
+      CaptionsUnavailableReason.probeFailed,
+    );
+
+    failNext = false;
+    await post.refreshCaptionsCapability();
+
+    expect(post.captionsCapability?.available, isTrue);
   });
 
   // ---- Generating -------------------------------------------------------
