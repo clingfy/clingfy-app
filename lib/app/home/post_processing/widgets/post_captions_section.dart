@@ -53,6 +53,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onUseSystemChanged,
     required this.onGenerate,
     required this.onCancel,
+    this.onRetryProbe,
     required this.onCueTextChanged,
     required this.subtitleMode,
     required this.reflowed,
@@ -103,6 +104,11 @@ class PostCaptionsSection extends StatelessWidget {
   final ValueChanged<bool> onUseSystemChanged;
   final VoidCallback onGenerate;
   final VoidCallback onCancel;
+
+  /// Re-runs the capability probe. Only reachable from the probe-failure
+  /// notice: every other unavailable reason is a fact about the machine or
+  /// the recording, and a retry there would just fail the same way.
+  final VoidCallback? onRetryProbe;
   final void Function(String cueId, String text) onCueTextChanged;
 
   /// Where subtitles go on export. Only meaningful once cues exist, so the
@@ -132,8 +138,19 @@ class PostCaptionsSection extends StatelessWidget {
         showHeader: false,
         children: [
           AppInlineNotice(
+            key: const Key('captions_unavailable_notice'),
             message: _unavailableMessage(l10n, info.reason),
             variant: AppInlineNoticeVariant.warning,
+            // Retry only where retrying can help. A failed probe may be
+            // transient — SCENE_INPUT_MISSING fires on a bundle that cannot be
+            // read, which a moved or still-copying project produces.
+            actionLabel: info.reason == CaptionsUnavailableReason.probeFailed
+                ? l10n.captionsRetryProbe
+                : null,
+            onActionPressed:
+                info.reason == CaptionsUnavailableReason.probeFailed
+                ? onRetryProbe
+                : null,
           ),
         ],
       );
@@ -365,6 +382,8 @@ class PostCaptionsSection extends StatelessWidget {
         return l10n.captionsUnavailableIntel;
       case CaptionsUnavailableReason.noAudio:
         return l10n.captionsUnavailableNoAudio;
+      case CaptionsUnavailableReason.probeFailed:
+        return l10n.captionsUnavailableProbeFailed;
       case CaptionsUnavailableReason.platformNotSupported:
       case CaptionsUnavailableReason.unknown:
       case null:

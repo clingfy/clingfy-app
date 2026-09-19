@@ -173,6 +173,7 @@ void main() {
       onCaptionsUseSystemChanged: (_) {},
       onGenerateCaptions: () {},
       onCancelCaptions: () {},
+      onRetryCaptionsProbe: () {},
       onCaptionTextChanged: (_, _) {},
       subtitleMode: SubtitleMode.burnIn,
       reflowedCaptions: ReflowedCaptions.empty,

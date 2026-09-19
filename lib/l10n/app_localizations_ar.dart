@@ -2762,6 +2762,13 @@ class AppLocalizationsAr extends AppLocalizations {
   String get captionsUnavailablePlatform => 'الترجمة متاحة على macOS فقط.';
 
   @override
+  String get captionsUnavailableProbeFailed =>
+      'تعذّر التحقق ممّا إذا كانت الترجمات تعمل لهذا التسجيل.';
+
+  @override
+  String get captionsRetryProbe => 'أعد المحاولة';
+
+  @override
   String get captionsMicOnlyRecording =>
       'هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.';
 

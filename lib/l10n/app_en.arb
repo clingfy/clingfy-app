@@ -931,6 +931,8 @@
   "captionsUnavailableIntel": "Subtitles run slowly on Intel Macs, which have no Neural Engine.",
   "captionsUnavailableNoAudio": "This recording has no audio to transcribe.",
   "captionsUnavailablePlatform": "Subtitles are only available on macOS.",
+  "captionsUnavailableProbeFailed": "Couldn't check whether subtitles can run for this recording.",
+  "captionsRetryProbe": "Try again",
   "captionsMicOnlyRecording": "This recording predates separate audio capture, so only your microphone was recorded.",
   "captionsFirstRunDownload": "The first run downloads a speech model. This happens once.",
   "captionsFailed": "Couldn’t generate subtitles.",

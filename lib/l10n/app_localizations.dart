@@ -5068,6 +5068,18 @@ abstract class AppLocalizations {
   /// **'Subtitles are only available on macOS.'**
   String get captionsUnavailablePlatform;
 
+  /// No description provided for @captionsUnavailableProbeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check whether subtitles can run for this recording.'**
+  String get captionsUnavailableProbeFailed;
+
+  /// No description provided for @captionsRetryProbe.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get captionsRetryProbe;
+
   /// No description provided for @captionsMicOnlyRecording.
   ///
   /// In en, this message translates to:
