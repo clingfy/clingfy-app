@@ -131,7 +131,16 @@ abstract final class PostStateStore {
 
     final captions = CaptionStateStore.load(projectPath);
     if (captions != null && captions.captions.isNotEmpty) {
-      tracks.add(CaptionTrack(captions: captions.captions));
+      // `language` is carried across: the legacy store persisted it so a later
+      // translation pass would not have to re-detect the source, and dropping
+      // it here threw that away on the one migration that could preserve it.
+      tracks.add(
+        CaptionTrack(
+          captions: captions.captions,
+          language: captions.language ?? 'en',
+          sourceLanguage: captions.language,
+        ),
+      );
     }
 
     var canvas = const CanvasState();
