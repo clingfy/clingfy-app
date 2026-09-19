@@ -85,6 +85,23 @@ class RecordingIndicatorController {
   static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam,
                                   LPARAM lparam);
 
+  // Elapsed seconds from the installed provider, read WITHOUT holding
+  // `provider_mutex_` across the call.
+  //
+  // The provider reaches back into `RecordingEngine::ElapsedSeconds()`, which
+  // takes the engine's own `mutex_`. `RecordingEngine::Start()` holds `mutex_`
+  // for its whole body and calls `Show()` — which takes `provider_mutex_` —
+  // near the end of it. Invoking the provider while holding `provider_mutex_`
+  // therefore closed an ABBA cycle between the overlay thread and a Start on
+  // the main thread, with both sides on bare non-recursive `std::mutex`: no
+  // timeout, no try_lock, permanent once closed, and silent because the two
+  // waiters are on different threads so MSVC's same-thread relock check never
+  // fires.
+  //
+  // Public so a test can pin the invariant — the real caller is `Paint` on the
+  // overlay thread.
+  std::uint64_t CurrentElapsedSeconds();
+
  private:
   RecordingIndicatorController() = default;
   ~RecordingIndicatorController();
