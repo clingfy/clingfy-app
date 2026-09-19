@@ -55,7 +55,18 @@ s3_download_if_exists() {
   # here is what made a credentials failure read as "first release" upstream.
   ((probe == 0)) || return "$probe"
 
-  aws s3 cp "s3://${bucket}/${key}" "$output_file" --only-show-errors >/dev/null
+  # The probe just said the object is THERE, so a failure here cannot mean absence -- and the
+  # bare `aws s3 cp` that used to end this function returned its own exit status, which is 1,
+  # which this contract defines as "genuinely absent". That turned a transient download failure
+  # into "no appcast exists, this is the first release" in restore_release_history.sh, which
+  # republishes a feed containing only the new build and erases the update history of every
+  # installed Mac. The careful `return "$probe"` two lines up was undone by the last line of the
+  # same function. Normalise to 2 so the caller's existing `die` on 2 actually fires.
+  if ! aws s3 cp "s3://${bucket}/${key}" "$output_file" --only-show-errors >/dev/null; then
+    log_warn "head-object found s3://${bucket}/${key} but the download failed. This is not absence."
+    return 2
+  fi
+  return 0
 }
 
 # Existence probe with a THREE-state result. See the contract note in lib/env.sh:
