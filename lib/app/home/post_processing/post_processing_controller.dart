@@ -1840,20 +1840,31 @@ class PostProcessingController extends ChangeNotifier {
   /// project bundle. Fire-and-forget — invoked from [applyProcessing] on every
   /// committed canvas edit and from the color-grade commit points.
   void _persistCanvasAppearance(String projectPath) {
+    // Snapshot NOW, outside the closure. `PostStateStore.update` serialises
+    // per bundle, so a second write queued for this project runs after the
+    // first one finishes — and this controller is a long-lived singleton whose
+    // fields `_resetForNewRecording` clears the moment another recording is
+    // opened. Reading them inside the mutation meant a write requested for
+    // project A, but executed after the user switched to B, wrote B's
+    // freshly-reset defaults — neutral grade, zero padding, no background —
+    // into A's `post/state.json`. A's colour grade and background were gone
+    // the next time it was opened.
+    //
+    // Same shape `_persistCaptions` already avoids by taking its project and
+    // its cues as parameters.
+    final grade = _colorGrade;
+    final canvas = CanvasState(
+      padding: _videoPadding,
+      cornerRadius: _videoRadius,
+      backgroundKind: _backgroundKind,
+      backgroundColorArgb: _backgroundColor,
+      backgroundImagePath: _backgroundImagePath,
+      backgroundPreset: _backgroundPreset,
+    );
     unawaited(
       PostStateStore.update(
         projectPath,
-        (state) => state.copyWith(
-          grade: _colorGrade,
-          canvas: CanvasState(
-            padding: _videoPadding,
-            cornerRadius: _videoRadius,
-            backgroundKind: _backgroundKind,
-            backgroundColorArgb: _backgroundColor,
-            backgroundImagePath: _backgroundImagePath,
-            backgroundPreset: _backgroundPreset,
-          ),
-        ),
+        (state) => state.copyWith(grade: grade, canvas: canvas),
       ),
     );
   }
