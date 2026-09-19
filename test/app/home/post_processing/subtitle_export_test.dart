@@ -289,6 +289,28 @@ void main() {
     expect(File('${tempDir.path}/My.srt').existsSync(), isFalse);
   });
 
+  test(
+    'a dotted folder with backslash separators keeps the sidecar',
+    () async {
+      // A guard, not a repro: this case passed before the separator fix too,
+      // because a backslash is what `Platform.pathSeparator` already matched on
+      // Windows. It is here so that handling `/` cannot later be made to come
+      // at the cost of `\`. The repro is the forward-slash case above.
+      // Windows-only because a backslash is a legal POSIX filename character.
+      final dotted = Directory('${tempDir.path}/My.Videos')
+        ..createSync(recursive: true);
+      final video = '${dotted.path}\\clip'.replaceAll('/', r'\');
+
+      final post = await createController(mode: SubtitleMode.sidecar);
+      await post.generateCaptions();
+      await exportWith(post, SubtitleMode.sidecar, outputPath: video);
+
+      expect(File('$video.srt').existsSync(), isTrue);
+      expect(File('${tempDir.path}/My.srt').existsSync(), isFalse);
+    },
+    skip: !Platform.isWindows,
+  );
+
   test('an extensionless output still gets its sidecars', () async {
     final video = '${tempDir.path}/clip';
     final post = await createController(mode: SubtitleMode.sidecar);
