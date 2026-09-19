@@ -51,14 +51,22 @@ az_blob_download_if_exists() {
   local probe=$?
   ((probe == 0)) || return "$probe"
 
-  az storage blob download \
+  # The unconditional `return 0` that used to sit here was the mirror image of the aws.sh bug and
+  # strictly worse: a failed download reported SUCCESS, so the caller carried on believing it held
+  # a valid appcast when the file was missing or truncated. Same normalisation as aws.sh -- the
+  # probe already said the blob is present, so a failure here is "could not determine", never
+  # absence and never success.
+  if ! az storage blob download \
     --account-name "$account" \
     --container-name "$container" \
     --name "$blob_name" \
     --file "$output_file" \
     --auth-mode login \
     --overwrite \
-    --only-show-errors >/dev/null
+    --only-show-errors >/dev/null; then
+    log_warn "az_blob_exists found ${container}/${blob_name} but the download failed. This is not absence."
+    return 2
+  fi
 
   return 0
 }
