@@ -71,6 +71,93 @@ final class CaptionBurnInSeatTests: XCTestCase {
     wait(for: [done], timeout: 30)
   }
 
+  /// A solid-colour video, per channel rather than `memset`, so a fixture can
+  /// tell the camera track apart from the screen track in the composed frame.
+  private func makeSolidVideo(
+    url: URL, seconds: Double, size: CGSize, blue: UInt8, green: UInt8, red: UInt8
+  ) throws {
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: Int(size.width),
+        AVVideoHeightKey: Int(size.height),
+      ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: Int(size.width),
+        kCVPixelBufferHeightKey as String: Int(size.height),
+      ])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+
+    for i in 0..<Int(seconds * 30) {
+      var pixelBuffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &pixelBuffer)
+      guard let buffer = pixelBuffer else { continue }
+      CVPixelBufferLockBaseAddress(buffer, [])
+      if let base = CVPixelBufferGetBaseAddress(buffer) {
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let width = CVPixelBufferGetWidth(buffer)
+        let pixels = base.assumingMemoryBound(to: UInt8.self)
+        for y in 0..<height {
+          for x in 0..<width {
+            let offset = y * rowBytes + x * 4
+            pixels[offset] = blue
+            pixels[offset + 1] = green
+            pixels[offset + 2] = red
+            pixels[offset + 3] = 255
+          }
+        }
+      }
+      CVPixelBufferUnlockBaseAddress(buffer, [])
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      adaptor.append(
+        buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
+    }
+    input.markAsFinished()
+    let done = expectation(description: "solid video written")
+    writer.finishWriting { done.fulfill() }
+    wait(for: [done], timeout: 30)
+  }
+
+  /// True when any pixel in the frame is within `tolerance` of `expected`,
+  /// decoded back through the export transfer.
+  private func frameContainsColour(
+    _ url: URL, atSeconds seconds: Double, srgb expected: NSColor, tolerance: Double
+  ) throws -> Bool {
+    let generator = AVAssetImageGenerator(asset: AVAsset(url: url))
+    generator.appliesPreferredTrackTransform = true
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
+    let frame = try generator.copyCGImage(
+      at: CMTime(seconds: seconds, preferredTimescale: 600), actualTime: nil)
+    let rep = NSBitmapImageRep(cgImage: frame)
+
+    func decode(_ component: CGFloat) -> Double {
+      let byte = UInt8(max(0, min(255, (component * 255).rounded())))
+      return Double(ColorTransferFunctions.exportTransferToSrgb(byte)) / 255.0
+    }
+    for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+      for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+        guard let c = rep.colorAt(x: x, y: y) else { continue }
+        if abs(decode(c.redComponent) - Double(expected.redComponent)) <= tolerance,
+          abs(decode(c.greenComponent) - Double(expected.greenComponent)) <= tolerance,
+          abs(decode(c.blueComponent) - Double(expected.blueComponent)) <= tolerance
+        {
+          return true
+        }
+      }
+    }
+    return false
+  }
+
   /// One opaque, strongly saturated caption bitmap filling the frame.
   ///
   /// Full-frame and saturated on purpose: a small pill would be averaged away
@@ -253,6 +340,139 @@ final class CaptionBurnInSeatTests: XCTestCase {
     XCTAssertEqual(
       decode(sampled.blueComponent), Double(expectedSrgb.blueComponent),
       accuracy: 0.10, "\(message) (blue)", file: file, line: line)
+  }
+
+  /// Captions burn in on the INLINE-CAMERA branch too.
+  ///
+  /// An export with a camera bubble takes a different render path from one
+  /// without: the composition emits the screen on a transparent background and
+  /// `InlineCameraRenderer.render` stacks screen, bubble and background itself,
+  /// applying captions through its `composedOverlay` closure. Every existing
+  /// caption test passes `cameraAsset: nil`, so that branch had no coverage at
+  /// all -- deleting `composedOverlay:` at its one call site produced
+  /// caption-free camera exports, reported as a successful export, with the
+  /// whole native suite still green.
+  ///
+  /// The argument is no longer defaulted, so that particular deletion is now a
+  /// compile error. This covers the rest: that the closure is wired to the
+  /// caption path and that its output survives into the file.
+  func testCaptionsBurnInOnTheInlineCameraBranch() throws {
+    let canvas = CGSize(width: 320, height: 180)
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+
+    try makeSourceVideo(url: screenURL, seconds: 1.0)
+    // A camera the composed frame can be searched for, distinct from both the
+    // grey screen and the caption. Midtone and non-neutral on every channel,
+    // for the reason the bitmap helper documents.
+    let cameraColour = NSColor(srgbRed: 0.78, green: 0.26, blue: 0.20, alpha: 1.0)
+    try makeSolidVideo(
+      url: cameraURL, seconds: 1.0, size: CGSize(width: 240, height: 240),
+      blue: 51, green: 66, red: 199)
+
+    // Deliberately NOT full-frame, unlike the other fixtures here. A full-frame
+    // caption covers the bubble completely -- which is the seat behaving
+    // correctly, captions sit above the camera -- but it leaves no camera
+    // pixels to prove the bubble rendered at all. A pill sits bottom-centre and
+    // leaves the bottom-right bubble visible, so one frame can carry both facts.
+    let captionColour = NSColor(srgbRed: 0.24, green: 0.68, blue: 0.32, alpha: 1.0)
+    try writeCaptionBitmap(
+      named: "cue.png", size: CGSize(width: 150, height: 44), color: captionColour)
+
+    let params = CompositionParams(
+      targetSize: canvas,
+      padding: 0.0,
+      cornerRadius: 0.0,
+      backgroundColor: nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.0,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+    // `.circle` is what forces the inline path: `cameraNeedsInlineRender`
+    // returns true for any non-square shape. A square, opaque, unmirrored,
+    // fill-mode bubble with no border or shadow goes down the composition
+    // path instead and would quietly test the branch already covered.
+    let cameraParams = CameraCompositionParams(
+      visible: true,
+      layoutPreset: .overlayBottomRight,
+      normalizedCanvasCenter: nil,
+      sizeFactor: 0.30,
+      shape: .circle,
+      cornerRadius: 0.0,
+      opacity: 1.0,
+      mirror: false,
+      contentMode: .fill,
+      zoomBehavior: .fixed,
+      borderWidth: 0.0,
+      borderColorArgb: nil,
+      shadowPreset: 0,
+      chromaKeyEnabled: false,
+      chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil
+    )
+
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL),
+        cameraAsset: AVAsset(url: cameraURL),
+        params: params,
+        cameraParams: cameraParams,
+        cursorRecording: nil
+      )
+    )
+    // Precondition, not decoration: without this the fixture could fall back to
+    // the composition path and the test would pass while covering the branch
+    // that was already covered.
+    XCTAssertNotNil(
+      composition.inlineCameraRenderPlan,
+      "fixture must take the inline-camera branch, which is the whole point")
+
+    let outputURL = tempDir.appendingPathComponent("camera-captioned.mov")
+    let exporter = LetterboxExporter()
+    let done = expectation(description: "inline camera render")
+    var outcome: Result<URL, Error>?
+    exporter._testRenderFinalExport(
+      result: composition,
+      outputURL: outputURL,
+      captionBitmapDirectory: tempDir.path,
+      captions: [
+        CaptionCueTrack.Cue(id: "c1", startMs: 0, endMs: 1000, bitmapName: "cue.png")
+      ]
+    ) { result in
+      outcome = result
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 120)
+    let finalURL = try XCTUnwrap(try outcome?.get())
+
+    // The bubble really rendered. Without this the test would also pass on a
+    // frame with no camera in it at all, which is the no-camera branch wearing
+    // a disguise -- green for exactly the wrong reason.
+    XCTAssertTrue(
+      try frameContainsColour(
+        finalURL, atSeconds: 0.5, srgb: cameraColour, tolerance: 0.12),
+      "the camera bubble is not in the exported frame, so this is not the "
+        + "inline-camera branch being measured")
+
+    // THE ASSERTION: the caption is in the file. On this branch it arrives only
+    // through `composedOverlay`, so deleting that wiring removes these pixels.
+    //
+    // Matched by presence rather than at a fixed coordinate: the renderer owns
+    // placement (centred horizontally, lifted `defaultBottomMarginFraction` off
+    // the bottom), and hand-computing that here would pin the test to today's
+    // layout maths rather than to the wiring it is meant to cover.
+    XCTAssertTrue(
+      try frameContainsColour(
+        finalURL, atSeconds: 0.5, srgb: captionColour, tolerance: 0.12),
+      "no caption pixels in a camera export -- the inline-camera branch is not "
+        + "burning captions in")
   }
 
   /// The reader-swap cue-cursor reset, pinned against the production render
