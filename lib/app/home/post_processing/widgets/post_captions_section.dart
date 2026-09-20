@@ -484,7 +484,10 @@ class _CueRowState extends State<_CueRow> {
   @override
   void initState() {
     super.initState();
-    // Blur still commits, so the last edit is never lost to a pending timer.
+    // Blur commits too — but blur does not fire on an unmount that is not a
+    // Flutter tap (quit, project close, a tab rebuild), and disposing a
+    // FocusNode does not notify its listeners, so [dispose] has to flush as
+    // well. Both paths are needed; neither covers the other.
     _focusNode.addListener(() {
       if (!_focusNode.hasFocus) {
         _commitDebounce?.cancel();
@@ -517,6 +520,22 @@ class _CueRowState extends State<_CueRow> {
 
   @override
   void dispose() {
+    // Flush the pending correction instead of dropping it. Typing and then
+    // quitting, closing the recording, opening another one or switching tab
+    // within the debounce window used to discard the edit silently: no commit,
+    // no persist, nothing said, and the machine's original text back on the
+    // next open with no reason to suspect an edit was thrown away.
+    //
+    // Safe to call out during teardown: `_commit` only invokes
+    // `onTextChanged`, and `PostProcessingController.notifyListeners` is
+    // guarded against a disposed controller.
+    //
+    // Ordered before `_controller.dispose()` because `_commit` reads
+    // `_controller.text`.
+    if (_commitDebounce?.isActive ?? false) {
+      _commitDebounce!.cancel();
+      _commit();
+    }
     _commitDebounce?.cancel();
     _focusNode.dispose();
     _controller.dispose();
