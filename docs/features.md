@@ -4,7 +4,7 @@ The canonical answer to "what can Clingfy do today?" — one row per user-facing
 feature, with platform status. Update this file whenever a release ships
 (alongside `CHANGELOG.md`).
 
-- **Baseline:** macOS **v1.0.6** (2026-07-22). Anything newer is listed under
+- **Baseline:** macOS **v1.1.0** (2026-09-20). Anything newer is listed under
   [In development](#in-development-on-develop-unreleased).
 - **Windows** is a beta port living in `windows/` — feature-complete for
   record → preview → edit → export, not yet publicly released. See
@@ -86,6 +86,7 @@ there, so there is nothing to ship).
 | WYSIWYG export bake | Cuts export exactly as previewed — zoom, cursor, camera, and audio stay in sync. | ✅ | ✅ |
 | Undo / redo | Full edit history for clip and color edits. | ✅ | ✅ |
 | Color correction | One-click Auto enhance, plus manual exposure / contrast / saturation / temperature / tint. Live preview + export bake. | ✅ | ✅ |
+| Auto-subtitles | On-device transcription (WhisperKit), a cue-level editor with undo/redo, captions in the live preview, and four destinations: Off / Burn in / File / Both, writing `.srt` and `.vtt` beside the video. Requires Apple silicon (v1.1.0). | ✅ | — |
 
 ## Canvas & layout
 
@@ -130,9 +131,6 @@ there, so there is nothing to ship).
 
 ## In development on `develop` (unreleased)
 
-- **Auto-subtitles (macOS)** — on-device transcription via WhisperKit, a
-  cue-level caption editor, burned-in captions and `.srt` / `.vtt` sidecars.
-  macOS only; Windows reports the feature as unavailable with a reason.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 
@@ -148,6 +146,8 @@ there, so there is nothing to ship).
 
 | Version | Headline features |
 |---|---|
+| 1.1.0 (2026-09-20) | Auto-subtitles on macOS, Apple silicon only (transcription, cue editor with undo/redo, burn-in, `.srt`/`.vtt`); Windows editable zoom lane, WYSIWYG inline preview, real cursor shapes, HEVC export; colour-graded exports no longer deleted |
+| 1.0.7 (2026-08-01) | GIF export with size presets, colour accuracy fixed capture-to-export, colour-grade undo/redo, pre-recording audio warnings |
 | 1.0.6 (2026-07-22) | Voice Cleanup (mic noise reduction), separated mic/system audio + WYSIWYG preview, opt-in echo removal, clip/color edit persistence |
 | 1.0.5 (2026-07-01) | Clip editing (split / cut / trim / reorder), color correction, verbose logging |
 | 1.0.4 | Procedural backgrounds, per-recording canvas persistence, massive export temp-disk reduction |

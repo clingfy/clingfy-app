@@ -936,7 +936,7 @@
   "captionsNoneYet": "No subtitles yet.",
   "captionsNoSpeechFound": "No speech found in this recording.",
   "captionsUnavailableOs": "Subtitles need a newer version of macOS.",
-  "captionsUnavailableIntel": "Subtitles run slowly on Intel Macs, which have no Neural Engine.",
+  "captionsUnavailableIntel": "Subtitles need a Mac with Apple silicon. Intel Macs have no Neural Engine to run the speech model.",
   "captionsUnavailableNoAudio": "This recording has no audio to transcribe.",
   "captionsUnavailablePlatform": "Subtitles are only available on macOS.",
   "captionsUnavailableProbeFailed": "Couldn't check whether subtitles can run for this recording.",

@@ -2807,7 +2807,7 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get captionsUnavailableIntel =>
-      'Subtitrările rulează lent pe Mac-urile Intel, care nu au Neural Engine.';
+      'Subtitrările necesită un Mac cu procesor Apple. Mac-urile Intel nu au Neural Engine pentru a rula modelul de vorbire.';
 
   @override
   String get captionsUnavailableNoAudio =>

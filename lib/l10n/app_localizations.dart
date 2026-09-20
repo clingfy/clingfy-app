@@ -5059,7 +5059,7 @@ abstract class AppLocalizations {
   /// No description provided for @captionsUnavailableIntel.
   ///
   /// In en, this message translates to:
-  /// **'Subtitles run slowly on Intel Macs, which have no Neural Engine.'**
+  /// **'Subtitles need a Mac with Apple silicon. Intel Macs have no Neural Engine to run the speech model.'**
   String get captionsUnavailableIntel;
 
   /// No description provided for @captionsUnavailableNoAudio.
