@@ -84,7 +84,8 @@ there, so there is nothing to ship).
 | Drag to reorder | Rearrange clips on the timeline. | ✅ | ✅ |
 | Smooth edited playback | Preview plays through cuts and reorders with no stalls. | ✅ | ✅ |
 | WYSIWYG export bake | Cuts export exactly as previewed — zoom, cursor, camera, and audio stay in sync. | ✅ | ✅ |
-| Undo / redo | Full edit history for clip and color edits. | ✅ | ✅ |
+| Undo / redo | Full edit history for clip, color and subtitle edits. | ✅ | ✅ |
+| Auto-subtitles | On-device transcription (WhisperKit), an editable cue list, captions in the live preview, and burn-in or `.srt` / `.vtt` sidecars on export. | ✅ | — (reports unavailable with a reason) |
 | Color correction | One-click Auto enhance, plus manual exposure / contrast / saturation / temperature / tint. Live preview + export bake. | ✅ | ✅ |
 
 ## Canvas & layout
@@ -130,9 +131,6 @@ there, so there is nothing to ship).
 
 ## In development on `develop` (unreleased)
 
-- **Auto-subtitles (macOS)** — on-device transcription via WhisperKit, a
-  cue-level caption editor, burned-in captions and `.srt` / `.vtt` sidecars.
-  macOS only; Windows reports the feature as unavailable with a reason.
 - **Windows beta launch** — installer, updater, and tester docs are ready;
   invites pending release gates.
 
