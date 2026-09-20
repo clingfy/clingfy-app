@@ -422,6 +422,8 @@
   "colorCorrection": "تصحيح الألوان",
   "colorUndo": "تراجع عن تعديل الألوان",
   "colorRedo": "إعادة تعديل الألوان",
+  "captionsUndo": "تراجع عن تعديل الترجمة",
+  "captionsRedo": "إعادة تعديل الترجمة",
   "autoEnhance": "تحسين تلقائي",
   "exposure": "التعريض",
   "contrast": "التباين",
@@ -649,6 +651,16 @@
   "externalProjectOpenFailed": "تعذّر فتح مشروع Clingfy هذا.",
   "exportSuccess": "تم التصدير بنجاح:",
   "exportSavedWithoutSubtitles": "تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:",
+  "exportSavedWithoutSubtitleFile": "تم التصدير، لكن تعذّر كتابة ملف الترجمة:",
+  "exportSavedWithoutAnySubtitles": "تم التصدير، لكن تعذّر إضافة أي ترجمات:",
+  "exportSavedWithShortenedSubtitles": "تم التصدير. {count} من الترجمات كانت أطول من إطار الفيديو وتمّ اختصارها:",
+  "@exportSavedWithShortenedSubtitles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "open": "فتح",
   "cursorDataMissing": "بيانات المؤشر مفقودة",
   "voiceBoost": "تعزيز الصوت",
@@ -909,9 +921,11 @@
   "captionsNoneYet": "لا توجد ترجمة بعد.",
   "captionsNoSpeechFound": "لم يتم العثور على كلام في هذا التسجيل.",
   "captionsUnavailableOs": "تتطلب الترجمة إصدارًا أحدث من macOS.",
-  "captionsUnavailableIntel": "تعمل الترجمة ببطء على أجهزة Mac بمعالج Intel لعدم توفر Neural Engine.",
+  "captionsUnavailableIntel": "تتطلب الترجمة جهاز Mac بمعالج Apple. أجهزة Mac بمعالج Intel لا تتوفر على Neural Engine لتشغيل نموذج الكلام.",
   "captionsUnavailableNoAudio": "لا يحتوي هذا التسجيل على صوت لتفريغه.",
   "captionsUnavailablePlatform": "الترجمة متاحة على macOS فقط.",
+  "captionsUnavailableProbeFailed": "تعذّر التحقق ممّا إذا كانت الترجمات تعمل لهذا التسجيل.",
+  "captionsRetryProbe": "أعد المحاولة",
   "captionsMicOnlyRecording": "هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.",
   "captionsFirstRunDownload": "يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.",
   "captionsFailed": "تعذّر إنشاء الترجمة.",

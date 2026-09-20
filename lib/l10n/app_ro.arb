@@ -422,6 +422,8 @@
   "colorCorrection": "Corecție culoare",
   "colorUndo": "Anulează editarea culorii",
   "colorRedo": "Refă editarea culorii",
+  "captionsUndo": "Anulează editarea subtitrării",
+  "captionsRedo": "Refă editarea subtitrării",
   "autoEnhance": "Auto-îmbunătățire",
   "exposure": "Expunere",
   "contrast": "Contrast",
@@ -649,6 +651,16 @@
   "externalProjectOpenFailed": "Acest proiect Clingfy nu a putut fi deschis.",
   "exportSuccess": "Export reușit:",
   "exportSavedWithoutSubtitles": "Exportat, dar subtitrările nu au putut fi incluse în imagine:",
+  "exportSavedWithoutSubtitleFile": "Exportat, dar fișierul de subtitrare nu a putut fi scris:",
+  "exportSavedWithoutAnySubtitles": "Exportat, dar nicio subtitrare nu a putut fi adăugată:",
+  "exportSavedWithShortenedSubtitles": "Exportat. {count} subtitrări au fost prea lungi pentru cadru și au fost scurtate:",
+  "@exportSavedWithShortenedSubtitles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "open": "Deschide",
   "cursorDataMissing": "Datele cursorului lipsesc",
   "voiceBoost": "Amplificare Voce",
@@ -909,9 +921,11 @@
   "captionsNoneYet": "Încă nu există subtitrări.",
   "captionsNoSpeechFound": "Nu s-a găsit vorbire în această înregistrare.",
   "captionsUnavailableOs": "Subtitrările necesită o versiune mai nouă de macOS.",
-  "captionsUnavailableIntel": "Subtitrările rulează lent pe Mac-urile Intel, care nu au Neural Engine.",
+  "captionsUnavailableIntel": "Subtitrările necesită un Mac cu procesor Apple. Mac-urile Intel nu au Neural Engine pentru a rula modelul de vorbire.",
   "captionsUnavailableNoAudio": "Această înregistrare nu are sunet de transcris.",
   "captionsUnavailablePlatform": "Subtitrările sunt disponibile doar pe macOS.",
+  "captionsUnavailableProbeFailed": "Nu s-a putut verifica dacă subtitrările pot rula pentru această înregistrare.",
+  "captionsRetryProbe": "Încearcă din nou",
   "captionsMicOnlyRecording": "Această înregistrare este anterioară capturii audio separate, deci s-a înregistrat doar microfonul.",
   "captionsFirstRunDownload": "Prima rulare descarcă un model de vorbire. Se întâmplă o singură dată.",
   "captionsFailed": "Nu s-au putut genera subtitrările.",

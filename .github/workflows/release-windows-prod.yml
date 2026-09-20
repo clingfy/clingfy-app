@@ -3,8 +3,20 @@ name: Release - Windows production
 # PHASE C of the Azure Pipelines -> GitHub Actions release migration.
 # GitHub counterpart of azure-pipelines/windows-release-prod.yml.
 #
-# Manual dispatch from a release/* branch only, behind the `production`
-# environment's required reviewer. Ships UNSIGNED (decision D3): 03_sign.ps1
+# Manual dispatch from a release/* branch only. The branch restriction is the job-level
+# `if: startsWith(github.ref, 'refs/heads/release/')` below, and the AWS role's own
+# job_workflow_ref pin (…/release-windows-prod.yml@refs/heads/release/*) enforces it a second
+# time at the credentials step, so a run from any other branch cannot publish even if that
+# `if:` is edited away.
+#
+# There is NO required reviewer. This header used to claim one; measured 2026-09-19 the
+# `production` environment has protection_rules: [] and deployment_branch_policy: null.
+# Nothing stands between clicking "Run workflow" and an immutable publish to clingfy.com/updates
+# — and the role deliberately has no s3:DeleteObject, so a mistaken publish cannot be deleted,
+# only superseded by a higher version. Add a required reviewer in
+# Settings → Environments → production if that gap matters.
+#
+# Ships UNSIGNED (decision D3): 03_sign.ps1
 # skips with a loud warning when no WIN_SIGN_* material is present, so users see
 # a SmartScreen "unknown publisher" prompt until a certificate is wired.
 #

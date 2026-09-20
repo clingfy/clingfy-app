@@ -230,6 +230,8 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onCaptionsUseSystemChanged: post.setCaptionsUseSystem,
               onGenerateCaptions: () => unawaited(post.generateCaptions()),
               onCancelCaptions: () => unawaited(post.cancelCaptions()),
+              onRetryCaptionsProbe: () =>
+                  unawaited(post.refreshCaptionsCapability()),
               onCaptionTextChanged: post.updateCaptionText,
               onSubtitleModeChanged: post.setSubtitleMode,
               colorGrade: vm.colorGrade,

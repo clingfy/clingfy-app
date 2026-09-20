@@ -234,6 +234,44 @@ void main() {
       expect(second.colorGrade.temperature, -0.4);
     },
   );
+
+  test('a write queued for one project is not overwritten by the next projects '
+      'defaults', () async {
+    // `PostStateStore.update` serialises per bundle, and this controller is a
+    // long-lived singleton whose fields `_resetForNewRecording` clears on a
+    // project switch. A write requested for A but executed after the user
+    // opened B used to read B's freshly-reset defaults and put them in A's
+    // state.json — A's grade and background silently gone on next open.
+    //
+    // B's directory is created FIRST on purpose: an await between the commit
+    // and the switch lets the queued write drain, and then there is no race
+    // left to catch.
+    final other = await Directory.systemTemp.createTemp('clingfy_grade_b_');
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (await other.exists()) await other.delete(recursive: true);
+    });
+
+    final post = await attachController(projectDir.path);
+
+    // Two commits, as the issue describes: the second queues behind the first
+    // and so runs after the switch.
+    post.setColorGradeExposure(0.42);
+    post.commitColorGrade();
+    post.setColorGradeExposure(0.37);
+    post.commitColorGrade();
+    post.attachToRecording(sessionId: 'rec_b', projectPath: other.path);
+
+    await PostStateStore.settled();
+    await _settle();
+
+    final a = PostStateStore.load(projectDir.path);
+    expect(
+      a.grade.exposure,
+      0.37,
+      reason: "project A kept its own grade, not B's reset defaults",
+    );
+  });
 }
 
 /// Pump the event queue enough to flush the controller's chained awaits plus

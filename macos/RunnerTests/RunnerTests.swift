@@ -4437,8 +4437,10 @@ final class LetterboxExporterTests: XCTestCase {
       worstDelta, 0.14,
       "the rejection should be a real colour delta, not a sampling failure")
 
-    // HALF TWO -- told that a grade is active, the validator declines to
-    // measure and the export survives. Deleting the guard fails this.
+    // HALF TWO -- told that a grade is active, the validator grades its own
+    // reference and the two now agree. This asserts MEASURED AND PASSED, not
+    // skipped: a validator that merely declined to look would also produce no
+    // error, and that is not what this pins.
     let gated = exporter._testEvaluateFinalExportReferenceRender(
       referenceResult: composition,
       finalExportURL: outputURL,
@@ -4447,8 +4449,18 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertNil(
       gated.error,
       "a colour-graded export must never be rejected for looking graded")
-    XCTAssertNil(gated.lumaDelta, "skipped means not measured, not measured-as-zero")
-    XCTAssertNil(gated.maxChannelDelta)
+    let lumaDelta = try XCTUnwrap(
+      gated.lumaDelta,
+      "the grade must be MEASURED against a graded reference, not skipped")
+    let chanDelta = try XCTUnwrap(gated.maxChannelDelta)
+
+    // Must collapse onto the identity floor, not merely squeak under the
+    // budget. HALF ONE measured > 0.14 on this same file, so a bound of, say,
+    // 0.13 would pass on a half-applied grade and pin nothing.
+    XCTAssertLessThan(
+      lumaDelta, 0.02,
+      "a graded reference should land near the identity floor, not just inside the budget")
+    XCTAssertLessThan(chanDelta, 0.02)
   }
 
   func testFinalExportReferenceValidatorComparesInTheFilesTransferSpace() throws {
@@ -10815,4 +10827,545 @@ final class SourceAudioBitRateTests: XCTestCase {
         + "failure has a different cause and this fix is unproven")
   }
 
+}
+
+
+// ===== TEMPORARY MEASUREMENT HARNESS - remove before commit =====
+/// Sweeps the whole colour-grade slider range through the final-export
+/// validator and pins that none of it gets the export deleted.
+///
+/// This is the regression guard for a defect that shipped in 1.0.5 and
+/// destroyed finished exports: the grade is applied in the writer loop but the
+/// validator rendered an UNGRADED reference, charged the difference to a
+/// budget sized for transfer error, and deleted what it rejected. Exposure
+/// -0.25 on light content measured luma 0.176 against a 0.14 budget.
+///
+/// Each row measures twice. BEFORE evaluates with the grade undeclared, which
+/// reproduces the old asymmetry and keeps the fixtures honest -- if those
+/// numbers ever go small, the fixture stopped exercising the bug and the
+/// AFTER column proves nothing. AFTER declares the grade, and must land near
+/// the identity floor.
+///
+/// The question: `CompositionParams.colorGrade` (CompositionBuilder.swift:1217)
+/// is never read, so the export composition is UNGRADED, while the final file
+/// IS graded in the writer loop (LetterboxExporter.swift:2765). The
+/// final-export validator then compares the two and DELETES the file when the
+/// whole-frame average channel delta exceeds 0.10. This measures how big that
+/// delta actually gets for grades a user can really set.
+final class ColorGradeValidatorMarginTests: XCTestCase {
+
+  // MARK: - What we sweep
+
+  private struct GradeCase {
+    let name: String
+    let grade: ColorGrade
+  }
+
+  /// Slider facts, read from source:
+  ///   * `ColorGradeRanges.min/max` = -1.0 / +1.0 for all five axes
+  ///     (lib/core/color/auto_grade_heuristic.dart:8-9)
+  ///   * the UI slider is `min: -1.0, max: 1.0, divisions: 40`
+  ///     (post_color_grade_section.dart:108-110) → one detent = 0.05
+  ///   * `autoEnhanceGrade()` — the one-tap Auto button — emits
+  ///     exposure 0.04, contrast 0.12, saturation 0.10 (auto_grade_heuristic.dart:33-41)
+  ///   * native mapping (CompositionBuilder.swift:886-916): exposure ×1.5 EV,
+  ///     contrast → 1 + v·0.5, saturation → 1 + v, temperature → 6500 + v·3000 K,
+  ///     tint → v·100
+  private static let gradeCases: [GradeCase] = {
+    var cases: [GradeCase] = [
+      GradeCase(name: "identity (control — pure transfer floor)", grade: .identity),
+      GradeCase(
+        name: "one slider detent (exposure 0.05)",
+        grade: ColorGrade(
+          autoEnabled: false, exposure: 0.05, contrast: 0, saturation: 0,
+          temperature: 0, tint: 0)),
+      GradeCase(
+        name: "AUTO button (exp 0.04 / con 0.12 / sat 0.10)",
+        grade: ColorGrade(
+          autoEnabled: true, exposure: 0.04, contrast: 0.12, saturation: 0.10,
+          temperature: 0, tint: 0)),
+      GradeCase(
+        name: "mild manual (0.10 exp/con/sat)",
+        grade: ColorGrade(
+          autoEnabled: false, exposure: 0.10, contrast: 0.10, saturation: 0.10,
+          temperature: 0, tint: 0)),
+      GradeCase(
+        name: "repo's own 'warm/bright' grade (CaptionBurnInProofTests:132)",
+        grade: ColorGrade(
+          autoEnabled: false, exposure: 0.35, contrast: 0.15, saturation: 0.20,
+          temperature: 0.25, tint: 0)),
+      GradeCase(
+        name: "quarter slider, all five",
+        grade: ColorGrade(
+          autoEnabled: false, exposure: 0.25, contrast: 0.25, saturation: 0.25,
+          temperature: 0.25, tint: 0.25)),
+      GradeCase(
+        name: "half slider, all five",
+        grade: ColorGrade(
+          autoEnabled: false, exposure: 0.5, contrast: 0.5, saturation: 0.5,
+          temperature: 0.5, tint: 0.5)),
+      GradeCase(
+        name: "SLIDER MAX, all five",
+        grade: ColorGrade(
+          autoEnabled: false, exposure: 1.0, contrast: 1.0, saturation: 1.0,
+          temperature: 1.0, tint: 1.0)),
+    ]
+
+    // Single-axis sweeps, so the table says WHICH slider is the dangerous one.
+    for value in [0.25, 0.5, 1.0] {
+      cases.append(
+        GradeCase(
+          name: String(format: "exposure only %.2f", value),
+          grade: ColorGrade(
+            autoEnabled: false, exposure: value, contrast: 0, saturation: 0,
+            temperature: 0, tint: 0)))
+      cases.append(
+        GradeCase(
+          name: String(format: "contrast only %.2f", value),
+          grade: ColorGrade(
+            autoEnabled: false, exposure: 0, contrast: value, saturation: 0,
+            temperature: 0, tint: 0)))
+      cases.append(
+        GradeCase(
+          name: String(format: "saturation only %.2f", value),
+          grade: ColorGrade(
+            autoEnabled: false, exposure: 0, contrast: 0, saturation: value,
+            temperature: 0, tint: 0)))
+      cases.append(
+        GradeCase(
+          name: String(format: "temperature only %.2f", value),
+          grade: ColorGrade(
+            autoEnabled: false, exposure: 0, contrast: 0, saturation: 0,
+            temperature: value, tint: 0)))
+      cases.append(
+        GradeCase(
+          name: String(format: "tint only %.2f", value),
+          grade: ColorGrade(
+            autoEnabled: false, exposure: 0, contrast: 0, saturation: 0,
+            temperature: 0, tint: value)))
+      // Negative direction too — CIExposureAdjust is multiplicative, so a
+      // darkening grade moves the average by a different amount than a
+      // brightening one of the same magnitude.
+      cases.append(
+        GradeCase(
+          name: String(format: "exposure only %.2f", -value),
+          grade: ColorGrade(
+            autoEnabled: false, exposure: -value, contrast: 0, saturation: 0,
+            temperature: 0, tint: 0)))
+    }
+    return cases
+  }()
+
+  // MARK: - Tests
+
+  /// Screen-only composition with `cornerRadius: 0`, no background image or
+  /// preset, no cursor, no zoom → `configureExportAnimationTool`'s guard
+  /// (CompositionBuilder.swift:3276-3285) returns early, `animationTool` is
+  /// nil, so `validationThresholds(for:)` yields the STRICT 0.10 / 0.10.
+  func testGradeMarginsOnALightModeUIFixture() throws {
+    try runSweep(fixture: .lightUI, cornerRadius: 0.0, label: "STRICT (no animation tool) 0.10/0.10")
+  }
+
+  func testGradeMarginsOnADarkModeUIFixture() throws {
+    try runSweep(fixture: .darkUI, cornerRadius: 0.0, label: "STRICT (no animation tool) 0.10/0.10")
+  }
+
+  /// Same light fixture with a rounded canvas, which is what attaches the Core
+  /// Animation tool and relaxes the thresholds to 0.14 / 0.18. Run this to see
+  /// whether the looser budget saves the common "rounded corners" export.
+  func testGradeMarginsOnALightModeUIFixtureWithAnimationTool() throws {
+    try runSweep(
+      fixture: .lightUI, cornerRadius: 24.0, label: "RELAXED (animation tool) 0.14/0.18")
+  }
+
+  // MARK: - The sweep
+
+  private func runSweep(fixture: FixtureKind, cornerRadius: Double, label: String) throws {
+    let tempDir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+
+    let sourceURL = tempDir.appendingPathComponent("screen.mov")
+    try writeFixtureVideo(
+      url: sourceURL,
+      size: CGSize(width: 960, height: 540),
+      durationSeconds: 1.0,
+      fixture: fixture
+    )
+
+    let params = CompositionParams(
+      targetSize: CGSize(width: 960, height: 540),
+      padding: 0.0,
+      cornerRadius: cornerRadius,
+      backgroundColor: cornerRadius > 0 ? 0xFF10_1010 : nil,
+      backgroundImagePath: nil,
+      cursorSize: 1.0,
+      showCursor: false,
+      zoomEnabled: false,
+      zoomFactor: 1.0,
+      followStrength: 0.15,
+      fpsHint: 30,
+      fitMode: "fit",
+      audioGainDb: 0.0,
+      audioVolumePercent: 100.0
+    )
+
+    // The reference composition, built exactly as production builds it — and
+    // note that it is built WITHOUT any grade, because there is no way to give
+    // it one: `CompositionParams.colorGrade` is declared and never read.
+    let composition = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: sourceURL),
+        cameraAsset: nil,
+        params: params,
+        cameraParams: nil,
+        cursorRecording: nil
+      ),
+      "composition builder returned nil"
+    )
+
+    let hasAnimationTool = composition.videoComposition.animationTool != nil
+    var rowsPrefix = ""
+    let channelThreshold = hasAnimationTool ? 0.18 : 0.10
+    let lumaThreshold = hasAnimationTool ? 0.14 : 0.10
+    rowsPrefix = "animationTool=\(hasAnimationTool) -> thresholds luma \(lumaThreshold) / channel \(channelThreshold)"
+
+    var worstResidual = 0.0
+    var worstBefore = 0.0
+    var rows: [String] = []
+    rows.append(rowsPrefix)
+    var crossers: [String] = []
+    rows.append("fixture: \(fixture.rawValue)   thresholds: \(label)")
+    rows.append(
+      pad("grade", 56) + "  " + pad("BEFORE", 10) + "  " + pad("lumaD", 10) + "  "
+        + pad("chanD", 10) + "  verdict")
+    rows.append(String(repeating: "─", count: 96))
+
+    for gradeCase in Self.gradeCases {
+      let outURL = tempDir.appendingPathComponent("final.mov")
+      try? FileManager.default.removeItem(at: outURL)
+
+      // STEP 1 — render the GRADED final file. This is the only seam that
+      // applies a grade: `_testRenderFinalExport(colorGrade:)` forwards to
+      // `runRenderedExportSession`, whose writer loop calls
+      // `ColorGradeRenderer.apply` at LetterboxExporter.swift:2765.
+      let exporter = LetterboxExporter()
+      let rendered = expectation(description: "render \(gradeCase.name)")
+      var outcome: Result<URL, Error>?
+      exporter._testRenderFinalExport(
+        result: composition,
+        outputURL: outURL,
+        colorGrade: gradeCase.grade
+      ) { result in
+        outcome = result
+        rendered.fulfill()
+      }
+      wait(for: [rendered], timeout: 180.0)
+      _ = try XCTUnwrap(outcome, "render never completed for \(gradeCase.name)").get()
+
+      // STEP 2 — hand it to the validator, which takes NO grade parameter and
+      // renders its reference straight off `composition.videoComposition`.
+      // That asymmetry IS the defect; reproducing it here is the point.
+      // Two measurements per grade:
+      //   BEFORE = the validator told nothing about the grade, so it renders an
+      //            UNGRADED reference. This is the defect, and the number that
+      //            deleted exports.
+      //   AFTER  = the validator told about the grade. Post-fix it grades its
+      //            reference, and this must collapse to the identity floor.
+      let before = exporter._testEvaluateFinalExportReferenceRender(
+        referenceResult: composition,
+        finalExportURL: outURL
+      )
+      let evaluation = exporter._testEvaluateFinalExportReferenceRender(
+        referenceResult: composition,
+        finalExportURL: outURL,
+        colorGrade: gradeCase.grade
+      )
+
+      guard let lumaDelta = evaluation.lumaDelta,
+        let channelDelta = evaluation.maxChannelDelta
+      else {
+        let bw = max(before.lumaDelta ?? -1, before.maxChannelDelta ?? -1)
+        rows.append(
+          pad(gradeCase.name, 56) + "  "
+            + pad(bw < 0 ? "skipped" : String(format: "%.4f", bw), 10) + "  "
+            + pad("-", 10) + "  " + pad("-", 10) + "  "
+            + (evaluation.error?.localizedDescription ?? "SKIPPED (gate)"))
+        continue
+      }
+
+      worstResidual = max(worstResidual, max(lumaDelta, channelDelta))
+      worstBefore = max(worstBefore, max(before.lumaDelta ?? 0, before.maxChannelDelta ?? 0))
+      let rejected = lumaDelta > lumaThreshold || channelDelta > channelThreshold
+      let verdict = rejected ? "DELETED  <<<<" : (evaluation.error == nil ? "kept" : "ERROR")
+      if rejected { crossers.append(gradeCase.name) }
+      let beforeWorst = max(before.lumaDelta ?? -1, before.maxChannelDelta ?? -1)
+      let beforeText = beforeWorst < 0 ? "skipped" : String(format: "%.4f", beforeWorst)
+      rows.append(
+        pad(gradeCase.name, 56) + "  " + pad(beforeText, 10) + "  "
+          + pad(String(format: "%.4f", lumaDelta), 10) + "  "
+          + pad(String(format: "%.4f", channelDelta), 10) + "  " + verdict)
+    }
+
+    rows.append(String(repeating: "─", count: 96))
+    rows.append(
+      crossers.isEmpty
+        ? "NO grade crossed the threshold on this fixture."
+        : "CROSSED (export would be deleted): \n  - " + crossers.joined(separator: "\n  - "))
+
+    let table = "\n" + rows.joined(separator: "\n") + "\n"
+
+    // xcodebuild's result-stream reporter swallows the test process's stdout —
+    // the same reason RunnerTests.swift:4470-4487 appends to a file. Three
+    // channels so at least one survives.
+    NSLog("%@", table)
+    print(table)
+    let attachment = XCTAttachment(string: table)
+    attachment.name = "grade-margins-\(fixture.rawValue)"
+    attachment.lifetime = .keepAlways
+    add(attachment)
+
+    // THE ASSERTIONS. Without these this file is a table nobody reads.
+    XCTAssertTrue(
+      crossers.isEmpty,
+      "these grades would have their export DELETED: \(crossers.joined(separator: ", "))")
+
+    // Near the floor, not merely inside the budget. Both sides are graded now,
+    // so the residual is the identity floor times the grade's local gain --
+    // measured at worst 0.0252 on the dark fixture (floor 0.0119, so ~2x)
+    // against a 0.18 budget. A bound of 0.05 leaves 2x headroom over that
+    // worst case and still catches the failure that matters: grading the
+    // reference in Core Image's default LINEAR working space instead of
+    // `VideoColorPipeline.makeCIContext()`'s sRGB one moves these numbers by
+    // up to 0.21, which a "just under 0.18" check would wave through.
+    XCTAssertLessThan(
+      worstResidual, 0.05,
+      "graded residual drifted off the identity floor -- the reference is no "
+        + "longer being graded at the writer's seat")
+
+    // And the fixture must still be HOT. Without this the whole file can go
+    // green for the worst possible reason: a fixture that stopped producing a
+    // large ungraded delta would make every AFTER row trivially small and pin
+    // nothing at all. The smallest budget in play is 0.14.
+    XCTAssertGreaterThan(
+      worstBefore, lumaThreshold,
+      "no grade in this sweep produces a rejectable ungraded delta any more, so "
+        + "the AFTER column proves nothing -- this fixture has stopped "
+        + "exercising the defect")
+    appendToMarginLog(table)
+  }
+
+  private func pad(_ text: String, _ width: Int) -> String {
+    text.count >= width ? text : text + String(repeating: " ", count: width - text.count)
+  }
+
+  private func appendToMarginLog(_ text: String) {
+    // Deliberately no shared /tmp file: three methods appending to one fixed
+    // path while xcodebuild runs them concurrently is the shared-fixture race
+    // this suite has been bitten by before. The XCTAttachment above carries
+    // the table into the result bundle, which is the durable channel.
+    _ = text
+  }
+
+  // MARK: - Fixture
+
+  private enum FixtureKind: String {
+    case lightUI = "light-mode-UI"
+    case darkUI = "dark-mode-UI"
+  }
+
+  private func makeTempDir() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("grade-margins-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+  }
+
+  /// Writes a static, screen-like frame. Deliberately NOT a flat colour:
+  ///
+  ///   * The metric is a whole-frame channel AVERAGE, and `CIExposureAdjust` is
+  ///     a multiplicative linear-light gain, so the absolute shift scales with
+  ///     the frame's mean. A flat mid-grey (mean 0.5) roughly HALVES the
+  ///     exposure delta a light-mode UI capture (mean ≈ 0.8) produces.
+  ///   * `CIColorControls` saturation rotates about the luma axis, so on a
+  ///     neutral pixel it is a no-op. A grey fixture would report saturation
+  ///     delta ≈ 0 and wrongly clear that slider. Saturated accents are
+  ///     required for that axis to mean anything.
+  ///   * 0 and 255 are fixed points of the export transfer (see the vacuity
+  ///     guard at RunnerTests.swift:4491), and exposure clips at white, so a
+  ///     saturated-bright fixture UNDERSTATES. Hence a mid-tone ramp.
+  ///
+  /// Colours reuse the palette `makeColorPatchPixelBuffer`
+  /// (RunnerTests.swift:5823-5898) already established for this suite —
+  /// 0.90 light grey, 0.84/0.69/0.60 warm, 0.86/0.18/0.16 red,
+  /// 0.14/0.36/0.88 blue — laid out as app chrome instead of quadrants, plus a
+  /// full-range luminance ramp.
+  private func writeFixtureVideo(
+    url: URL,
+    size: CGSize,
+    durationSeconds: Double,
+    fixture: FixtureKind
+  ) throws {
+    try? FileManager.default.removeItem(at: url)
+
+    let writer = try AVAssetWriter(url: url, fileType: .mov)
+    let input = try VideoColorPipeline.makeVideoWriterInput(
+      baseOutputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: Int(size.width),
+        AVVideoHeightKey: Int(size.height),
+      ],
+      category: "Tests",
+      operation: "grade_margin_fixture"
+    )
+    input.expectsMediaDataInRealTime = false
+
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: Int(size.width),
+        kCVPixelBufferHeightKey as String: Int(size.height),
+        kCVPixelBufferCGImageCompatibilityKey as String: true,
+        kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+      ]
+    )
+
+    XCTAssertTrue(writer.canAdd(input))
+    writer.add(input)
+    XCTAssertTrue(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+
+    let fps: Int32 = 30
+    let frameCount = max(6, Int(durationSeconds * Double(fps)))
+    for frame in 0..<frameCount {
+      while !input.isReadyForMoreMediaData {
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
+      }
+      let buffer = try makeFixturePixelBuffer(size: size, fixture: fixture)
+      XCTAssertTrue(
+        adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: fps)))
+    }
+
+    input.markAsFinished()
+    let semaphore = DispatchSemaphore(value: 0)
+    writer.finishWriting { semaphore.signal() }
+    semaphore.wait()
+    if let error = writer.error { throw error }
+    XCTAssertEqual(writer.status, .completed)
+  }
+
+  private func makeFixturePixelBuffer(size: CGSize, fixture: FixtureKind) throws -> CVPixelBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    let status = CVPixelBufferCreate(
+      kCFAllocatorDefault,
+      Int(size.width),
+      Int(size.height),
+      kCVPixelFormatType_32BGRA,
+      [
+        kCVPixelBufferCGImageCompatibilityKey as String: true,
+        kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+      ] as CFDictionary,
+      &pixelBuffer
+    )
+    guard status == kCVReturnSuccess, let pixelBuffer else {
+      throw NSError(domain: "ColorGradeValidatorMarginTests", code: Int(status))
+    }
+
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    let width = CVPixelBufferGetWidth(pixelBuffer)
+    let height = CVPixelBufferGetHeight(pixelBuffer)
+    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+    let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixelBuffer))
+      .assumingMemoryBound(to: UInt8.self)
+
+    func write(_ x: Int, _ y: Int, _ color: NSColor) {
+      guard x >= 0, y >= 0, x < width, y < height else { return }
+      let c = color.usingColorSpace(.sRGB) ?? color
+      let row = base.advanced(by: y * bytesPerRow)
+      let offset = x * 4
+      row[offset] = UInt8(max(0.0, min(255.0, c.blueComponent * 255.0)))
+      row[offset + 1] = UInt8(max(0.0, min(255.0, c.greenComponent * 255.0)))
+      row[offset + 2] = UInt8(max(0.0, min(255.0, c.redComponent * 255.0)))
+      row[offset + 3] = 255
+    }
+
+    func fill(_ rect: CGRect, _ color: NSColor) {
+      let r = rect.integral.intersection(
+        CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+      guard !r.isNull, !r.isEmpty else { return }
+      for y in Int(r.minY)..<Int(r.maxY) {
+        for x in Int(r.minX)..<Int(r.maxX) { write(x, y, color) }
+      }
+    }
+
+    /// Full-range grey ramp — the mid-tones the export transfer and the
+    /// contrast pivot actually bend.
+    func ramp(_ rect: CGRect) {
+      let r = rect.integral.intersection(
+        CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+      guard !r.isNull, !r.isEmpty, r.width > 0 else { return }
+      for x in Int(r.minX)..<Int(r.maxX) {
+        let t = Double(x - Int(r.minX)) / Double(max(1, Int(r.width) - 1))
+        let value = 0.04 + (t * 0.92)
+        let color = NSColor(srgbRed: value, green: value, blue: value, alpha: 1.0)
+        for y in Int(r.minY)..<Int(r.maxY) { write(x, y, color) }
+      }
+    }
+
+    let w = CGFloat(width)
+    let h = CGFloat(height)
+    let warm = NSColor(srgbRed: 0.84, green: 0.69, blue: 0.60, alpha: 1.0)
+    let red = NSColor(srgbRed: 0.86, green: 0.18, blue: 0.16, alpha: 1.0)
+    let blue = NSColor(srgbRed: 0.14, green: 0.36, blue: 0.88, alpha: 1.0)
+
+    switch fixture {
+    case .lightUI:
+      // A light-mode app window: bright content area, dark sidebar, a title
+      // bar, saturated accents, a ramp. Designed mean ≈ 0.78, which is where
+      // real light-mode screen recordings sit.
+      fill(CGRect(x: 0, y: 0, width: w, height: h), NSColor(srgbRed: 0.95, green: 0.95, blue: 0.96, alpha: 1.0))
+      fill(CGRect(x: 0, y: h * 0.92, width: w, height: h * 0.08), NSColor(srgbRed: 0.88, green: 0.88, blue: 0.89, alpha: 1.0))
+      fill(CGRect(x: 0, y: 0, width: w * 0.18, height: h * 0.92), NSColor(srgbRed: 0.22, green: 0.23, blue: 0.26, alpha: 1.0))
+      fill(CGRect(x: w * 0.24, y: h * 0.62, width: w * 0.30, height: h * 0.22), NSColor(srgbRed: 0.90, green: 0.90, blue: 0.90, alpha: 1.0))
+      fill(CGRect(x: w * 0.60, y: h * 0.62, width: w * 0.32, height: h * 0.22), warm)
+      fill(CGRect(x: w * 0.24, y: h * 0.42, width: w * 0.16, height: h * 0.10), blue)
+      fill(CGRect(x: w * 0.46, y: h * 0.42, width: w * 0.08, height: h * 0.10), red)
+      ramp(CGRect(x: w * 0.20, y: h * 0.06, width: w * 0.78, height: h * 0.26))
+
+    case .darkUI:
+      // A dark-mode editor: designed mean ≈ 0.27. Together with the light
+      // fixture this brackets what real screen content does.
+      fill(CGRect(x: 0, y: 0, width: w, height: h), NSColor(srgbRed: 0.12, green: 0.13, blue: 0.15, alpha: 1.0))
+      fill(CGRect(x: 0, y: h * 0.92, width: w, height: h * 0.08), NSColor(srgbRed: 0.18, green: 0.19, blue: 0.22, alpha: 1.0))
+      fill(CGRect(x: 0, y: 0, width: w * 0.18, height: h * 0.92), NSColor(srgbRed: 0.08, green: 0.09, blue: 0.11, alpha: 1.0))
+      fill(CGRect(x: w * 0.24, y: h * 0.74, width: w * 0.40, height: h * 0.04), NSColor(srgbRed: 0.92, green: 0.92, blue: 0.93, alpha: 1.0))
+      fill(CGRect(x: w * 0.24, y: h * 0.66, width: w * 0.30, height: h * 0.04), NSColor(srgbRed: 0.30, green: 0.78, blue: 0.45, alpha: 1.0))
+      fill(CGRect(x: w * 0.24, y: h * 0.58, width: w * 0.34, height: h * 0.04), NSColor(srgbRed: 0.95, green: 0.62, blue: 0.22, alpha: 1.0))
+      fill(CGRect(x: w * 0.24, y: h * 0.50, width: w * 0.26, height: h * 0.04), blue)
+      fill(CGRect(x: w * 0.24, y: h * 0.42, width: w * 0.12, height: h * 0.04), red)
+      fill(CGRect(x: w * 0.68, y: h * 0.42, width: w * 0.24, height: h * 0.36), warm)
+      ramp(CGRect(x: w * 0.20, y: h * 0.06, width: w * 0.78, height: h * 0.26))
+    }
+
+    CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+
+    // Tag Rec.709, matching `TestPixelBufferColorMetadata.rec709`
+    // (RunnerTests.swift:5496-5501). Untagged fixtures make AVFoundation infer
+    // a source colour space and colour-match, which is exactly the trap the
+    // comment at RunnerTests.swift:4310-4318 warns about.
+    CVBufferSetAttachment(
+      pixelBuffer, kCVImageBufferCGColorSpaceKey, VideoColorPipeline.workingColorSpace,
+      .shouldPropagate)
+    CVBufferSetAttachment(
+      pixelBuffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2,
+      .shouldPropagate)
+    CVBufferSetAttachment(
+      pixelBuffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2,
+      .shouldPropagate)
+    CVBufferSetAttachment(
+      pixelBuffer, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+      .shouldPropagate)
+
+    return pixelBuffer
+  }
 }

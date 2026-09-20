@@ -50,8 +50,40 @@
 #include "Graphics/d3d_device.h"
 #include "Permissions/camera_readiness.h"
 #include "Permissions/permission_probe.h"
+#include <string>
 
 namespace clingfy::capture {
+
+namespace {
+
+// Phase breadcrumbs for `TeardownPipeline`, to stderr, opt-in via
+// CLINGFY_TEARDOWN_TRACE.
+//
+// Teardown stops five capture producers and joins two threads, and had no
+// phase visibility at all: when it blocks, the process simply stops. CI run
+// 35007670584 sat 43 minutes inside one RecordingEngineTest and named nothing
+// -- ctest printed `Start 1311:` and then silence until the 60-minute job
+// timeout killed the suite with ~200 tests unrun. A hang has to say which
+// phase it died in BEFORE it dies, so these print ahead of each step.
+//
+// Off unless the env var is set, so the shipping app is untouched. The
+// recording-engine test fixture sets it, which is what puts these lines into
+// CI`s captured ctest output without editing the workflow file.
+void TeardownTrace(const char* phase) {
+  // Deliberately NOT cached in a static. The fixture's SetUp calls
+  // ForceResetForTesting() -> TeardownPipeline BEFORE it sets the env var, so a
+  // one-shot static reads "off" on that first call and stays off for the whole
+  // process — which is exactly how this silently produced no output the first
+  // time. Teardown runs a handful of times per process, never in a loop, so
+  // re-reading the variable costs nothing worth caching.
+  if (::GetEnvironmentVariableA("CLINGFY_TEARDOWN_TRACE", nullptr, 0) == 0) {
+    return;
+  }
+  std::fprintf(stderr, "[teardown] %s\n", phase);
+  std::fflush(stderr);
+}
+
+}  // namespace
 
 namespace {
 
@@ -1717,6 +1749,7 @@ void RecordingEngine::FinalizeAudioSidecars(bool keep_output) {
         const bool healthy =
             keep_output && !failed.load() && writer->samples_written() > 0;
         if (healthy) {
+          TeardownTrace((std::string("sidecar Finalize ") + label).c_str());
           if (auto err = writer->Finalize()) {
             char buf[640];
             std::snprintf(buf, sizeof(buf),
@@ -1731,14 +1764,18 @@ void RecordingEngine::FinalizeAudioSidecars(bool keep_output) {
             ok_flag = true;
           }
         } else {
+          TeardownTrace((std::string("sidecar Cancel ") + label).c_str());
           writer->Cancel();
         }
+        TeardownTrace((std::string("sidecar reset ") + label).c_str());
         writer.reset();
+        TeardownTrace((std::string("sidecar post-reset ") + label).c_str());
         if (!ok_flag && !path.empty()) {
           // A cancelled / failed sidecar temp is never usable (headerless
           // MP4) — delete it now rather than leaving a strand.
           std::error_code ec;
           std::filesystem::remove(std::filesystem::u8path(path), ec);
+          TeardownTrace((std::string("sidecar deleted ") + label).c_str());
           path.clear();
         }
       };
@@ -1958,6 +1995,7 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
 }
 
 void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
+  TeardownTrace("begin");
   // Slice 1 (Windows recording indicator): every recording-end path flows
   // through here (Stop, failure, target-loss), so this is the single hide
   // hook. Non-blocking — Hide() only posts to the overlay thread and never
@@ -1972,6 +2010,7 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   // Phase 8.1: stop the cursor sampler first of all so the sidecar is flushed +
   // closed before the project writer (which runs after this on both the normal
   // Stop and target-loss finalize paths) bundles it.
+  TeardownTrace("cursor_sampler->Stop");
   if (cursor_sampler_) {
     cursor_sampler_->Stop();
     cursor_sampler_.reset();
@@ -1979,23 +2018,28 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   // Phase 9.2: stop the camera recorder + finalize its raw.mov before the
   // project writer bundles it. Recomputes the final camera-enabled flag and
   // builds the metadata from the recorder's result.
+  TeardownTrace("StopCameraRecorder");
   StopCameraRecorder();
   // Phase 9.3.2: tear down the floating bubble AFTER the recorder is stopped —
   // the recorder's capture thread (the only PublishBgra caller) is joined by
   // StopCameraRecorder, so no frame can race the overlay's destruction. The
   // in-app texture is app-lifetime and just stops being fed.
+  TeardownTrace("camera_floating->Stop");
   if (camera_floating_) {
     camera_floating_->Stop();
     camera_floating_.reset();
   }
+  TeardownTrace("capture_backend->Stop");
   if (capture_backend_) {
     capture_backend_->Stop();
     capture_backend_.reset();
   }
+  TeardownTrace("mic_capture->Stop");
   if (mic_capture_) {
     mic_capture_->Stop();
     mic_capture_.reset();
   }
+  TeardownTrace("loopback_capture->Stop");
   if (loopback_capture_) {
     loopback_capture_->Stop();
     loopback_capture_.reset();
@@ -2006,13 +2050,17 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   if (frame_queue_) frame_queue_->Close();
   if (mic_queue_) mic_queue_->Close();
   if (loopback_queue_) loopback_queue_->Close();
+  TeardownTrace("join encoder_thread");
   if (encoder_thread_.joinable()) encoder_thread_.join();
+  TeardownTrace("join audio_mixer_thread");
   if (audio_mixer_thread_.joinable()) audio_mixer_thread_.join();
 
   // Audio separation: the mixer thread (the sidecars' only feeder) is
   // joined — finalize or discard the sidecar files. Mirrors the encoder
   // gating below: failed-start paths (finalize_encoder=false) cancel.
+  TeardownTrace("FinalizeAudioSidecars");
   FinalizeAudioSidecars(/*keep_output=*/finalize_encoder);
+  TeardownTrace("FinalizeAudioSidecars done");
 
   // Phase 10.4: capture the encoder outcome for the finalize paths' gating
   // BEFORE the encoder is destroyed. The Finalize() result used to be
@@ -2020,8 +2068,10 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   teardown_samples_written_ = 0;
   teardown_finalize_ok_ = true;
   if (encoder_) {
+      TeardownTrace("encoder samples_written");
     teardown_samples_written_ = encoder_->samples_written();
     if (finalize_encoder) {
+        TeardownTrace("encoder Finalize");
       if (auto finalize_err = encoder_->Finalize()) {
         teardown_finalize_ok_ = false;
         char buf[640];
@@ -2038,17 +2088,22 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
     // Failed-start paths skip Finalize: destroying the writer un-finalized
     // is a Cancel (see ~MfSinkWriterEncoder) — no zero-sample footer gets
     // written to %TEMP%.
+    TeardownTrace("encoder_.reset");
     encoder_.reset();
   }
   if (frame_queue_) frame_queue_.reset();
   if (mic_queue_) mic_queue_.reset();
   if (loopback_queue_) loopback_queue_.reset();
   if (d3d_device_) {
+    TeardownTrace("d3d_device->Reset");
     d3d_device_->Reset();
+    TeardownTrace("d3d_device_.reset");
     d3d_device_.reset();
   }
   // The session reached a terminal state — let the machine sleep again.
+  TeardownTrace("keep_awake_.reset");
   keep_awake_.reset();
+  TeardownTrace("teardown complete");
 }
 
 void RecordingEngine::CleanupSessionTempFiles(const std::string& session_id,

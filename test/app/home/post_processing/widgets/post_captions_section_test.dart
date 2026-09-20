@@ -59,6 +59,7 @@ void main() {
     SubtitleMode subtitleMode = SubtitleMode.burnIn,
     ValueChanged<SubtitleMode>? onSubtitleModeChanged,
     List<Clip>? clips,
+    VoidCallback? onRetryProbe,
   }) {
     return PostCaptionsSection(
       capability: capability,
@@ -76,6 +77,7 @@ void main() {
       onUseSystemChanged: (_) {},
       onGenerate: onGenerate ?? () {},
       onCancel: onCancel ?? () {},
+      onRetryProbe: onRetryProbe,
       onCueTextChanged: onCueTextChanged ?? (_, _) {},
       subtitleMode: subtitleMode,
       onSubtitleModeChanged: onSubtitleModeChanged ?? (_) {},
@@ -144,6 +146,62 @@ void main() {
         ),
       );
       expect(find.text(entry.value), findsOneWidget, reason: '${entry.key}');
+    }
+  });
+
+  testWidgets('a failed probe explains itself and offers a retry', (
+    tester,
+  ) async {
+    // Before this the capability was left null, and null renders as nothing:
+    // the panel vanished with no notice and no way back short of reopening
+    // the recording, while every other unavailable case got a sentence.
+    var retried = 0;
+    await tester.pumpWidget(
+      host(
+        section(
+          capability: const CaptionsCapabilityInfo(
+            available: false,
+            reason: CaptionsUnavailableReason.probeFailed,
+          ),
+          onRetryProbe: () => retried++,
+        ),
+      ),
+    );
+
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    expect(find.text(l10n.captionsUnavailableProbeFailed), findsOneWidget);
+
+    await tester.tap(find.text(l10n.captionsRetryProbe));
+    await tester.pump();
+    expect(retried, 1);
+  });
+
+  testWidgets('the other unavailable reasons offer no retry', (tester) async {
+    // They are facts about the machine or the recording. A retry there would
+    // fail the same way and teach the user the button does nothing.
+    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+    for (final reason in [
+      CaptionsUnavailableReason.unsupportedOs,
+      CaptionsUnavailableReason.intelSlowPath,
+      CaptionsUnavailableReason.noAudio,
+      CaptionsUnavailableReason.platformNotSupported,
+    ]) {
+      await tester.pumpWidget(
+        host(
+          section(
+            capability: CaptionsCapabilityInfo(
+              available: false,
+              reason: reason,
+            ),
+            onRetryProbe: () {},
+          ),
+        ),
+      );
+      expect(
+        find.text(l10n.captionsRetryProbe),
+        findsNothing,
+        reason: '$reason',
+      );
     }
   });
 
@@ -439,6 +497,58 @@ void main() {
     await tester.tap(find.byType(TextField).last);
     await tester.pumpAndSettle();
     expect(commits, [('cue-7', 'Clingfy')]);
+  });
+
+  testWidgets('an edit survives the panel going away mid-debounce', (
+    tester,
+  ) async {
+    // Type, then quit / close the recording / switch tab within the 350 ms
+    // debounce. Blur does not fire on an unmount that is not a Flutter tap,
+    // and disposing a FocusNode does not notify its listeners, so the pending
+    // timer used to be cancelled and the correction vanished — no commit, no
+    // persist, and the machine's original text back on the next open.
+    final commits = <(String, String)>[];
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('cue-7', 'wrong name')],
+          onCueTextChanged: (id, text) => commits.add((id, text)),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, 'Clingfy');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(commits, isEmpty, reason: 'still inside the debounce window');
+
+    // Unmount the section entirely, as a project close or a tab switch does.
+    await tester.pumpWidget(host(const SizedBox.shrink()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(commits, [('cue-7', 'Clingfy')]);
+  });
+
+  testWidgets('an unmount with nothing pending commits nothing', (
+    tester,
+  ) async {
+    // The flush must not turn every teardown into an edit: a row disposed
+    // without a pending timer has nothing to say.
+    final commits = <(String, String)>[];
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('cue-7', 'wrong name')],
+          onCueTextChanged: (id, text) => commits.add((id, text)),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(host(const SizedBox.shrink()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(commits, isEmpty);
   });
 
   testWidgets('typing reaches the preview without leaving the field', (
@@ -766,5 +876,82 @@ void main() {
       TextDirection.ltr,
       reason: 'no strong character at all falls back to LTR',
     );
+  });
+
+  // ---- Long transcripts -------------------------------------------------
+
+  testWidgets('a long transcript does not inflate every cue field', (
+    tester,
+  ) async {
+    // A 30-minute recording is 300-400 cues. Nested in the section's own
+    // Column every one of them mounted an EditableText, a FocusNode and a
+    // TextEditingController on first open, and every correction replaces the
+    // cue list, so each commit paid for the whole rebuild.
+    final many = [
+      for (var i = 0; i < 400; i++) cue('c$i', 'line $i', startMs: i * 2000),
+    ];
+
+    await tester.pumpWidget(host(section(captions: many)));
+    await tester.pump();
+
+    final live = tester.widgetList(find.byType(EditableText)).length;
+    expect(
+      live,
+      lessThan(80),
+      reason: 'only the rows near the viewport should be mounted, not all 400',
+    );
+  });
+
+  testWidgets('every cue is still reachable in a long transcript', (
+    tester,
+  ) async {
+    // Virtualising must not become a cap: the last cue has to be scrollable
+    // into view, not dropped.
+    final many = [
+      for (var i = 0; i < 400; i++) cue('c$i', 'line $i', startMs: i * 2000),
+    ];
+
+    await tester.pumpWidget(host(section(captions: many)));
+    await tester.pump();
+
+    final list = find.byKey(const Key('captions_cue_list'));
+    expect(list, findsOneWidget);
+
+    // Not a cap: the list knows about all 400, it just builds the visible
+    // ones. `ListView.builder` reports its itemCount as semanticChildCount.
+    expect(tester.widget<ListView>(list).semanticChildCount, 400);
+
+    // And a row far down really does inflate once scrolled to. Driven through
+    // the ScrollPosition rather than a gesture: the section sits inside the
+    // sidebar's own scroll view in this host, so a drag lands in the wrong
+    // arena. `.first` because every cue's TextField carries its own Scrollable.
+    expect(find.byKey(const Key('captions_cue_c399')), findsNothing);
+    final inner = find
+        .descendant(of: list, matching: find.byType(Scrollable))
+        .first;
+    final position = tester.state<ScrollableState>(inner).position;
+    position.jumpTo(position.maxScrollExtent);
+    await tester.pump();
+    expect(find.byKey(const Key('captions_cue_c399')), findsOneWidget);
+  });
+
+  testWidgets('a short transcript keeps every row mounted', (tester) async {
+    // Below the threshold the rows stay in the section's own Column, so the
+    // sidebar scrolls as one surface and nothing about the common case
+    // changes.
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [
+            cue('a', 'first'),
+            cue('b', 'second', startMs: 3000),
+            cue('c', 'third', startMs: 6000),
+          ],
+        ),
+      ),
+    );
+
+    expect(find.byType(EditableText), findsNWidgets(3));
+    expect(find.byKey(const Key('captions_cue_list')), findsNothing);
   });
 }

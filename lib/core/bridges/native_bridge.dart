@@ -1022,6 +1022,14 @@ class NativeBridge {
       return CaptionsCapabilityInfo.fromMap(raw);
     } on MissingPluginException {
       return CaptionsCapabilityInfo.unsupported;
+    } on PlatformException {
+      // A raise is not the same answer as "this platform cannot". Letting it
+      // escape left the capability null, and null renders as nothing at all:
+      // the Subtitles panel simply vanished, with no notice, no explanation
+      // and no way to retry short of reopening the recording — while every
+      // other unavailable case gets its own sentence. `getCaptionModelInfo`
+      // twelve lines below has always handled both.
+      return CaptionsCapabilityInfo.probeFailed;
     }
   }
 

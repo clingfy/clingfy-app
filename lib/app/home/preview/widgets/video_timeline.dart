@@ -400,6 +400,18 @@ class _VideoTimelineState extends State<VideoTimeline> {
     Log.d('ColorGrade', 'undo: now ${post.colorGrade}');
   }
 
+  void _handleUndoCaptions() {
+    final post = context.read<PostProcessingController>();
+    if (!post.canUndoCaptions) return;
+    post.undoCaptions();
+  }
+
+  void _handleRedoCaptions() {
+    final post = context.read<PostProcessingController>();
+    if (!post.canRedoCaptions) return;
+    post.redoCaptions();
+  }
+
   void _handleRedoColor() {
     final post = context.read<PostProcessingController>();
     if (!post.canRedoColorGrade) return;
@@ -498,6 +510,20 @@ class _VideoTimelineState extends State<VideoTimeline> {
             canRedo: post.canRedoColorGrade,
           ),
         );
+    // Same shape as the color selector, plus the "is there a transcript at
+    // all" flag that decides whether the pair is shown: a permanently-disabled
+    // Subtitles pair on a recording nobody has transcribed reads as broken.
+    final captionsHistory = context
+        .select<
+          PostProcessingController,
+          ({bool canUndo, bool canRedo, bool hasCaptions})
+        >(
+          (post) => (
+            canUndo: post.canUndoCaptions,
+            canRedo: post.canRedoCaptions,
+            hasCaptions: post.captions.isNotEmpty,
+          ),
+        );
     // Log the attach/detach edge once so "why is the clip lane missing?" leaves
     // a trail. The editor attaches when the preview becomes ready (PR-3c2) and
     // is absent while loading or on Windows.
@@ -582,6 +608,21 @@ class _VideoTimelineState extends State<VideoTimeline> {
                   canRedoColor: widget.editingEnabled && colorHistory.canRedo,
                   onUndoColor: _handleUndoColor,
                   onRedoColor: _handleRedoColor,
+                  // Shown whenever there is a transcript OR history to step
+                  // through. Gating on the transcript alone stranded the redo:
+                  // generating is itself an undoable edit, so undoing it empties
+                  // the track — which would hide the very pair holding the redo.
+                  showCaptionsControls:
+                      ready &&
+                      (captionsHistory.hasCaptions ||
+                          captionsHistory.canUndo ||
+                          captionsHistory.canRedo),
+                  canUndoCaptions:
+                      widget.editingEnabled && captionsHistory.canUndo,
+                  canRedoCaptions:
+                      widget.editingEnabled && captionsHistory.canRedo,
+                  onUndoCaptions: _handleUndoCaptions,
+                  onRedoCaptions: _handleRedoCaptions,
                 ),
                 SizedBox(height: shellGap),
                 TimelineTransportBar(

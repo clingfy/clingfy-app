@@ -113,6 +113,7 @@ add_executable(runner_tests
   "log_locations_test.cpp"
   "preview_open_reconcile_test.cpp"
   "preview_canvas_texture_size_test.cpp"
+  "mf_sink_writer_encoder_open_failure_test.cpp"
   "mf_encoder_config_test.cpp"
   "native_log_publisher_test.cpp"
   "permission_probe_test.cpp"
@@ -127,6 +128,7 @@ add_executable(runner_tests
   "misc_router_crash_gate_test.cpp"
   "recording_clock_test.cpp"
   "recording_indicator_model_test.cpp"
+  "recording_indicator_provider_lock_test.cpp"
   "pre_recording_bar_model_test.cpp"
   "pre_recording_bar_popover_model_test.cpp"
   "indicator_event_publisher_test.cpp"
@@ -185,4 +187,18 @@ gtest_discover_tests(runner_tests
   DISCOVERY_TIMEOUT 60
   PROPERTIES
     LABELS "windows-runner"
+    # Per-test wall clock. A hung test must FAIL, not eat the job.
+    #
+    # On 2026-09-15 `RecordingEngineTest.StartAfterStopIsAllowed` hung on the
+    # CI runner: ctest printed `Start 1311:` and nothing else for 43 minutes,
+    # until the 60-minute job timeout cancelled the whole suite. The other
+    # ~200 tests after it never ran, and the failure surfaced as "Windows build
+    # + native tests failed at 1h0m16s" — which reads like an infra problem
+    # rather than one named test. ctest's 1500s default did not fire (the hang
+    # outlived it by 19 minutes), so set it explicitly here.
+    #
+    # 300s is deliberately far above any real test: the ENTIRE 1519-test suite
+    # runs in ~86s locally, and the slowest single test is a few seconds. This
+    # can only trip on a genuine hang, and when it does ctest names the test.
+    TIMEOUT 300
 )

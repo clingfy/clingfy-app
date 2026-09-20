@@ -41,7 +41,8 @@ $Ctx = Initialize-WindowsReleaseContext @initArgs
 
 Import-AzurePublishSettings $Ctx
 $downloadBaseUrl = Get-WindowsDownloadBaseUrl $Ctx
-$installerUrl = "$downloadBaseUrl$($Ctx.InstallerName)"
+# URL spelling, not the on-disk name: CloudFront 404s a literal '+'.
+$installerUrl = "$downloadBaseUrl$($Ctx.InstallerUrlName)"
 $feedUrl = "${downloadBaseUrl}latest-windows.json"
 
 # --- 1. Feed advertises this release (retried, mirrors the appcast smoke) ----

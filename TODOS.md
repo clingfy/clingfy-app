@@ -55,57 +55,75 @@ Deferred work captured during reviews. Each item has enough context to pick up c
 
 ## Export — colour
 
-### Grade the validator's reference render, and restore the colour check
+### Grade the validator's reference on the two CAMERA paths
 
-- **What:** `evaluateFinalExportReferenceRender` and `validateFinalStyledCameraExport`
-  currently SKIP entirely when a colour grade is active (the `colorGrade:` parameter
-  on both). Replace that skip by grading the reference so the check runs again.
-- **Why:** the skip is a stop-gap. It was shipped because the ungraded reference was
-  causing the validator to DELETE correct graded exports, and stopping the data loss
-  could not wait. But it blinds the only end-to-end colour check exactly when colour
-  is being changed: a black or mis-placed camera composite in a graded export now
-  ships unnoticed.
-- **Context:** the grade is applied in the writer loop, never in the composition.
-  `CompositionParams.colorGrade` (`CompositionBuilder.swift:1217`) was added by #182
-  as forward plumbing for an export bake that #183 then routed through the manual
-  reader/writer instead, leaving the field written once and never read. The plan doc
-  (`docs/editing-platform-plan.md:369-375`) still names `CompositionBuilder` as the
-  bake seat. Decide whether the composition will ever be grade-aware before deleting
-  the field.
-- **Measured severity of the original defect** (light-mode screen content, at the
-  in-force 0.14 luma / 0.18 channel thresholds — every single-source export carries
-  an animation tool):
+The direct (screen-only) path is DONE: `evaluateFinalExportReferenceRender` now
+grades its own reference via `gradeReferenceImage`, so a graded export is measured
+again instead of skipped. Measured across the whole slider range, every grade
+collapses onto the identity floor — light-mode SLIDER MAX went 0.2784 → 0.0032,
+exposure −1.00 went 0.4789 → 0.0015, and the worst residual anywhere is 0.0252 on
+the dark fixture against a 0.18 budget. `ColorGradeValidatorMarginTests` pins it.
 
-  | grade | lumaΔ | chanΔ | |
-  |---|---|---|---|
-  | identity | 0.0014 | 0.0018 | the real headroom |
-  | Auto button | 0.0410 | 0.0428 | safe |
-  | exposure −0.25 | 0.1757 | 0.1791 | **deleted** |
-  | exposure −0.50 | 0.3071 | 0.3120 | **deleted** |
-  | tint +1.00 | 0.0309 | 0.3058 | **deleted** |
+**Two paths still SKIP when a grade is active, and both should eventually measure.**
 
-- **The fix has two seats, not one.** Direct path: grade the WHOLE reference frame.
-  Inline-camera path: grade the screen sub-image ONLY, before `makeCompositedImage`
-  — `CameraStyledIntermediatePipeline.swift:927-932` deliberately leaves the camera
-  bubble ungraded to match the live preview. One global `ColorGradeRenderer.apply`
-  over the reference would over-grade the bubble and background and leave the same
-  asymmetry with the opposite sign.
-- **Gotchas:** render through `VideoColorPipeline.makeCIContext()` (gamma-encoded
-  sRGB working space — Core Image's linear default gives different numbers from
-  `CIExposureAdjust`/`CIColorControls`); apply the grade only AFTER the sRGB retag
-  at `normalizeForColorAnalysis`, because the camera branch currently feeds a
-  GenericRGB-tagged CGImage straight into `CIImage(cgImage:)`; and on paths with no
-  animation tool the reference is generated at 64x64, so a grade applied there runs
-  after downsampling while the writer grades at full resolution — the two do not
-  commute exactly.
-- **How to verify:** the sweep harness that produced the table above. Re-run it after
-  the fix and every row must read `kept`, including `SLIDER MAX, all five`.
-- **Start at:** `macos/Runner/Capture/Export/LetterboxExporter.swift` — the two
-  `guard colorGrade.isIdentity` blocks, and the reference sampling at the
-  `inlineCameraRenderPlan` branch just below.
-- **Open question for the owner:** should the pre-styled camera bubble receive the
-  grade at all? The inline path explicitly does not grade it; the pre-styled path
-  grades it as part of the whole canvas. Those disagree today.
+**1. The inline-camera reference** (`evaluateFinalExportReferenceRender`, the
+`inlineCameraRenderPlan != nil` branch).
+- Its reference is not a sampled composition frame but a re-composite via
+  `InlineCameraRenderer.makeCompositedImage`, and the writer grades only the SCREEN
+  sub-image there — `CameraStyledIntermediatePipeline.swift:927-932` deliberately
+  leaves the camera bubble and resolved background ungraded to match the live
+  preview. So the grade has to go on the screen input, not the composite.
+- **Watch the margins.** Inline compositions render the screen on a transparent
+  background. If `AVAssetImageGenerator` hands back an OPAQUE image, grading it
+  grades the padding margins too — pixels the writer effectively leaves alone
+  because alpha-0 survives its filter chain. Measure `screenImage.alphaInfo` and the
+  minimum alpha in the margin on a padded fixture BEFORE grading the whole frame.
+- **There is also a pre-existing colour-space wrinkle here**, worth fixing in the
+  same pass: the branch feeds a GenericRGB-tagged CGImage straight into
+  `CIImage(cgImage:)`, so Core Image applies a gamma-1.8 → sRGB conversion the
+  writer never does (pure blue 0,0,255 → 5,51,255, up to ~0.2 — wider than the
+  budget). Declare `.colorSpace: VideoColorPipeline.workingColorSpace`
+  unconditionally so identity and graded share one baseline, and re-baseline the
+  inline exporter tests in the same change rather than keeping a known-wrong
+  ungraded path for byte-identity's sake.
+
+**2. `validateFinalStyledCameraExport`.**
+- Same skip, and it also deletes the export.
+- It CROPS to the camera bubble, and the two sides are cropped out of images at very
+  different resolutions: the reference off the composition, the final off a 64-capped
+  sample. `cropCandidates` scales the rect by image width and snaps with `.integral`,
+  so on a 960x540 canvas a 160px bubble becomes an ~11px window whose rounding is ~9%
+  of the crop — and a grade multiplies that misalignment by its own gain. The direct
+  path has no crop and no such amplifier, so do NOT assume the direct path's 0.0252
+  residual carries over.
+- `_testValidateFinalStyledCameraExport` does not accept a `colorGrade` yet. Add it
+  (plus `captions:`/`keptRanges:`) and build a pre-styled-camera fixture —
+  `cameraAsset:` non-nil with `cameraParams:` set so `comp.validationInfo` is
+  populated and `comp.inlineCameraRenderPlan == nil` — then print that validator's
+  crop-pair deltas per grade alongside an identity control. If the graded row is more
+  than ~3x its own identity control, the crop alignment is the cause and the bubble
+  crop needs padding, not a looser threshold.
+
+**Do not un-skip either one without a fixture that measures it first.** Un-skipping a
+validator that calls `removeFileIfExists` with nothing measured behind it is exactly
+how the original defect shipped.
+
+**Do not "fix" this by forcing full-resolution reference sampling.** That was tried on
+paper and is backwards: the final file is always sampled with `videoComposition: nil`,
+so it is ALWAYS 64-capped by `sampleFrameImage`, and it was graded at full resolution
+by the writer before that. Both sides are already grade-then-downsample in that order,
+which is what has to match — forcing the reference full-size breaks the symmetry.
+
+**Still unanswered:** should the pre-styled camera bubble receive the grade at all?
+The inline path explicitly does not grade it; the pre-styled path grades it as part of
+the whole canvas. Those disagree today, and that is a product question, not a
+validator one.
+
+**Also still open:** `CompositionParams.colorGrade` (`CompositionBuilder.swift:1217`)
+is still declared and never read. Deleting it is behaviourally inert — nothing compares
+two `CompositionParams` — but `docs/editing-platform-plan.md:369-375` still names
+`CompositionBuilder` as the export-bake seat. Decide whether the composition will ever
+be grade-aware before removing the field.
 
 ### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 
@@ -143,9 +161,14 @@ which are the only recorded numbers for this defect.
 > lane and zoom lane all render fully on screen. Details in "Re-measured" below.
 > Left open rather than deleted because the 2026-09-12 sighting was a human looking
 > at a real screen, and because every Dart file behind this layout is byte-identical
-> between that sighting and this clean result — so nothing was fixed, and the cause
-> is still unknown. Close it once a second session (ideally at a different display
-> scale) confirms a clean editor; re-open with a DPI-aware capture if it returns.
+> between that sighting and this clean result.
+>
+> **2026-09-16: that byte-identical diff is no longer evidence of "nothing changed".**
+> #496 fixed an INTERMITTENT layout exception that was present on both dates, so the
+> same code legitimately misbehaves one day and not the next. See "Candidate cause"
+> below — it fits, it is not proven, and its one weak spot is named there. Close this
+> entry once a second machine confirms a clean editor; re-open with a DPI-aware
+> capture if it returns.
 
 - **What:** open a recording, and the timeline toolbar and transport bar render but the
   TimelineEditorViewport (ruler + clips/zoom lanes) sits below the bottom of the window.
@@ -219,12 +242,49 @@ which are the only recorded numbers for this defect.
   green if the bug returned in whatever form the harness does not model. Do not read
   that suite passing as evidence about this entry either way.
 
+- **Candidate cause found 2026-09-16: the pane-remount layout exception fixed by #496.**
+  Not proven — but it is the first hypothesis that fits the awkward facts, and it is
+  falsifiable, so it beats "unexplained".
+  - #496 fixed `_buildPane` swapping the pane child's widget TYPE when
+    `preserveChildLayout` flipped. `Widget.canUpdate` failed, the pane was
+    deactivated and remounted, its GlobalKey was retaken, and
+    `Element._activateRecursively` re-adopted any showing `OverlayPortal`
+    (a Material `Tooltip`) into the root `_RenderTheater` — calling
+    `markNeedsLayout` from inside `DesktopSplitLayout`'s
+    `LayoutBuilder.performLayout` (`desktop_pane_layout.dart:379-382`).
+  - **Why the byte-identical diff above is not evidence against it.** That defect
+    was present on BOTH dates. It is intermittent: it needs an OverlayPortal
+    actually showing at the instant the rail width settles. So identical code
+    producing a sighting one day and not the next is exactly what it predicts —
+    which is what made the 09-15 "does not reproduce" so confusing.
+  - **The subtree matches.** The LayoutBuilder that throws is the one laying out
+    every pane slot, including `desktop_pane_slot_homeWorkspaceColumn` → the
+    `home_workspace_column` whose child 5 IS the timeline. A `performLayout` that
+    throws mid-way leaves that subtree incomplete.
+  - **It also explains who saw it.** Seven occurrences were logged on this machine
+    in a single day during ordinary use (hovering sidebar buttons). Automated
+    driving — open by argv, screenshot, resize — almost never hovers, which is
+    why the bug reproduced for a human and not for a scripted repro.
+  - **The honest weakness, stated so nobody treats this as closed.** The 09-12
+    symptom was SELECTIVE: toolbar and transport rendered, only the viewport did
+    not. A layout abort would be expected to disturb the whole column, not just its
+    last child. Until that is explained, this is a lead, not a cause.
+  - **What would settle it:** on a pre-#496 build, make the exception fire with a
+    project open and see whether the viewport disappears. Attempted 2026-09-16 and
+    NOT achieved — the exception could not be provoked on demand (a synthetic
+    cursor park did not raise a real tooltip; the natural occurrences all came from
+    ordinary interactive use). Do not repeat the synthetic-hover approach; drive it
+    by hand, or add a temporary counter at the `_activateRecursively` site.
+
 - **Next step:** confirm on a second machine, ideally one at a different display scale
   (this box is 125%). If it stays clean, close this entry. If it returns, capture it
   DPI-aware and dump the render tree (`debugDumpRenderTree()`) with a project open to
   find who gives the viewport a zero/negative height box or which ancestor clips it —
   reading the widget code did not settle it, and three plausible theories were each
-  disproved by measurement.
+  disproved by measurement. Also check the log sink for
+  `_RenderLayoutBuilder was mutated` around the sighting: since #496 landed that
+  should be absent, and if the lane ever goes missing WITH that error absent, the
+  candidate above is refuted.
 - **Severity:** if this reproduces on a tester's machine it blocks the whole editor, which is the
   half of the product that is not the recorder. Worth confirming on a second machine before the
   beta invite, since it did not reproduce as a simple height problem. Severity is unchanged by
@@ -233,6 +293,87 @@ which are the only recorded numbers for this defect.
 - **Effort:** unknown. The 09-12 investigation cost ~1h and disproved the obvious causes without
   finding the real one; the 09-15 re-measurement cost an afternoon, most of it spent chasing a
   false repro manufactured by the capture tool.
+
+## Windows — recording engine teardown
+
+### ~~A recording Start/Stop/Start can hang~~ — CAUSE FOUND, fixed 2026-09-19
+
+- **It was an ABBA lock inversion between `RecordingEngine::mutex_` and
+  `RecordingIndicatorController::provider_mutex_`.** Two threads, two locks,
+  opposite order, both bare non-recursive `std::mutex` with no timeout:
+
+  | thread | holds | then wants |
+  |---|---|---|
+  | main, inside `Start()` | `mutex_` (`recording_engine.cpp:227`) | `provider_mutex_` — `Show()` at `recording_engine.cpp:1304` |
+  | overlay, inside `WM_PAINT` | `provider_mutex_` (`recording_indicator_controller.cpp:172`) | `mutex_` — `duration_provider_()` calls `ElapsedSeconds()` at `recording_engine.cpp:2187` |
+
+- **Why only the SECOND Start.** The overlay thread and its 250 ms tick are
+  created lazily by the first `Show()`. Teardown only calls `Hide()`, which
+  stores a flag and posts a message — it retires nothing. So during Start #1
+  `provider_mutex_` is uncontended; by Start #2 there is a live thread taking
+  the two locks the other way round.
+- **Why it was silent.** Both waiters are on different threads, so MSVC's
+  same-thread relock check never fires — no exception, no HRESULT, no crash.
+  `Show`, `Paint` and `ElapsedSeconds` log nothing, and `NativeLogPublisher`
+  buffers to memory when there is no Flutter channel (always, in a test).
+- **Why the sandbox change moved the odds without fixing it** (see the table
+  that used to be here): per-PID dirs only changed how long `Stop` holds
+  `mutex_` during teardown, which is exactly the width of the window in which
+  the overlay thread gets parked.
+- **Fix:** `Paint` no longer invokes the provider under `provider_mutex_`. The
+  new `CurrentElapsedSeconds()` copies the `std::function` out, releases the
+  lock, then calls it. Pinned by
+  `windows/runner_tests/recording_indicator_provider_lock_test.cpp`, which
+  re-enters the lock from inside the provider — it throws
+  `resource deadlock would occur` if anyone re-inlines the lock.
+- **Not test-only.** The cycle is armed on every stop-then-start in the
+  shipping app, not just under test contention.
+- **What is still NOT proven.** The CI evidence shows the process blocked
+  somewhere after `[teardown] teardown complete`; "therefore inside Start #2"
+  is an inference. `Stop` runs ~90 untraced lines after `TeardownPipeline`
+  returns (`FillCameraWriterFields`, `MarkStopped`, `WriteRecordingProject`,
+  `CleanupSessionTempFiles`). If the hang recurs after this fix, instrument
+  that tail first — it is the one region the existing trace has never
+  discriminated.
+- **Evidence:** CI run 35457817219 (job 105936728845), `***Timeout 300.02 sec`,
+  with one complete teardown trace and 300 s of silence after it. Earlier
+  43-minute timeout on run 35007670584 is the same signature.
+
+### ~~`TeardownPipeline` can join a thread from itself~~ — MISDIAGNOSED, and the symptom is gone
+
+- **It was never a self-join.** The entry's reasoning was: `resource deadlock
+  would occur` is `EDEADLK`, "which C++ raises for exactly one reason: a thread
+  joining itself". That is not true on MSVC, where a non-recursive `std::mutex`
+  re-locked by the thread that already owns it throws the identical
+  `std::system_error`. Both paths produce the same string, and the message
+  alone cannot tell them apart.
+- **Direct evidence, observed 2026-09-20.** The guard test added with the
+  indicator lock fix (`recording_indicator_provider_lock_test.cpp`) re-enters a
+  `std::mutex` on one thread, with no `std::thread` anywhere in the test, and
+  fails with:
+  `C++ exception with description "resource deadlock would occur" thrown in the test body.`
+- **What actually threw it:** `MfSinkWriterEncoder::Open` called the public
+  `Cancel()` on each of its failure paths while still holding `mutex_`. Under
+  the contention this repro creates, `Open` fails constantly — there are no
+  free capture devices — so nearly every contended Start took that path. Fixed
+  in #509 (`a234ab9`, 2026-09-16), which split out `CancelLocked()` for callers
+  that already hold the lock. The measurement in this entry was taken the same
+  day, before that landed.
+- **Re-measured 2026-09-20 with the entry's own recipe**, three rounds:
+
+  | | documented 2026-09-16 | now |
+  |---|---|---|
+  | `resource deadlock` throws per process | 17-20, every round | **0** |
+  | failed tests per process | 35-41 | 4-6 |
+
+  The remaining 4-6 are ordinary device-contention failures — two processes
+  cannot both own the screen and the microphone, so `Start` legitimately fails.
+  They are not deadlocks and they reproduce identically on an unmodified build.
+- **Do not conflate with the CI hang.** That was a separate bug, also fixed:
+  an ABBA lock inversion between `RecordingEngine::mutex_` and the indicator's
+  `provider_mutex_`. See the entry above. This entry and that one shared a
+  symptom family and nothing else.
+
 
 ## Windows — capture exclusion
 
@@ -265,15 +406,6 @@ defect internally (`ComputeFloatingRect` scales the bubble by `dpi_scale` while
 display scaling the live bubble's border is proportionally thinner than at 100%.
 Separate surface, separate fix, and macOS shares the absolute constants — raise
 it with macOS in scope rather than diverging one platform at a time.
-
-### Should the live camera bubble hide while a recording is paused? (product call)
-
-- **What:** `RecordingEngine::Pause` pauses the camera recorder and `CameraRecorder` drops every preview frame while paused, but nothing hides or stops the floating bubble. It stays on screen showing its last frame for an unbounded, user-controlled time.
-- **Why it is on this list and not already fixed:** it surfaced while closing the frameless-park gap, which needed to know every way frames stop. The park fix makes the stale-pixels case safe (a parked presenter now hides its own window), but a PAUSE is not a fault — the bubble is deliberately still up, showing a frozen frame. Whether that is correct is a product decision, not a bug fix, so it was left alone rather than changed unasked.
-- **The argument for hiding:** a paused recording showing a live-looking camera bubble misrepresents state, and it is the widest window in which a mid-session presenter swap would surface an empty bubble.
-- **The argument against:** the bubble is also the user's placement handle; hiding it mid-session moves it out of reach and makes resume feel like a restart.
-- **Start at:** `RecordingEngine::Pause` / `Resume`, mirroring the `wda_excluded()` gate `SetCameraPreviewFloating` already uses. macOS parity should be checked first — it may already have an answer.
-- **Effort:** human ~2h / CC ~20min once the product call is made.
 
 ### Should the live camera bubble hide while a recording is paused? (product call)
 
@@ -445,7 +577,8 @@ cannot do it. Fold it into the camera on-device QA pass.
 
 ### Windows AAC profile-level is pinned to "2ch / 48 kHz" while the rate is configurable
 - **What:** Both Media Foundation AAC writers hardcode `MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = 0x29`, which specifies AAC-LC at **2 channels, 48 kHz**, while the surrounding encoder config (`mf_encoder_config.h`) validates and permits **44.1 kHz** as well.
-- **Why:** A 44.1 kHz export would declare a profile level that does not describe the stream it contains. Today nothing reaches that path — the config defaults to 48 kHz and WASAPI capture hard-rejects any endpoint that is not 48 kHz float32 stereo — so this is latent, not live. It becomes real the moment 44.1 kHz is selectable or WASAPI accepts a wider range.
+- **Why:** A 44.1 kHz export would declare a profile level that does not describe the stream it contains. Today nothing reaches that path, so this is latent, not live.
+- **Re-checked 2026-09-20, and the reason it is latent CHANGED.** This entry used to say WASAPI "hard-rejects any endpoint that is not 48 kHz float32 stereo". That stopped being true in #468, which opens the stream with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` so a 44.1 kHz interface records instead of failing — so the stated gate ("becomes real the moment WASAPI accepts a wider range") has already been crossed. It is still latent for a different reason: the shared-mode engine resamples INTO the canonical 48 kHz float32 stereo pipeline format, and both `AudioEncoderConfig` call sites (`recording_engine.cpp:519`, `export_pipeline.cpp:786`) use the 48 kHz default, so the encoder never sees another rate. The live trigger is now narrower and more specific: `AudioEncoderConfig::sample_rate_hz` being set to anything but 48000, not anything about the capture device.
 - **Context:** Found by the completeness sweep during the 2026-07-26 macOS export `-11861 "Cannot Encode Media"` investigation. The macOS side of that bug class was the same shape: an encoder parameter fixed independently of the source. macOS is now fixed via `AACEncoderSettings`; Windows has no equivalent single source of truth.
 - **Do NOT "fix" this speculatively.** Changing a profile-level indicator without a stream that actually exercises it is how a working encoder gets broken. Wait until 44.1 kHz is genuinely reachable, then derive the indicator from the configured rate and channels.
 - **Start at:** `windows/runner/Encoding/mf_sink_writer_encoder.cpp:220-232`, the sibling MF writer, and `windows/runner/Encoding/mf_encoder_config.h:45-57`.

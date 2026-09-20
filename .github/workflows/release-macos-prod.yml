@@ -197,8 +197,37 @@ jobs:
           flutter-version: 3.41.1
           channel: stable
 
+      # Was `brew install --cask sparkle`. Homebrew DISABLED that cask on 2026-09-01
+      # ("Cask 'sparkle' has been disabled because it does not pass the macOS Gatekeeper
+      # check!"), so the step fails outright — observed in run 35094504373. Nothing to do
+      # with this project; the same line breaks the Azure DevOps lanes identically, which
+      # means the macOS release path has been unusable since that date.
+      #
+      # Install from Sparkle's own signed release tarball instead, which is what the cask
+      # wrapped anyway. Pinned by version AND sha256 — this toolchain signs what every
+      # installed Mac will accept as an update, so an unpinned download is not acceptable
+      # here even over HTTPS.
+      #
+      # 2.9.6 rather than the newest (2.10.0, released 3 days before this change): the app
+      # pins Sparkle upToNextMajorVersion from 2.8.1, so any 2.x works, and a settled
+      # release is the right call in a signing path.
+      #
+      # BinaryDelta is installed alongside: generate_appcast shells out to it to build the
+      # delta updates, and expects to find it next to itself.
       - name: Install Sparkle tools
-        run: brew install --cask sparkle
+        run: |
+          set -euo pipefail
+          VER=2.9.6
+          SHA=52bf9e88cdd972fc0c81501377a880e90d47031bd8ca5462488f843e2609e192
+          curl -fsSL -o /tmp/Sparkle.tar.xz             "https://github.com/sparkle-project/Sparkle/releases/download/${VER}/Sparkle-${VER}.tar.xz"
+          echo "${SHA}  /tmp/Sparkle.tar.xz" | shasum -a 256 -c -
+          mkdir -p /tmp/sparkle
+          tar -xJf /tmp/Sparkle.tar.xz -C /tmp/sparkle
+          for T in generate_appcast sign_update BinaryDelta generate_keys; do
+            sudo install -m 0755 "/tmp/sparkle/bin/$T" "/usr/local/bin/$T"
+          done
+          # lib/sparkle.sh looks in /usr/local/bin first, so this needs no resolver change.
+          command -v generate_appcast
 
       - name: Install create-dmg
         run: |
@@ -246,6 +275,10 @@ jobs:
 
       - name: Signing evidence
         run: |
+          # DIAGNOSTIC, NOT A GATE — see the fuller note in release-macos-dev.yml. The real
+          # gates are Step 3 (notarize) and Step 4 (staple and verify). `set +e` alone does
+          # NOT make a step non-fatal: the script still exits with its LAST command's status,
+          # which failed the dev lane in run 35104852578 (exit 65). Hence the explicit exit 0.
           set +e
           APP="build/macos/Build/Products/Release/Clingfy.app"
           [ -d "$APP" ] || APP="$(find build/macos -maxdepth 6 -name '*.app' -type d | head -1)"
@@ -254,7 +287,17 @@ jobs:
           echo "---"
           spctl -a -vvv -t exec "$APP" 2>&1
           echo "---"
-          xcrun stapler validate "$APP" 2>&1
+          # The DMG is what staple_and_verify.sh staples; stapling a DMG does not staple the
+          # .app inside it, so validating the .app reports "no ticket" for a correctly
+          # notarized build.
+          DMG="$(find dist -maxdepth 2 -name '*.dmg' -type f 2>/dev/null | head -1)"
+          if [ -n "$DMG" ]; then
+            echo "Stapler target: $DMG"
+            xcrun stapler validate "$DMG" 2>&1
+          else
+            echo "No DMG found under dist/ to validate."
+          fi
+          exit 0
 
       - name: Re-authenticate to AWS before publishing
         # See the note in release-macos-dev.yml. Same reason as the Azure step this replaces, for a

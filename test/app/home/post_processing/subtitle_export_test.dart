@@ -5,6 +5,7 @@ import 'package:clingfy/app/home/post_processing/post_processing_controller.dart
 import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/timeline/post_state_store.dart';
@@ -182,8 +183,14 @@ void main() {
     PostProcessingController post,
     SubtitleMode mode, {
     String? outputPath,
+    ExportFormat format = ExportFormat.mp4,
   }) async {
-    await post.writeSubtitleSidecars(outputPath ?? exportedPath, mode);
+    await post.writeSubtitleSidecars(
+      outputPath ?? exportedPath,
+      mode,
+      null,
+      format,
+    );
   }
 
   File srt([String? path]) =>
@@ -289,6 +296,28 @@ void main() {
     expect(File('${tempDir.path}/My.srt').existsSync(), isFalse);
   });
 
+  test(
+    'a dotted folder with backslash separators keeps the sidecar',
+    () async {
+      // A guard, not a repro: this case passed before the separator fix too,
+      // because a backslash is what `Platform.pathSeparator` already matched on
+      // Windows. It is here so that handling `/` cannot later be made to come
+      // at the cost of `\`. The repro is the forward-slash case above.
+      // Windows-only because a backslash is a legal POSIX filename character.
+      final dotted = Directory('${tempDir.path}/My.Videos')
+        ..createSync(recursive: true);
+      final video = '${dotted.path}\\clip'.replaceAll('/', r'\');
+
+      final post = await createController(mode: SubtitleMode.sidecar);
+      await post.generateCaptions();
+      await exportWith(post, SubtitleMode.sidecar, outputPath: video);
+
+      expect(File('$video.srt').existsSync(), isTrue);
+      expect(File('${tempDir.path}/My.srt').existsSync(), isFalse);
+    },
+    skip: !Platform.isWindows,
+  );
+
   test('an extensionless output still gets its sidecars', () async {
     final video = '${tempDir.path}/clip';
     final post = await createController(mode: SubtitleMode.sidecar);
@@ -297,6 +326,29 @@ void main() {
     await exportWith(post, SubtitleMode.sidecar, outputPath: video);
 
     expect(File('$video.srt').existsSync(), isTrue);
+  });
+
+  test('a GIF export writes no sidecar at all', () async {
+    // No GIF viewer, browser or platform loads a sidecar, so the two files
+    // were inert — and their presence suggested the GIF was captioned. Burn-in
+    // is the destination that works for GIF, and it does.
+    final post = await createController(mode: SubtitleMode.both);
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.both, format: ExportFormat.gif);
+
+    expect(srt().existsSync(), isFalse);
+    expect(vtt().existsSync(), isFalse);
+  });
+
+  test('a non-GIF export still writes its sidecars', () async {
+    final post = await createController(mode: SubtitleMode.both);
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.both, format: ExportFormat.mov);
+
+    expect(srt().existsSync(), isTrue);
+    expect(vtt().existsSync(), isTrue);
   });
 
   test('a sidecar failure does not throw at the export', () async {
@@ -313,6 +365,71 @@ void main() {
       ),
       completes,
     );
+  });
+
+  test('a sidecar failure is recorded so the notice can say so', () async {
+    // Not failing the export is right. Saying nothing is the defect: in
+    // sidecar-only mode the `.srt` IS the deliverable, so the export produced
+    // nothing the user asked for while the toast named a video and said
+    // "Export successful".
+    final post = await createController(mode: SubtitleMode.sidecar);
+    await post.generateCaptions();
+
+    await exportWith(
+      post,
+      SubtitleMode.sidecar,
+      outputPath: '${tempDir.path}/no such dir/clip.mp4',
+    );
+
+    expect(post.lastExportSidecarFailed, isTrue);
+  });
+
+  test('a sidecar that wrote is not flagged', () async {
+    final post = await createController(mode: SubtitleMode.sidecar);
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(post.lastExportSidecarFailed, isFalse);
+  });
+
+  test('a transcript blanked by hand writes no sidecar at all', () async {
+    // The captions panel has no delete affordance, so clearing every cue is
+    // how a transcript gets removed. A blank cue still has a duration and so
+    // survives reflow — counting spans wrote a 0-byte `.srt`, which a platform
+    // reads as a broken subtitle track rather than an absent one.
+    final post = await createController(
+      mode: SubtitleMode.sidecar,
+      transcript: const [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': '   '},
+        {'id': 'c2', 'startMs': 1500, 'endMs': 3000, 'text': ''},
+      ],
+    );
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(srt().existsSync(), isFalse);
+    expect(vtt().existsSync(), isFalse);
+    // A no-op, not a failure — warning here would train the warning away.
+    expect(post.lastExportSidecarFailed, isFalse);
+  });
+
+  test('one surviving cue is still written', () async {
+    // The guard is "nothing survived serialization", not "something was
+    // blanked" — a transcript the user partly cleared still has a sidecar.
+    final post = await createController(
+      mode: SubtitleMode.sidecar,
+      transcript: const [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': '   '},
+        {'id': 'c2', 'startMs': 1500, 'endMs': 3000, 'text': 'still here'},
+      ],
+    );
+    await post.generateCaptions();
+
+    await exportWith(post, SubtitleMode.sidecar);
+
+    expect(srt().readAsStringSync(), contains('still here'));
   });
 
   // ---- Edited recordings -------------------------------------------------

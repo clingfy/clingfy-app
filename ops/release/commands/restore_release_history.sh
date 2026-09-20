@@ -29,11 +29,20 @@ if ((appcast_probe == 0)); then
 
   # latest_dmg="$(grep -o 'url="[^"]*"' "$APPCAST_XML" | head -n 1 | sed 's/^url="//; s/"$//' | awk -F/ '{print $NF}')"
 
+  # The appcast's url= is a URL, so a '+' in a filename is percent-encoded as %2B — CloudFront 404s
+  # a literal '+' in a path, which is why publish_release.sh encodes it. The S3 OBJECT KEY, by
+  # contrast, holds a literal '+'. Decoding here is what keeps those two spellings from being
+  # confused for each other.
+  #
+  # Without this, the step asked S3 for `downloads/Clingfy_Dev_1.0.7%2B816.dmg`, which does not
+  # exist, and the dev lane failed in run 35092396000. Every DEV artefact is named
+  # <version>+<build>, so on that channel this was never an edge case.
   latest_dmg="$(
     grep -oE 'url="[^"]+\.dmg"' "$APPCAST_XML" \
       | head -n 1 \
       | sed 's/^url="//; s/"$//' \
-      | awk -F/ '{print $NF}'
+      | awk -F/ '{print $NF}' \
+      | sed 's/%2[Bb]/+/g'
   )"
 
   if [[ -n "$latest_dmg" ]]; then

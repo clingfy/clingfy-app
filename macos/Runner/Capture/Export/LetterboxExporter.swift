@@ -604,6 +604,69 @@ final class LetterboxExporter {
     return context.makeImage()
   }
 
+  /// Applies the export's colour grade to a validator reference frame, in the
+  /// same numeric space and at the same seat the writer loop used.
+  ///
+  /// SEAT. The writer grades sRGB-VALUED pixels and only then applies the
+  /// export transfer (`ColorGradeRenderer.apply`, then
+  /// `VideoColorPipeline.renderComposedExportFrame`, which is the one place
+  /// `ColorTransferFunctions.encodeForExport` runs). So this belongs between
+  /// `normalizeForColorAnalysis` (retag to sRGB, no pixel conversion) and
+  /// `encodeReferenceForFinalComparison` (the CPU twin of that same transfer):
+  /// grade first, encode second, exactly as the frame did.
+  ///
+  /// WORKING SPACE, and this is the whole reason it is a helper rather than
+  /// three inline lines. `CIExposureAdjust`, `CIColorControls` and
+  /// `CITemperatureAndTint` are working-space operations, and Core Image's
+  /// default working space is LINEAR while `makeCIContext` declares a
+  /// gamma-encoded sRGB one. Measured on an sRGB ramp at exposure -0.25 /
+  /// contrast +0.4 / saturation +0.3 / temperature +0.5 / tint +0.5, the two
+  /// contexts disagree by up to 54 code values (0.21) -- wider than the 0.18
+  /// channel budget enforced below. A reference graded in the wrong space
+  /// would keep deleting correct exports; it would just be different
+  /// arithmetic.
+  ///
+  /// INPUT TAG is DECLARED, not inherited, mirroring
+  /// `VideoColorPipeline.sourceImage` on the writer's side.
+  /// `CIImage(cgImage:)` honours whatever tag the CGImage carries, and
+  /// `normalizeForColorAnalysis` hands its input straight back when
+  /// `CGImage.copy(colorSpace:)` fails -- on that path the frame is still
+  /// GenericRGB, and grading it drags pure blue to (7, 38, 197) where the
+  /// retagged frame gives (0, 0, 197). Declaring sRGB makes both cases
+  /// byte-identical, so this cannot be wrong about its input.
+  ///
+  /// Returns nil rather than the input when the render fails. Callers must NOT
+  /// fall back to the ungraded frame: an ungraded reference against a graded
+  /// file is precisely the comparison that deleted users' exports. Skip
+  /// instead.
+  private func gradeReferenceImage(_ image: CGImage, grade: ColorGrade) -> CGImage? {
+    // Identity returns the input object untouched rather than round-tripping
+    // through Core Image, so every ungraded export keeps the byte-for-byte
+    // path it has today.
+    guard !grade.isIdentity else { return image }
+
+    // `CIImage(cgImage:)` pins the extent to (0, 0, w, h) and
+    // `ColorGradeRenderer.apply` crops back to its input extent, so this rect
+    // is the graded image's extent too. `from:` has no default and an empty
+    // rect returns nil.
+    let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+    guard bounds.width > 0, bounds.height > 0 else { return nil }
+
+    let sourceImage = CIImage(
+      cgImage: image,
+      options: [.colorSpace: VideoColorPipeline.workingColorSpace]
+    )
+    let gradedImage = ColorGradeRenderer.apply(sourceImage, grade: grade)
+
+    return VideoColorPipeline.makeCIContext().createCGImage(
+      gradedImage,
+      from: bounds,
+      format: .RGBA8,
+      colorSpace: VideoColorPipeline.workingColorSpace
+    )
+  }
+
+
   private func analyzeFrameColorMetrics(
     _ image: CGImage,
     ignoreTransparentPixels: Bool
@@ -993,14 +1056,25 @@ final class LetterboxExporter {
     keptRanges: [ClipKeptRange] = [],
     colorGrade: ColorGrade = .identity
   ) -> NSError? {
-    // Same grade blindness as `evaluateFinalExportReferenceRender`, and it
-    // deletes the export too -- so it has to be gated in the same change or
-    // the deletion simply moves here for every pre-styled-camera user.
+    // Still skipped when a grade is active, deliberately, while
+    // `evaluateFinalExportReferenceRender` now grades its reference on the
+    // direct path.
     //
-    // This one is arguably worse: on the pre-styled path there is no inline
-    // camera render plan, so the writer takes the whole-canvas branch and
-    // grades the very camera bubble this validator crops to, with no ungraded
-    // background left in the crop to dilute the delta.
+    // This validator CROPS to the camera bubble, and the two sides are cropped
+    // out of images at very different resolutions: the reference off the
+    // composition, the final off a 64-capped sample. `cropCandidates` scales
+    // the crop rect by the image width and snaps it with `.integral`, so on a
+    // 960x540 canvas a 160px bubble becomes an ~11px window whose rounding is
+    // ~9% of the crop -- and a grade multiplies whatever that misalignment
+    // costs by its own gain. The direct path has no crop and no such
+    // amplifier.
+    //
+    // So this needs its own fixture before it can be trusted to measure rather
+    // than delete, and there is none: no test in the suite drives a pre-styled
+    // camera export through this validator with a grade, and
+    // `_testValidateFinalStyledCameraExport` does not even accept one.
+    // Un-skipping a validator that calls `removeFileIfExists` with nothing
+    // measured behind it is how the original defect shipped. See TODOS.md.
     guard colorGrade.isIdentity else {
       NativeLogger.i(
         "Export",
@@ -1437,10 +1511,20 @@ final class LetterboxExporter {
     // real fix is to grade the reference at the matching seat (whole frame on
     // the direct path, screen sub-image only on the inline-camera path) and
     // restore the check; this parameter is where that lands.
-    guard colorGrade.isIdentity else {
+    // The INLINE-CAMERA reference is still skipped when a grade is active.
+    // Its reference is not a sampled composition frame but a re-composite
+    // (`InlineCameraRenderer.makeCompositedImage` below), and the writer
+    // grades only the SCREEN sub-image there, deliberately leaving the camera
+    // bubble and the resolved background ungraded to match the live preview
+    // (`CameraStyledIntermediatePipeline`). Grading that reference correctly
+    // means reproducing that seat, and no fixture in the suite renders this
+    // branch with a grade -- un-skipping a validator that calls
+    // `removeFileIfExists` with nothing measured behind it is how the original
+    // defect shipped. The direct path below IS measured, and is graded.
+    guard colorGrade.isIdentity || inlineCameraRenderPlan == nil else {
       NativeLogger.i(
         "Export",
-        "Final export reference-render colour validation skipped: colour grade active",
+        "Final export reference-render colour validation skipped: graded inline-camera composite",
         context: [
           "exposure": colorGrade.exposure,
           "contrast": colorGrade.contrast,
@@ -1581,10 +1665,51 @@ final class LetterboxExporter {
       // wrongly rejected. Retagging without converting bytes makes both
       // sides comparable.
       let normalizedReference = normalizeForColorAnalysis(referenceImage) ?? referenceImage
-      // Retag first, then encode — see `encodeReferenceForFinalComparison`.
-      // The final file needs no encode; it already has one.
+
+      // Grade the reference the way the writer graded the file.
+      //
+      // The grade lives in the writer loop, never in the composition
+      // (`CompositionParams.colorGrade` has never been read), so without this
+      // the whole difference the user asked for is charged to a budget sized
+      // for transfer error -- by a validator that deletes what it rejects.
+      //
+      // Only the DIRECT path reaches here with a live grade: the guard at the
+      // top returns early for a graded inline-camera composite, so this is not
+      // the shared seat it looks like. Keep the two together if that guard
+      // ever changes, or the inline reference gets graded twice -- screen
+      // twice, bubble and background once, which is the same asymmetry with a
+      // different sign.
+      //
+      // Sampling resolution deliberately untouched. The final file is always
+      // sampled with `videoComposition: nil`, so it is always 64-capped by
+      // `sampleFrameImage`, and it was graded at full resolution by the writer
+      // BEFORE that sampling. This reference is graded here and downsampled by
+      // `analyzeFrameColorMetrics` after. Both sides are therefore
+      // grade-then-downsample, in that order, which is what has to match --
+      // forcing the reference full-size would break the symmetry, not fix it.
+      let gradedReference: CGImage
+      if colorGrade.isIdentity {
+        gradedReference = normalizedReference
+      } else if let graded = gradeReferenceImage(normalizedReference, grade: colorGrade) {
+        gradedReference = graded
+      } else {
+        // Never fall back to the ungraded frame: that is exactly the
+        // comparison that deleted exports. Skip, like the wall-to-wall
+        // captions case above.
+        NativeLogger.w(
+          "Export",
+          "Skipped final-export colour validation: the reference could not be graded",
+          context: ["exposure": colorGrade.exposure, "saturation": colorGrade.saturation]
+        )
+        return FinalExportReferenceEvaluation(
+          lumaDelta: nil, maxChannelDelta: nil, error: nil)
+      }
+
+      // Retag first, then grade, then encode — see
+      // `encodeReferenceForFinalComparison`. The final file needs no encode;
+      // it already has one.
       let encodedReference =
-        encodeReferenceForFinalComparison(normalizedReference) ?? normalizedReference
+        encodeReferenceForFinalComparison(gradedReference) ?? gradedReference
       let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
 
       guard
@@ -2617,7 +2742,12 @@ final class LetterboxExporter {
               // timeline order, not source order). The caption cursor only
               // walks forward, so without this it stays parked past every
               // earlier cue and silently renders no captions for the rest of
-              // the export. Covered by CaptionCueTrackTests' reset pair.
+              // the export. Covered by
+              // CaptionBurnInSeatTests.testAReorderedExportPaintsCaptionsOnTheRangeItReadsSecond,
+              // which renders a real reordered export and reads the pixels.
+              // CaptionCueTrackTests' reset pair pins the STRUCT only: it calls
+              // reset() in its own test body, so it stays green if this line
+              // goes.
               captionCueTrack?.reset()
               captionRenderer?.reset()
               switch makeWindowReader(

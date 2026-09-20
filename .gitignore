@@ -125,3 +125,6 @@ content/
 # Local checklist of required secret NAMES (no values). Not for a public repo:
 # it inventories exactly which credentials exist.
 env-vars.txt
+
+# Apple signing material pulled from Azure DevOps Secure Files. NEVER commit.
+ops/release/.secure-files/
