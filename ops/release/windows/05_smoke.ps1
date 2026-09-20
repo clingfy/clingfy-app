@@ -21,7 +21,7 @@
 
 [CmdletBinding()]
 param(
-  # Release channel: must match what 04_publish_azure.ps1 published.
+  # Release channel: must match what 04_publish.ps1 published.
   [ValidateSet('prod', 'dev', 'local')]
   [string]$Channel = 'dev',
 

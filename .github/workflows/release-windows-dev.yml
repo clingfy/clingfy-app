@@ -164,7 +164,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Was `azure/login@v2`. The Azure release storage accounts were deleted on 2026-09-15 and
-      # 04_publish_azure.ps1 dispatches on $Ctx.StorageProvider, which is now `aws` for this channel
+      # 04_publish.ps1 dispatches on $Ctx.StorageProvider, which is now `aws` for this channel
       # (ops/release/windows/_config.ps1) - so this step was logging in to a cloud the publish no
       # longer writes to, leaving the `aws s3 cp` calls below with no credentials.
       - name: Configure AWS credentials (OIDC)
@@ -177,7 +177,7 @@ jobs:
       - name: Publish to dev blob + smoke
         shell: pwsh
         run: |
-          pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel dev
+          pwsh -NoProfile -File ops/release/windows/04_publish.ps1 -Channel dev
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel dev
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

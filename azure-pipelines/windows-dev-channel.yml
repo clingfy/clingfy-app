@@ -142,7 +142,7 @@ steps:
       scriptType: pscore
       scriptLocation: inlineScript
       inlineScript: |
-        pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel dev
+        pwsh -NoProfile -File ops/release/windows/04_publish.ps1 -Channel dev
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel dev
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

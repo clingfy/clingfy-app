@@ -3,7 +3,7 @@
 /// CMake define, because the per-channel Front Door domain is already a
 /// dart-define via `--dart-define-from-file`).
 ///
-/// The release pipeline (ops/release/windows/04_publish_azure.ps1) publishes
+/// The release pipeline (ops/release/windows/04_publish.ps1) publishes
 /// `latest-windows.json` under `downloads/windows/` on the channel's
 /// AZ_CDN_ENDPOINT domain. Dev and prod builds carry different domains in
 /// their .env files, which is what keeps a dev build from ever seeing the

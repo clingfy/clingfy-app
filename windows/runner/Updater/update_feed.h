@@ -7,7 +7,7 @@
 
 // Phase 10.6 — pure feed model for the private-beta update check (D2).
 //
-// The Windows release pipeline (ops/release/windows/04_publish_azure.ps1)
+// The Windows release pipeline (ops/release/windows/04_publish.ps1)
 // publishes a static `latest-windows.json` per channel:
 //
 //   { "version": "1.0.4", "build": 5, "versionFull": "1.0.4+5",
