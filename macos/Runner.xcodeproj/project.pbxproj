@@ -149,6 +149,7 @@
 		E5208EC1E2EC9B87A3721643 /* CaptionCueTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755A0211759478DDA3D7D204 /* CaptionCueTrack.swift */; };
 		C4P71002CAP71002CAP71002 /* CaptionPreviewTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71001CAP71001CAP71001 /* CaptionPreviewTrack.swift */; };
 		12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */; };
+		B22CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */; };
 		C4P71008CAP71008CAP71008 /* ExportCaptionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */; };
 		C4P71006CAP71006CAP71006 /* WhisperKitTranscriberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71005CAP71005CAP71005 /* WhisperKitTranscriberTests.swift */; };
 		C4P71004CAP71004CAP71004 /* CaptionPreviewTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */; };
@@ -341,6 +342,7 @@
 		42CD7BAF4AE5896C6D8FCB0E /* CaptionBurnInProofTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionBurnInProofTests.swift; sourceTree = "<group>"; };
 		C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRendererTests.swift; sourceTree = "<group>"; };
 		0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrackTests.swift; sourceTree = "<group>"; };
+		A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionReflowParityTests.swift; sourceTree = "<group>"; };
 		C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportCaptionWiringTests.swift; sourceTree = "<group>"; };
 		C4P71005CAP71005CAP71005 /* WhisperKitTranscriberTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperKitTranscriberTests.swift; sourceTree = "<group>"; };
 		C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionPreviewTrackTests.swift; sourceTree = "<group>"; };
@@ -693,6 +695,7 @@
 				42CD7BAF4AE5896C6D8FCB0E /* CaptionBurnInProofTests.swift */,
 				C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */,
 				0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */,
+				A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */,
 				C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */,
 				C4P71005CAP71005CAP71005 /* WhisperKitTranscriberTests.swift */,
 				C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */,
@@ -1586,6 +1589,7 @@
 				9025A948FACC6DAE30CA97D0 /* CaptionBurnInProofTests.swift in Sources */,
 				9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */,
 				12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */,
+				B22CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift in Sources */,
 				C4P71008CAP71008CAP71008 /* ExportCaptionWiringTests.swift in Sources */,
 				C4P71006CAP71006CAP71006 /* WhisperKitTranscriberTests.swift in Sources */,
 				C4P71004CAP71004CAP71004 /* CaptionPreviewTrackTests.swift in Sources */,
