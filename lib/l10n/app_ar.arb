@@ -653,6 +653,14 @@
   "exportSavedWithoutSubtitles": "تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:",
   "exportSavedWithoutSubtitleFile": "تم التصدير، لكن تعذّر كتابة ملف الترجمة:",
   "exportSavedWithoutAnySubtitles": "تم التصدير، لكن تعذّر إضافة أي ترجمات:",
+  "exportSavedWithShortenedSubtitles": "تم التصدير. {count} من الترجمات كانت أطول من إطار الفيديو وتمّ اختصارها:",
+  "@exportSavedWithShortenedSubtitles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "open": "فتح",
   "cursorDataMissing": "بيانات المؤشر مفقودة",
   "voiceBoost": "تعزيز الصوت",

@@ -660,6 +660,14 @@
   "exportSavedWithoutSubtitles": "Exported, but the subtitles could not be burned in:",
   "exportSavedWithoutSubtitleFile": "Exported, but the subtitle file could not be written:",
   "exportSavedWithoutAnySubtitles": "Exported, but no subtitles could be added:",
+  "exportSavedWithShortenedSubtitles": "Exported. {count} subtitles were too long for the frame and were shortened:",
+  "@exportSavedWithShortenedSubtitles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "open": "Open",
   "cursorDataMissing": "Cursor data missing",
   "voiceBoost": "Voice Boost",

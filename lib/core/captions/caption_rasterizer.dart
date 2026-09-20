@@ -120,12 +120,26 @@ class CaptionRasterizer {
     }
 
     final entries = <CaptionBitmapEntry>[];
+    // Cues the frame cannot hold. `layOut` caps at three lines with an
+    // ellipsis, so an over-long cue is drawn cut off — while the `.srt`/`.vtt`
+    // beside it keeps the whole sentence, and the caption editor shows the
+    // whole sentence too. Nothing read `didExceedMaxLines`, so the video and
+    // its sidecar disagreed with nothing said.
+    final shortened = <String>[];
     // Rendered this pass, so two cues with the same text cost one render even
     // when neither was on disk to begin with.
     final rendered = <String>{};
     for (final caption in captions) {
       final text = caption.text.trim();
       if (text.isEmpty) continue;
+
+      // Laid out even when the bitmap is cached: the question is whether this
+      // TEXT fits this CANVAS, which does not depend on whether a PNG for it
+      // already happens to be on disk. Layout without paint, so the cost is a
+      // fraction of a render.
+      final probe = layOut(text: text, videoSize: videoSize);
+      if (probe.didExceedMaxLines) shortened.add(caption.id);
+      probe.dispose();
 
       final name = _bitmapNameFor(text, videoSize);
       final file = File('${directory.path}/$name');
@@ -171,9 +185,25 @@ class CaptionRasterizer {
     // project bundle, which they back up and move around.
     _sweep(directory, keep: {for (final e in entries) e.bitmapName});
 
+    if (shortened.isNotEmpty) {
+      Log.w(
+        "Captions",
+        "Cues too long for the frame; drawn shortened",
+        null,
+        null,
+        {
+          'shortened': shortened.length,
+          'of': entries.length,
+          'canvas': '${videoSize.width.toInt()}x${videoSize.height.toInt()}',
+          'cues': shortened.take(10).join(','),
+        },
+      );
+    }
+
     return CaptionBitmapManifest(
       directoryPath: directory.path,
       entries: entries,
+      shortenedCueIds: shortened,
     );
   }
 
@@ -352,10 +382,17 @@ class CaptionBitmapManifest {
   const CaptionBitmapManifest({
     required this.directoryPath,
     required this.entries,
+    this.shortenedCueIds = const <String>[],
   });
 
   final String directoryPath;
   final List<CaptionBitmapEntry> entries;
+
+  /// Cues whose text did not fit the frame and were drawn with a trailing
+  /// ellipsis. Burned-in output for these disagrees with the sidecar, which
+  /// keeps the full sentence — so the export path reports it rather than
+  /// letting the difference be silent.
+  final List<String> shortenedCueIds;
 
   bool get isEmpty => entries.isEmpty;
 

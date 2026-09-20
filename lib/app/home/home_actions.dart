@@ -468,6 +468,12 @@ class HomeActions {
       // user asked for while the toast named a video path and said success.
       final burnInFailed = postProcessingController.lastExportBurnInFailed;
       final sidecarFailed = postProcessingController.lastExportSidecarFailed;
+      // Not a failure — the export is correct and every cue burned in. But an
+      // over-long cue is drawn with a trailing ellipsis while the .srt/.vtt
+      // beside it, and the caption editor, both keep the whole sentence. That
+      // difference used to be silent; it is only visible in the preview, and
+      // only to someone looking for it.
+      final shortened = postProcessingController.lastExportShortenedCaptions;
       final String prefix;
       if (burnInFailed && sidecarFailed) {
         prefix = l10n.exportSavedWithoutAnySubtitles;
@@ -475,6 +481,8 @@ class HomeActions {
         prefix = l10n.exportSavedWithoutSubtitles;
       } else if (sidecarFailed) {
         prefix = l10n.exportSavedWithoutSubtitleFile;
+      } else if (shortened > 0) {
+        prefix = l10n.exportSavedWithShortenedSubtitles(shortened);
       } else {
         prefix = l10n.exportSuccess;
       }
@@ -482,7 +490,9 @@ class HomeActions {
         context,
         prefix: prefix,
         path: path,
-        tone: burnInFailed || sidecarFailed
+        // Shortening is a warning, not a failure: the file is good, but it
+        // does not say what the sidecar says.
+        tone: burnInFailed || sidecarFailed || shortened > 0
             ? HomeUiNoticeTone.warning
             : HomeUiNoticeTone.success,
       );

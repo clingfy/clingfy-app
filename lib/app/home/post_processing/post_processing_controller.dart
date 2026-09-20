@@ -185,6 +185,13 @@ class PostProcessingController extends ChangeNotifier {
   /// burn-in leaves a video without captions, while a failed sidecar in
   /// `sidecar` mode means the deliverable itself is missing.
   bool _lastExportSidecarFailed = false;
+
+  /// How many cues the last export had to draw shortened to fit the frame.
+  ///
+  /// Not a failure: the export is correct and every other cue burned in. But
+  /// the burned-in text disagrees with the `.srt`/`.vtt` beside it and with
+  /// what the caption editor shows, and that difference used to be silent.
+  int _lastExportShortenedCaptions = 0;
   bool _hasExportedCurrentRecording = false;
   double? _exportProgress; // null = indeterminate, 0.0-1.0 = determinate
 
@@ -353,6 +360,10 @@ class PostProcessingController extends ChangeNotifier {
   /// subtitle sidecar written beside it and does not. See
   /// [_lastExportSidecarFailed].
   bool get lastExportSidecarFailed => _lastExportSidecarFailed;
+
+  /// Cue count shortened to fit the frame in the last export. See
+  /// [_lastExportShortenedCaptions].
+  int get lastExportShortenedCaptions => _lastExportShortenedCaptions;
   bool get hasExportedCurrentRecording => _hasExportedCurrentRecording;
   double? get exportProgress => _exportProgress;
 
@@ -2096,6 +2107,7 @@ class PostProcessingController extends ChangeNotifier {
     // Everything past this point was asked for, so every other exit is a
     // failure the user has to be told about.
     _lastExportBurnInFailed = false;
+    _lastExportShortenedCaptions = 0;
     if (projectPath == null || spans.isEmpty) {
       Log.i("Captions", "No burn-in payload", null, null, {
         'hasProject': projectPath != null,
@@ -2155,6 +2167,7 @@ class PostProcessingController extends ChangeNotifier {
       // PNG encode failed. The rasterizer logs it and carries on so the rest
       // still burn in, which is right — but the file is then missing a subtitle
       // the user wrote, and that is not a success either.
+      _lastExportShortenedCaptions = manifest.shortenedCueIds.length;
       final drawable = spans.where((s) => s.text.trim().isNotEmpty).length;
       if (manifest.entries.length < drawable) {
         _lastExportBurnInFailed = true;
@@ -2295,6 +2308,7 @@ class PostProcessingController extends ChangeNotifier {
     // drives is shown against the file this call produces.
     _lastExportBurnInFailed = false;
     _lastExportSidecarFailed = false;
+    _lastExportShortenedCaptions = 0;
 
     if (_isExporting) {
       await ClingfyTelemetry.addUiBreadcrumb(

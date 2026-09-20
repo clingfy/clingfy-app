@@ -3652,6 +3652,12 @@ abstract class AppLocalizations {
   /// **'Exported, but no subtitles could be added:'**
   String get exportSavedWithoutAnySubtitles;
 
+  /// No description provided for @exportSavedWithShortenedSubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported. {count} subtitles were too long for the frame and were shortened:'**
+  String exportSavedWithShortenedSubtitles(int count);
+
   /// No description provided for @open.
   ///
   /// In en, this message translates to:

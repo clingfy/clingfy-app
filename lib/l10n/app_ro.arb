@@ -653,6 +653,14 @@
   "exportSavedWithoutSubtitles": "Exportat, dar subtitrările nu au putut fi incluse în imagine:",
   "exportSavedWithoutSubtitleFile": "Exportat, dar fișierul de subtitrare nu a putut fi scris:",
   "exportSavedWithoutAnySubtitles": "Exportat, dar nicio subtitrare nu a putut fi adăugată:",
+  "exportSavedWithShortenedSubtitles": "Exportat. {count} subtitrări au fost prea lungi pentru cadru și au fost scurtate:",
+  "@exportSavedWithShortenedSubtitles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "open": "Deschide",
   "cursorDataMissing": "Datele cursorului lipsesc",
   "voiceBoost": "Amplificare Voce",

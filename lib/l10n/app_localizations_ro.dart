@@ -1966,6 +1966,11 @@ class AppLocalizationsRo extends AppLocalizations {
       'Exportat, dar nicio subtitrare nu a putut fi adăugată:';
 
   @override
+  String exportSavedWithShortenedSubtitles(int count) {
+    return 'Exportat. $count subtitrări au fost prea lungi pentru cadru și au fost scurtate:';
+  }
+
+  @override
   String get open => 'Deschide';
 
   @override

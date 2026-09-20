@@ -1947,6 +1947,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Exported, but no subtitles could be added:';
 
   @override
+  String exportSavedWithShortenedSubtitles(int count) {
+    return 'Exported. $count subtitles were too long for the frame and were shortened:';
+  }
+
+  @override
   String get open => 'Open';
 
   @override
