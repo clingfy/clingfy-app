@@ -251,7 +251,7 @@ Pipeline: `00_version_guard` → `01_build` (release build, stage to
 `dist/windows/app` excluding PDBs/`runner_bridge.lib`/
 `native_assets.json`, bundle the VC++ CRT app-locally, verify required
 runtime files incl. the crashpad trio) → `03_sign -Target app` →
-`02_package_inno` → `03_sign -Target installer` → `04_publish_azure`
+`02_package_inno` → `03_sign -Target installer` → `04_publish`
 (installer + `.sha256` + `latest-windows.json`) → `upload_symbols.ps1`
 (non-blocking) → `05_smoke`. Workflow wrappers: `workflows/
 local_release.ps1` (publish opt-in, optional analyze+ctest gate) and

@@ -15,9 +15,11 @@
 > `<container>/<blob name>`, identical to the old Azure layout,
 > because the CloudFront `/updates/*` behaviour has no path rewrite.
 >
-> Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
-> would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
-> the azure branch, which no release lane reaches any more — only the `local` channel selects it,
+> The publish scripts were named `05_publish_azure.sh` / `04_publish_azure.ps1` until
+> 2026-09-21. They never became Azure-specific — they dispatch on `RELEASE_STORAGE_PROVIDER`
+> and have published to S3 since the cutover — so the names were renamed to `05_publish.sh`
+> and `04_publish.ps1` once every caller was found. Mentions of Azure below describe the
+> `azure` branch, which no release lane reaches any more: only the `local` channel selects it,
 > and the accounts it would write to no longer exist.
 >
 > **Three vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go),
@@ -53,7 +55,7 @@ The scripts in this directory are public. Private credentials, signing assets, a
 - `02_create_dmg.sh` - package the exported app into a signed DMG
 - `03_notarize.sh` - submit the DMG to Apple notarization and save logs under `dist/`
 - `04_finish.sh` - staple the notarization ticket and verify the DMG
-- `05_publish_azure.sh` - generate Sparkle metadata, upload the DMG and deltas, upload symbols, and invalidate the CloudFront `/updates/*` paths. The `azure` in the name is historical: it dispatches on `RELEASE_STORAGE_PROVIDER` and publishes to S3 on `dev` and `prod`. Do not rename it — the workflows call it by path.
+- `05_publish.sh` - generate Sparkle metadata, upload the DMG and deltas, upload symbols, and invalidate the CloudFront `/updates/*` paths. Dispatches on `RELEASE_STORAGE_PROVIDER` and publishes to S3 on `dev` and `prod`. The workflows invoke it by path, so any future rename has to move with them.
 - `06_git_tag.sh` - create and push the release git tag
 - `notify_telegram.sh` - send release/failure notifications when Telegram credentials are configured. Renders the CHANGELOG section as Telegram HTML and caps it at Telegram's 4096-character limit. Preview without sending:
   ```bash
@@ -65,7 +67,7 @@ The scripts in this directory are public. Private credentials, signing assets, a
 - `workflows/local_release.sh` - local release workflow with optional restore/publish steps
 - `lib/` - shared helpers for Apple signing/notary, AWS S3 + CloudFront (`aws.sh`), Azure blob (`azure.sh`, reachable only from the `local` channel), release context (`context.sh`), environment loading, Sparkle, and common shell helpers
 - `docs/sparkle.md` - notes specific to the Sparkle updater integration
-- `windows/` - Windows release lane (PowerShell): build/stage, Inno Setup packaging, signing, publish (`04_publish_azure.ps1` — same historical name, same S3/CloudFront target), smoke - see `windows/README.md`
+- `windows/` - Windows release lane (PowerShell): build/stage, Inno Setup packaging, signing, publish (`04_publish.ps1` — same historical name, same S3/CloudFront target), smoke - see `windows/README.md`
 
 ## What is safe to keep public
 

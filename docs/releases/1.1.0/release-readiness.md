@@ -240,7 +240,7 @@ established by a pre-flight audit on 2026-09-19, before any dispatch.
 
 ## Windows publisher required the wrong CLI
 
-`ops/release/windows/04_publish_azure.ps1` demanded the **Azure** CLI before it
+`ops/release/windows/04_publish.ps1` demanded the **Azure** CLI before it
 knew which provider it was publishing to, and never checked for the AWS CLI at
 all -- the wrong tool required, the right one unverified. Dormant only because
 `windows-latest` ships `az`, so the Windows dev lane published straight through it.

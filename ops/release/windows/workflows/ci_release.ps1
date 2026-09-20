@@ -62,7 +62,7 @@ Invoke-Step '01_build.ps1' ($channelArgs + '-Clean')
 Invoke-Step '03_sign.ps1' ($channelArgs + @('-Target', 'app') + $signArgs)
 Invoke-Step '02_package_inno.ps1' $channelArgs
 Invoke-Step '03_sign.ps1' ($channelArgs + @('-Target', 'installer') + $signArgs)
-Invoke-Step '04_publish_azure.ps1' $channelArgs
+Invoke-Step '04_publish.ps1' $channelArgs
 
 # Sentry symbol upload is non-blocking, mirroring the macOS publish step.
 $symbolsScript = Join-Path $LaneRoot 'upload_symbols.ps1'

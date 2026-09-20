@@ -293,7 +293,7 @@ jobs:
           role-session-name: clingfy-publish-macos-dev-${{ github.run_id }}
 
       - name: "Step 5: Publish dev release"
-        run: ./ops/release/05_publish_azure.sh
+        run: ./ops/release/05_publish.sh
 
       - name: Upload dist artifact
         if: always()

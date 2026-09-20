@@ -234,7 +234,7 @@ stages:
               scriptLocation: inlineScript
               inlineScript: |
                 export SPARKLE_KEY_PATH="$(SparkleKey.secureFilePath)"
-                ./ops/release/05_publish_azure.sh
+                ./ops/release/05_publish.sh
             env:
               APP_ENV: $(APP_ENV)
               RELEASE_CHANNEL: $(RELEASE_CHANNEL)

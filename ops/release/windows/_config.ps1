@@ -307,7 +307,7 @@ function Initialize-WindowsReleaseContext {
 #
 # The purge-only keys (AZ_RESOURCE_GROUP / AZ_CDN_PROFILE /
 # AZ_FRONTDOOR_ENDPOINT_NAME) are optional: when no Front Door is configured
-# (blob-direct), they stay empty and 04_publish_azure.ps1 skips the purge.
+# (blob-direct), they stay empty and 04_publish.ps1 skips the purge.
 function Import-AzurePublishSettings([pscustomobject]$Context) {
   Import-DotenvFallback $Context.EnvFile `
     ($script:AzureRequiredKeys + $script:AzurePurgeKeys + $script:StorageProviderKeys)
