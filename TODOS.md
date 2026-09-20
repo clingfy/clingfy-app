@@ -339,56 +339,41 @@ which are the only recorded numbers for this defect.
   with one complete teardown trace and 300 s of silence after it. Earlier
   43-minute timeout on run 35007670584 is the same signature.
 
-### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)
+### ~~`TeardownPipeline` can join a thread from itself~~ — MISDIAGNOSED, and the symptom is gone
 
-- **What:** under capture/audio device contention, most `RecordingEngineTest`
-  Start/Stop cases throw
-  `C++ exception with description "resource deadlock would occur"`.
-  That is `EDEADLK` from `std::thread::join()`, which C++ raises for exactly one
-  reason: **a thread joining itself**. So `RecordingEngine::TeardownPipeline`
-  (`recording_engine.cpp:1960`) is reachable from a thread it then tries to join.
-- **10-second repro (2026-09-16).** Run two copies of the recording tests at once
-  so they contend for the real screen/audio devices:
+- **It was never a self-join.** The entry's reasoning was: `resource deadlock
+  would occur` is `EDEADLK`, "which C++ raises for exactly one reason: a thread
+  joining itself". That is not true on MSVC, where a non-recursive `std::mutex`
+  re-locked by the thread that already owns it throws the identical
+  `std::system_error`. Both paths produce the same string, and the message
+  alone cannot tell them apart.
+- **Direct evidence, observed 2026-09-20.** The guard test added with the
+  indicator lock fix (`recording_indicator_provider_lock_test.cpp`) re-enters a
+  `std::mutex` on one thread, with no `std::thread` anywhere in the test, and
+  fails with:
+  `C++ exception with description "resource deadlock would occur" thrown in the test body.`
+- **What actually threw it:** `MfSinkWriterEncoder::Open` called the public
+  `Cancel()` on each of its failure paths while still holding `mutex_`. Under
+  the contention this repro creates, `Open` fails constantly — there are no
+  free capture devices — so nearly every contended Start took that path. Fixed
+  in #509 (`a234ab9`, 2026-09-16), which split out `CancelLocked()` for callers
+  that already hold the lock. The measurement in this entry was taken the same
+  day, before that landed.
+- **Re-measured 2026-09-20 with the entry's own recipe**, three rounds:
 
-  ```bash
-  EXE=./build/windows-tests/runner_tests/Debug/runner_tests.exe
-  "$EXE" --gtest_filter='RecordingEngineTest.*' > a.log 2>&1 &
-  "$EXE" --gtest_filter='RecordingEngineTest.*' > b.log 2>&1 &
-  wait; grep -c "resource deadlock" a.log b.log
-  ```
+  | | documented 2026-09-16 | now |
+  |---|---|---|
+  | `resource deadlock` throws per process | 17-20, every round | **0** |
+  | failed tests per process | 35-41 | 4-6 |
 
-  Measured over three rounds: **17-20 deadlock throws and 35-41 failed tests per
-  process, every round.** A single process passes cleanly (963 ms), so this is
-  device contention, not test ordering.
-- **Likely path:** `TeardownPipeline` is called from failure/callback sites, not
-  just from `Stop`. The target-loss handler at `recording_engine.cpp:1844`
-  ("window closed" / "display disconnected") tears down from what is plausibly a
-  capture-backend callback thread. Note the ordering inside `TeardownPipeline`:
-  `camera_floating_->Stop()`, `capture_backend_->Stop()`, `mic_capture_->Stop()`,
-  `loopback_capture_->Stop()` all run BEFORE the joins, so a blocking `Stop()`
-  never reaches them at all.
-- **NOT the same thing as the CI hang — do not conflate them.** The CI failure
-  (run 35007670584, `RecordingEngineTest.StartAfterStopIsAllowed`) was a SILENT
-  43-minute hang with no exception. This repro throws and FAILS in ~23ms. They
-  may share a root cause — device absence on a headless runner and device
-  contention here could reach the same failure path — but that is a hypothesis,
-  not a finding.
-- **Ruled out by measurement:** the fixture's shared sandbox
-  (`%TEMP%\clingfy_engine_test_recordings`, `recording_engine_test.cpp:39`) is a
-  real cross-process isolation smell — every process `remove_all`s the same
-  directory — but making it per-PID left the deadlock counts **identical**
-  (19/18 → 20/18). It is not the cause. Worth tidying for `ctest -j`, but do not
-  sell it as a fix.
-- **Severity:** in a test it is a failed assertion. In the app, an exception
-  escaping a capture callback during teardown is a crash, and teardown runs on
-  the path that finalizes the user's recording. Worth understanding before the
-  beta widens.
-- **Next step:** capture a stack at the throw (run under a debugger with
-  `--gtest_filter='RecordingEngineTest.StopReturnsToIdle'` and the contending
-  process running) to confirm which thread calls `TeardownPipeline`. Fix shape,
-  once confirmed: never join the calling thread — compare
-  `std::this_thread::get_id()` against each thread id and defer or detach — but
-  do not change teardown threading on the hypothesis alone.
+  The remaining 4-6 are ordinary device-contention failures — two processes
+  cannot both own the screen and the microphone, so `Start` legitimately fails.
+  They are not deadlocks and they reproduce identically on an unmodified build.
+- **Do not conflate with the CI hang.** That was a separate bug, also fixed:
+  an ABBA lock inversion between `RecordingEngine::mutex_` and the indicator's
+  `provider_mutex_`. See the entry above. This entry and that one shared a
+  symptom family and nothing else.
+
 
 ## Windows — capture exclusion
 
