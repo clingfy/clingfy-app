@@ -300,10 +300,20 @@ class CaptionStyle {
 /// Caption track — an editable list of timed cues plus the source/target
 /// language and render style.
 final class CaptionTrack extends EditTrack {
+  /// What a track claims when nothing told it otherwise.
+  ///
+  /// Named rather than inlined so the one remaining place that GUESSES a
+  /// language is greppable. Every track used to carry this regardless of what
+  /// was spoken, because nothing passed a real value; the transcription path
+  /// now writes what the engine decoded. This is reached only when the engine
+  /// could not say, and the honest value there is null -- which is a schema
+  /// change, tracked on #447.
+  static const String defaultLanguage = 'en';
+
   const CaptionTrack({
     super.id = 'caption',
     super.enabled = true,
-    this.language = 'en',
+    this.language = CaptionTrack.defaultLanguage,
     this.sourceLanguage,
     this.style = const CaptionStyle(),
     this.captions = const <Caption>[],

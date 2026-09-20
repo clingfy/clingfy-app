@@ -340,7 +340,7 @@ void main() {
     final calls = <MethodCall>[];
     // Held open so the transcription can be observed mid-flight, which is the
     // only moment the Stop button exists at all.
-    final gate = Completer<List<Map<String, Object?>>>();
+    final gate = Completer<Map<String, Object?>>();
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
@@ -394,7 +394,8 @@ void main() {
     );
     expect(harness.post.isCancellingCaptions, isTrue);
 
-    gate.complete(const []);
+    // Native replies with a map now: `{cues, language}`.
+    gate.complete(const {'cues': [], 'language': null});
     await run;
     await tester.pump();
   });
@@ -410,7 +411,7 @@ void main() {
     await installCommonNativeMocks();
 
     // Held open so the engine can be observed still occupied after the switch.
-    final gate = Completer<List<Map<String, Object?>>>();
+    final gate = Completer<Map<String, Object?>>();
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
@@ -461,7 +462,8 @@ void main() {
     );
     expect(find.text(l10n.captionsEngineBusy), findsOneWidget);
 
-    gate.complete(const []);
+    // Native replies with a map now: `{cues, language}`.
+    gate.complete(const {'cues': [], 'language': null});
     await run;
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));

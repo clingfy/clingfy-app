@@ -75,13 +75,25 @@ struct TranscriptionJob {
   ///
   /// `progress` is reported across the whole job, so two sources each advance
   /// half of it. `isCancelled` is polled by the engine and between stages.
+  /// What a finished job produced: the cues, and the language they were
+  /// decoded in.
+  ///
+  /// The language rides the RESULT rather than each cue: it is one fact about
+  /// the run. Nothing fabricates a default -- a track whose language is unknown
+  /// must say unknown, because every persisted track used to claim English
+  /// regardless of what was spoken.
+  struct Outcome: Equatable {
+    let captions: [Caption]
+    let detectedLanguage: String?
+  }
+
   func run(
     sources: Sources,
     micOptions: TranscriptionOptions = .default,
     systemOptions: TranscriptionOptions = .strict,
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
-  ) throws -> [Caption] {
+  ) throws -> Outcome {
     guard transcriber.availability.isAvailable else {
       throw TranscriptionError.unavailable(
         reason: {
@@ -105,19 +117,23 @@ struct TranscriptionJob {
       // captured system audio — what is in screen.mov is the microphone.
       passes.append((embeddedURL, micOptions, .mic))
     }
-    guard !passes.isEmpty else { return [] }
+    // No audio to transcribe: no cues, and no language to claim either.
+    guard !passes.isEmpty else {
+      return Outcome(captions: [], detectedLanguage: nil)
+    }
 
     var micSegments: [TranscribedSegment] = []
     var systemSegments: [TranscribedSegment] = []
+    var detectedLanguage: String?
 
     for (index, pass) in passes.enumerated() {
       if isCancelled() { throw TranscriptionError.cancelled }
       let lower = Double(index) / Double(passes.count)
       let span = 1.0 / Double(passes.count)
 
-      let raw: [TranscribedSegment]
+      let outcome: TranscriptionOutcome
       do {
-        raw = try transcriber.transcribe(
+        outcome = try transcriber.transcribe(
           url: pass.url,
           options: pass.options,
           progress: { update in
@@ -141,17 +157,21 @@ struct TranscriptionJob {
         // any of them reports the user's own Stop as a failure.
         throw TranscriptionError.normalizing(error)
       }
-      let kept = Self.applyGuards(raw, options: pass.options)
+      let kept = Self.applyGuards(outcome.segments, options: pass.options)
       switch pass.source {
       case .mic, .mixed: micSegments = kept
       case .system: systemSegments = kept
       }
+      // First pass that can name a language wins. The mic pass runs first and
+      // is the one carrying speech; a system-audio pass over music or silence
+      // is the least trustworthy detector in the job.
+      if detectedLanguage == nil { detectedLanguage = outcome.detectedLanguage }
     }
 
     if isCancelled() { throw TranscriptionError.cancelled }
     let merged = Self.merge(mic: micSegments, system: systemSegments)
     progress(.transcribing(1.0))
-    return merged
+    return Outcome(captions: merged, detectedLanguage: detectedLanguage)
   }
 
   // MARK: - Guards

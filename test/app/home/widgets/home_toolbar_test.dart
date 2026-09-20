@@ -457,7 +457,7 @@ void main() {
     // run" and "an export is running" — and a transcription is only the first.
     // Handed one value for both, generating subtitles put a spinner and
     // "Export…" on the button while no file was being written anywhere.
-    final gate = Completer<List<Map<String, Object?>>>();
+    final gate = Completer<Map<String, Object?>>();
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
@@ -534,7 +534,8 @@ void main() {
       reason: 'nothing is being written; saying otherwise is simply untrue',
     );
 
-    gate.complete(const []);
+    // Native replies with a map now: `{cues, language}`.
+    gate.complete(const {'cues': [], 'language': null});
     await run;
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
