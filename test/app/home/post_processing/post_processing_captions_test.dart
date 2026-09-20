@@ -12,6 +12,7 @@ import '../../../test_helpers/native_test_setup.dart';
 import '../../../test_helpers/wait_until.dart';
 import 'dart:io';
 import 'package:clingfy/core/captions/caption_state_store.dart';
+import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 
 /// Caption state on the controller: what it asks native, what it refuses to
@@ -43,6 +44,10 @@ void main() {
 
   Future<PostProcessingController> createController({
     bool attach = true,
+    // Off for the test that disposes mid-flight itself: disposing a
+    // ChangeNotifier twice trips the same assert this file is about, which
+    // would look like the fix failing rather than the harness double-firing.
+    bool disposeInTearDown = true,
   }) async {
     calls = [];
     final messenger =
@@ -74,7 +79,7 @@ void main() {
       channel: nativeBridge,
     );
     addTearDown(() {
-      post.dispose();
+      if (disposeInTearDown) post.dispose();
       player.dispose();
       settings.dispose();
     });
@@ -167,14 +172,80 @@ void main() {
     });
 
     final bundle = await Directory.systemTemp.createTemp('clingfy_caps_probe');
-    addTearDown(() {
+    addTearDown(() async {
+      await PostStateStore.settled();
       if (bundle.existsSync()) bundle.deleteSync(recursive: true);
     });
     post.attachToRecording(sessionId: 's', projectPath: bundle.path);
     await pumpEventQueue();
 
-    expect(post.captionsCapability, isNull);
+    // Not null any more: null renders as nothing, so the whole Subtitles
+    // panel vanished with no notice, no explanation and no way to retry —
+    // while every other unavailable case gets its own sentence.
+    expect(post.captionsCapability?.available, isFalse);
+    expect(
+      post.captionsCapability?.reason,
+      CaptionsUnavailableReason.probeFailed,
+      reason: 'a raise is not the same answer as "this platform cannot"',
+    );
     expect(post.isGeneratingCaptions, isFalse);
+  });
+
+  test('a transcription finishing after dispose does not throw', () async {
+    // Start a transcription, quit the app before it lands. The `finally` in
+    // generateCaptions notifies a controller that is already gone, which trips
+    // ChangeNotifier's debugAssertNotDisposed in a debug build — the build the
+    // team's own tests run — and the global handler reports it to Sentry.
+    final post = await createController(disposeInTearDown: false);
+    generateGate = Completer<List<Map<String, Object?>>>();
+
+    final inFlight = post.generateCaptions();
+    await pumpEventQueue();
+    expect(post.isGeneratingCaptions, isTrue);
+
+    post.dispose();
+    generateGate!.complete(transcriptReply);
+
+    await expectLater(inFlight, completes);
+  });
+
+  test('a retried probe that succeeds restores the panel', () async {
+    // The reachable trigger is SCENE_INPUT_MISSING — a bundle that could not
+    // be read — which a moved or still-copying project produces and a second
+    // attempt can clear. That is why this reason gets a retry and the others
+    // do not.
+    capabilityReply = {};
+    var failNext = true;
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final post = await createController(attach: false);
+    messenger.setMockMethodCallHandler(screenRecorderChannel, (call) async {
+      calls.add(call);
+      if (call.method == 'captionsCapability') {
+        if (failNext) {
+          throw PlatformException(code: 'SCENE_INPUT_MISSING');
+        }
+        return {'available': true, 'hasMicAudio': true, 'hasSystemAudio': true};
+      }
+      return null;
+    });
+
+    final bundle = await Directory.systemTemp.createTemp('clingfy_caps_retry');
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (bundle.existsSync()) bundle.deleteSync(recursive: true);
+    });
+    post.attachToRecording(sessionId: 's', projectPath: bundle.path);
+    await pumpEventQueue();
+    expect(
+      post.captionsCapability?.reason,
+      CaptionsUnavailableReason.probeFailed,
+    );
+
+    failNext = false;
+    await post.refreshCaptionsCapability();
+
+    expect(post.captionsCapability?.available, isTrue);
   });
 
   // ---- Generating -------------------------------------------------------
@@ -479,6 +550,134 @@ void main() {
       reason:
           'the selector compares by identity; mutating in place is invisible',
     );
+  });
+
+  test('a correction can be undone and redone', () async {
+    // The bar above the panel shows Undo/Redo for Zoom, Clips and Color, so
+    // the absence here read as a broken feature rather than an unbuilt one.
+    // The machine's original wording is gone the moment the commit lands, so
+    // retyping from memory was the only recovery.
+    final post = await createController();
+    await post.generateCaptions();
+    // Generating is itself an edit on the track, so it leaves an entry — the
+    // timeline pair stays visible on history alone so the redo is reachable
+    // even after an undo empties the transcript.
+    expect(post.canUndoCaptions, isTrue);
+
+    post.updateCaptionText('c1', 'corrected');
+    expect(post.captions.first.text, 'corrected');
+    expect(post.canUndoCaptions, isTrue);
+
+    post.undoCaptions();
+    expect(post.captions.first.text, 'hello there');
+    expect(post.canRedoCaptions, isTrue);
+
+    post.redoCaptions();
+    expect(post.captions.first.text, 'corrected');
+  });
+
+  test('an undone correction is written back to disk', () async {
+    // Undo that changes the screen and leaves the old text on disk is worse
+    // than no undo: the next open silently restores the text the user removed.
+    final post = await createController();
+    await post.generateCaptions();
+    post.updateCaptionText('c1', 'corrected');
+    await pumpEventQueue();
+
+    post.undoCaptions();
+    await PostStateStore.settled();
+
+    final stored = PostStateStore.load(
+      attachedProjectPath,
+    ).trackOfType<CaptionTrack>();
+    expect(stored?.captions.first.text, 'hello there');
+  });
+
+  test('a correction keeps the track settings already on disk', () async {
+    // Every persist used to build a brand-new CaptionTrack with only the cues
+    // supplied, so `enabled`, `language`, `sourceLanguage` and the whole style
+    // block reverted to constructor defaults on every single correction.
+    final post = await createController();
+    await post.generateCaptions();
+    await PostStateStore.settled();
+
+    await PostStateStore.update(
+      attachedProjectPath,
+      (t) => t.withTrack(
+        t.trackOfType<CaptionTrack>()!.copyWith(
+          enabled: false,
+          language: 'ar',
+          style: const CaptionStyle(fontSizePx: 42),
+        ),
+      ),
+    );
+
+    post.updateCaptionText('c1', 'corrected');
+    await PostStateStore.settled();
+
+    final track = PostStateStore.load(
+      attachedProjectPath,
+    ).trackOfType<CaptionTrack>()!;
+    expect(track.captions.first.text, 'corrected');
+    expect(track.enabled, isFalse);
+    expect(track.language, 'ar');
+    expect(track.style.fontSizePx, 42);
+  });
+
+  test('a no-op edit records no history entry', () async {
+    // Committing the same text is not an edit; recording it would make the
+    // user press undo twice to step back over one real change.
+    final post = await createController();
+    await post.generateCaptions();
+
+    post.updateCaptionText('c1', 'hello there');
+    post.undoCaptions();
+
+    expect(
+      post.captions,
+      isEmpty,
+      reason: 'the only entry should be the generation itself',
+    );
+  });
+
+  test('regenerating is one undo away, corrections and all', () async {
+    // "Generate again" is the same button, in the same place, that said
+    // "Generate subtitles" before cues existed, and it replaced every hand
+    // correction with machine text with no dialog and no way back.
+    final post = await createController();
+    await post.generateCaptions();
+    post.updateCaptionText('c1', 'my careful correction');
+
+    transcriptReply = [
+      {'id': 'g1', 'startMs': 0, 'endMs': 1000, 'text': 'machine text again'},
+    ];
+    await post.generateCaptions();
+    expect(post.captions.single.text, 'machine text again');
+
+    post.undoCaptions();
+
+    expect(post.captions.first.text, 'my careful correction');
+  });
+
+  test('history does not survive a switch to another recording', () async {
+    // An undo from the previous project reaching into this one would restore
+    // cues that belong to a different video.
+    final post = await createController();
+    await post.generateCaptions();
+    post.updateCaptionText('c1', 'corrected');
+    expect(post.canUndoCaptions, isTrue);
+
+    final other = Directory(
+      '${Directory.systemTemp.path}/clingfy_captions_undo_${DateTime.now().microsecondsSinceEpoch}',
+    )..createSync(recursive: true);
+    addTearDown(() async {
+      await PostStateStore.settled();
+      if (other.existsSync()) other.deleteSync(recursive: true);
+    });
+    post.attachToRecording(sessionId: 's2', projectPath: other.path);
+
+    expect(post.canUndoCaptions, isFalse);
+    expect(post.canRedoCaptions, isFalse);
   });
 
   test('word timings survive a text correction', () async {

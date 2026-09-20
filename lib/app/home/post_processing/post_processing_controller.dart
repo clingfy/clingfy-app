@@ -13,6 +13,7 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/commands/set_captions_command.dart';
 import 'package:clingfy/core/timeline/commands/set_color_grade_command.dart';
 import 'package:clingfy/core/timeline/edit_command.dart';
 import 'package:clingfy/core/timeline/edit_session.dart';
@@ -99,6 +100,27 @@ class PostProcessingController extends ChangeNotifier {
     unawaited(pushPreviewCaptions());
   }
 
+  /// Swallows a notify that arrives after [dispose].
+  ///
+  /// The controller is app-root scoped and never recreated, so the realistic
+  /// trigger is teardown: a transcription (or a preview render) started before
+  /// the app quits or hot-restarts returns to a `finally` that notifies a
+  /// controller which is already gone. In a debug build — which is what the
+  /// team's own test builds are — `ChangeNotifier`'s `debugAssertNotDisposed`
+  /// fires "A PostProcessingController was used after being disposed", and the
+  /// global handler reports it to Sentry. In release the asserts are stripped
+  /// and the listener list is empty, so shipped users see nothing.
+  ///
+  /// Done once here rather than at each `finally`: the generate path and the
+  /// preview-render path both had this shape and neither guarded, while three
+  /// call sites in the caption push path did. One override covers every
+  /// notifier in the class, including ones added later.
+  @override
+  void notifyListeners() {
+    if (_isDisposed) return;
+    super.notifyListeners();
+  }
+
   @override
   void dispose() {
     _isDisposed = true;
@@ -156,6 +178,20 @@ class PostProcessingController extends ChangeNotifier {
   /// ships a file they believe is subtitled. This is the only signal that says
   /// otherwise, which is why the saved-file notice reads it.
   bool _lastExportBurnInFailed = false;
+
+  /// True when the export was asked for a `.srt`/`.vtt` and could not
+  /// write one. Separate from [_lastExportBurnInFailed] because the two
+  /// destinations fail independently and mean different things: a failed
+  /// burn-in leaves a video without captions, while a failed sidecar in
+  /// `sidecar` mode means the deliverable itself is missing.
+  bool _lastExportSidecarFailed = false;
+
+  /// How many cues the last export had to draw shortened to fit the frame.
+  ///
+  /// Not a failure: the export is correct and every other cue burned in. But
+  /// the burned-in text disagrees with the `.srt`/`.vtt` beside it and with
+  /// what the caption editor shows, and that difference used to be silent.
+  int _lastExportShortenedCaptions = 0;
   bool _hasExportedCurrentRecording = false;
   double? _exportProgress; // null = indeterminate, 0.0-1.0 = determinate
 
@@ -265,6 +301,14 @@ class PostProcessingController extends ChangeNotifier {
   late final EditSession _colorSession = EditSession(
     onFlush: _onColorEditFlushed,
   );
+  // Undo/redo history for the caption track, on its own session like the
+  // color, clip and zoom editors. Before this existed, a corrected cue had
+  // no way back at all: the machine's original wording is gone the moment
+  // the commit lands, and the only other recovery was "Generate again",
+  // which discards every OTHER correction too.
+  late final EditSession _captionsSession = EditSession(
+    onFlush: _onCaptionEditFlushed,
+  );
   // Grade as it was when the current slider gesture started, i.e. before the
   // live drag ticks. Non-null only between the first tick and the matching
   // [commitColorGrade], so a whole drag collapses into ONE history entry
@@ -311,6 +355,15 @@ class PostProcessingController extends ChangeNotifier {
   /// True when the file that was just written was supposed to have subtitles
   /// burned in and does not. See [_lastExportBurnInFailed].
   bool get lastExportBurnInFailed => _lastExportBurnInFailed;
+
+  /// True when the file that was just written was supposed to have a
+  /// subtitle sidecar written beside it and does not. See
+  /// [_lastExportSidecarFailed].
+  bool get lastExportSidecarFailed => _lastExportSidecarFailed;
+
+  /// Cue count shortened to fit the frame in the last export. See
+  /// [_lastExportShortenedCaptions].
+  int get lastExportShortenedCaptions => _lastExportShortenedCaptions;
   bool get hasExportedCurrentRecording => _hasExportedCurrentRecording;
   double? get exportProgress => _exportProgress;
 
@@ -680,10 +733,22 @@ class PostProcessingController extends ChangeNotifier {
       // here — it could not fire, and pretending otherwise described a hazard
       // that cannot happen. If a future change ever lets a live job outlive the
       // switch, this needs that guard back before [_captions] is assigned.
+      // Persisted against the CAPTURED project rather than the live one, which
+      // is the invariant argued above; the flush below writes the same content
+      // to the same path, so this is a duplicate write, not a second truth.
       _persistCaptions(projectPath, cues);
-      _captions = cues;
+      // Through the session, so "Generate again" is one undo away. It is the
+      // same button, in the same place, that said "Generate subtitles" before
+      // cues existed, and pressing it replaces every hand correction with
+      // machine text. Reasons to press it are ordinary — the mic/system source
+      // was wrong, or one section came out badly — and the previous wording is
+      // gone the instant it lands, so this was minutes of typing destroyed by
+      // one click with no dialog and nothing to step back to.
+      //
+      // A run the user stopped never reaches here: the cancel branch above
+      // returns first, so an abandoned regeneration leaves no history entry.
+      _executeCaptionsEdit(cues);
       _hasEverGeneratedCaptions = true;
-      unawaited(pushPreviewCaptions());
     } on PlatformException catch (e) {
       // Cancelling is a normal outcome, not a failure worth surfacing.
       if (e.code != 'CAPTIONS_CANCELLED') {
@@ -774,10 +839,44 @@ class PostProcessingController extends ChangeNotifier {
       words: existing.words,
       translatedText: existing.translatedText,
     );
-    _captions = next;
+    // Through the session rather than assigned directly, so the correction is
+    // reversible. Persist and preview push both happen in the flush, which
+    // undo and redo go through too — otherwise stepping back would change the
+    // screen and leave the old text on disk.
+    _executeCaptionsEdit(next);
+  }
+
+  /// Steps the caption track back to the state before the last edit. No-op
+  /// when the history is empty.
+  void undoCaptions() {
+    if (!_captionsSession.canUndo) return;
+    _captionsSession.undo();
+  }
+
+  /// Re-applies the last undone caption edit. No-op when nothing was undone.
+  void redoCaptions() {
+    if (!_captionsSession.canRedo) return;
+    _captionsSession.redo();
+  }
+
+  void _executeCaptionsEdit(List<Caption> next) {
+    _captionsSession.execute(
+      SetCaptionsCommand(
+        get: () => _captions,
+        set: (cues) => _captions = cues,
+        next: next,
+      ),
+    );
+  }
+
+  /// Every history-recorded caption change lands here via
+  /// [EditSession.onFlush] — execute, undo and redo alike — so all three
+  /// persist and reach the preview by the same path.
+  void _onCaptionEditFlushed(Set<EditDomain> dirtyDomains) {
+    if (!dirtyDomains.contains(EditDomain.captions)) return;
     notifyListeners();
     final projectPath = _projectPath;
-    if (projectPath != null) _persistCaptions(projectPath, next);
+    if (projectPath != null) _persistCaptions(projectPath, _captions);
     unawaited(pushPreviewCaptions());
   }
 
@@ -802,11 +901,21 @@ class PostProcessingController extends ChangeNotifier {
   }) {
     unawaited(
       PostStateStore.update(projectPath, (state) {
-        if (onlyWhenAbsent) {
-          final stored = state.trackOfType<CaptionTrack>();
-          if (stored != null && stored.captions.isNotEmpty) return state;
+        final stored = state.trackOfType<CaptionTrack>();
+        if (onlyWhenAbsent && stored != null && stored.captions.isNotEmpty) {
+          return state;
         }
-        return state.withTrack(CaptionTrack(captions: captions));
+        // Through copyWith, so a correction replaces only the cues. Building a
+        // fresh CaptionTrack reverted `enabled`, `language`, `sourceLanguage`
+        // and the whole style block to their constructor defaults on every
+        // persist — which is every completed transcription and every single
+        // text correction. Nothing in the app writes those fields yet, so this
+        // is reachable today only through a bundle written by another build or
+        // edited by hand; it stops being latent the moment anything does.
+        return state.withTrack(
+          stored?.copyWith(captions: captions) ??
+              CaptionTrack(captions: captions),
+        );
       }),
     );
   }
@@ -818,6 +927,11 @@ class PostProcessingController extends ChangeNotifier {
   /// in flight does not count until [commitColorGrade] closes it.
   bool get canUndoColorGrade => _colorSession.canUndo;
   bool get canRedoColorGrade => _colorSession.canRedo;
+
+  /// True when there is a caption edit to step back to. Corrections are
+  /// debounced in the panel, so a half-typed word is not its own entry.
+  bool get canUndoCaptions => _captionsSession.canUndo;
+  bool get canRedoCaptions => _captionsSession.canRedo;
   String? get cameraPath => _cameraPath;
   bool get hasCameraAsset => _cameraPath != null && _cameraPath!.isNotEmpty;
   CameraCompositionState? get cameraState => _cameraState;
@@ -1671,6 +1785,7 @@ class PostProcessingController extends ChangeNotifier {
     // History belongs to the recording that produced it — never let an undo
     // from the previous project reach into this one.
     _colorSession.clear();
+    _captionsSession.clear();
     _colorGestureBaseline = null;
     _cameraPath = null;
     _cameraState = null;
@@ -1749,6 +1864,7 @@ class PostProcessingController extends ChangeNotifier {
     // lands asynchronously (scene load) after [attachToRecording], so any entry
     // recorded in that window would now point at a stale pre-restore grade.
     _colorSession.clear();
+    _captionsSession.clear();
     _colorGestureBaseline = null;
   }
 
@@ -1756,20 +1872,31 @@ class PostProcessingController extends ChangeNotifier {
   /// project bundle. Fire-and-forget — invoked from [applyProcessing] on every
   /// committed canvas edit and from the color-grade commit points.
   void _persistCanvasAppearance(String projectPath) {
+    // Snapshot NOW, outside the closure. `PostStateStore.update` serialises
+    // per bundle, so a second write queued for this project runs after the
+    // first one finishes — and this controller is a long-lived singleton whose
+    // fields `_resetForNewRecording` clears the moment another recording is
+    // opened. Reading them inside the mutation meant a write requested for
+    // project A, but executed after the user switched to B, wrote B's
+    // freshly-reset defaults — neutral grade, zero padding, no background —
+    // into A's `post/state.json`. A's colour grade and background were gone
+    // the next time it was opened.
+    //
+    // Same shape `_persistCaptions` already avoids by taking its project and
+    // its cues as parameters.
+    final grade = _colorGrade;
+    final canvas = CanvasState(
+      padding: _videoPadding,
+      cornerRadius: _videoRadius,
+      backgroundKind: _backgroundKind,
+      backgroundColorArgb: _backgroundColor,
+      backgroundImagePath: _backgroundImagePath,
+      backgroundPreset: _backgroundPreset,
+    );
     unawaited(
       PostStateStore.update(
         projectPath,
-        (state) => state.copyWith(
-          grade: _colorGrade,
-          canvas: CanvasState(
-            padding: _videoPadding,
-            cornerRadius: _videoRadius,
-            backgroundKind: _backgroundKind,
-            backgroundColorArgb: _backgroundColor,
-            backgroundImagePath: _backgroundImagePath,
-            backgroundPreset: _backgroundPreset,
-          ),
-        ),
+        (state) => state.copyWith(grade: grade, canvas: canvas),
       ),
     );
   }
@@ -1980,6 +2107,7 @@ class PostProcessingController extends ChangeNotifier {
     // Everything past this point was asked for, so every other exit is a
     // failure the user has to be told about.
     _lastExportBurnInFailed = false;
+    _lastExportShortenedCaptions = 0;
     if (projectPath == null || spans.isEmpty) {
       Log.i("Captions", "No burn-in payload", null, null, {
         'hasProject': projectPath != null,
@@ -2039,6 +2167,7 @@ class PostProcessingController extends ChangeNotifier {
       // PNG encode failed. The rasterizer logs it and carries on so the rest
       // still burn in, which is right — but the file is then missing a subtitle
       // the user wrote, and that is not a success either.
+      _lastExportShortenedCaptions = manifest.shortenedCueIds.length;
       final drawable = spans.where((s) => s.text.trim().isNotEmpty).length;
       if (manifest.entries.length < drawable) {
         _lastExportBurnInFailed = true;
@@ -2084,8 +2213,21 @@ class PostProcessingController extends ChangeNotifier {
   /// Only a dot in the last path segment counts: `~/My.Videos/clip` has no
   /// extension, and naively cutting at the last dot would write the sidecar
   /// into a sibling of the directory rather than beside the video.
+  ///
+  /// Windows accepts BOTH `/` and `\` as separators, and paths reaching here
+  /// mix them — native returns the export path with backslashes, while paths
+  /// built by joining in Dart carry forward slashes. Matching only
+  /// `Platform.pathSeparator` therefore missed every forward slash on
+  /// Windows: `C:/vids/My.Videos/clip` found no separator after the dot, cut
+  /// the stem to `C:/vids/My`, and wrote both sidecars one directory up from
+  /// the video. macOS was unaffected, so CI could not see it.
+  ///
+  /// `\` is only treated as a separator on Windows, because it is a legal
+  /// character in a POSIX filename.
   static String _withoutExtension(String path) {
-    final lastSeparator = path.lastIndexOf(Platform.pathSeparator);
+    final slash = path.lastIndexOf('/');
+    final backslash = Platform.isWindows ? path.lastIndexOf(r'\') : -1;
+    final lastSeparator = slash > backslash ? slash : backslash;
     final dot = path.lastIndexOf('.');
     if (dot <= lastSeparator + 1) return path;
     return path.substring(0, dot);
@@ -2101,12 +2243,19 @@ class PostProcessingController extends ChangeNotifier {
   /// A sidecar failure never fails the export. The video is already on disk
   /// and re-running the whole render to retry two small text files would be a
   /// far worse outcome than a missing subtitle track the user can regenerate.
+  ///
+  /// [format] is consulted because a GIF has nowhere to read one from: no GIF
+  /// viewer, browser or platform loads a sidecar. Writing them anyway left two
+  /// inert files next to the output whose presence suggested the GIF was
+  /// captioned. Burn-in is the destination that works for GIF, and it does.
   @visibleForTesting
   Future<void> writeSubtitleSidecars(
     String videoPath,
     SubtitleMode mode, [
     ReflowedCaptions? reflowed,
+    ExportFormat format = ExportFormat.mp4,
   ]) async {
+    if (format == ExportFormat.gif) return;
     // The sidecar view: timestamps on the EXPORTED timeline. Writing source
     // times here would put every subtitle at the wrong moment the instant a
     // recording has a single cut.
@@ -2116,16 +2265,38 @@ class PostProcessingController extends ChangeNotifier {
 
     final stem = _withoutExtension(videoPath);
 
-    for (final entry in {
+    // Serialize first, then decide whether there is anything to write. The
+    // span count is the wrong oracle: the captions panel has no delete
+    // affordance, so clearing the text is how a transcript gets removed, and
+    // a blank cue still has a duration and still survives reflow. It is
+    // dropped only at serialization time — after a span-counting guard has
+    // already committed to writing. That produced a 0-byte `.srt` and a
+    // header-only `.vtt` beside the video, and a 0-byte `.srt` uploaded to a
+    // platform reads as a broken subtitle track rather than an absent one.
+    //
+    // Burn-in already treats "every cue blanked by hand" as a legitimate
+    // no-op rather than a failure; this makes the sidecar path agree.
+    final files = {
       '$stem.srt': SubtitleSerializer.toSrt(cues),
       '$stem.vtt': SubtitleSerializer.toWebVtt(cues),
-    }.entries) {
+    };
+    // SubRip has no header, so an empty body means no cue survived
+    // serialization — the same condition that leaves the WebVTT output at its
+    // bare `WEBVTT` header.
+    if (files['$stem.srt']!.isEmpty) return;
+
+    for (final entry in files.entries) {
       try {
         // Written as UTF-8 without a BOM: WebVTT requires UTF-8, and SubRip
         // has no encoding declaration at all, so UTF-8 is what every modern
         // parser assumes.
         await File(entry.key).writeAsString(entry.value, encoding: utf8);
       } catch (e, st) {
+        // Deliberately does not fail the export — see the doc comment. But it
+        // must not pass silently either: in sidecar-only mode the `.srt` IS
+        // the deliverable, so a swallowed failure means the export produced
+        // nothing the user asked for while reporting success.
+        _lastExportSidecarFailed = true;
         Log.e("PostProcessing", "Failed to write ${entry.key}", e, st);
       }
     }
@@ -2136,6 +2307,8 @@ class PostProcessingController extends ChangeNotifier {
     // Belongs to the export about to run, not to the last one — the notice this
     // drives is shown against the file this call produces.
     _lastExportBurnInFailed = false;
+    _lastExportSidecarFailed = false;
+    _lastExportShortenedCaptions = 0;
 
     if (_isExporting) {
       await ClingfyTelemetry.addUiBreadcrumb(
@@ -2374,7 +2547,12 @@ class PostProcessingController extends ChangeNotifier {
       if (newPath != null) {
         Log.i("PostProcessing", "Export completed successfully");
         _hasExportedCurrentRecording = true;
-        await writeSubtitleSidecars(newPath, subtitleMode, reflowed);
+        await writeSubtitleSidecars(
+          newPath,
+          subtitleMode,
+          reflowed,
+          _settings.export.exportFormatType,
+        );
         ClingfyAnalytics.capture(
           AnalyticsEvents.exportJobComplete,
           properties: {

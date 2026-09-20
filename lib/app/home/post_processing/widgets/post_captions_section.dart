@@ -17,6 +17,27 @@ import 'package:flutter/material.dart';
 /// Stateless and value-driven like every other post-processing section — no
 /// controller access, no provider import; the container binds it.
 class PostCaptionsSection extends StatelessWidget {
+  /// Cue count up to which every row is built inline.
+  ///
+  /// Below this the rows stay children of the section's own Column, so the
+  /// sidebar scrolls as one surface — which is how it has always felt and is
+  /// the shape almost every recording produces.
+  ///
+  /// Above it they would all mount at once: the sidebar's own ListView
+  /// virtualises its children, but the cue rows are nested inside ONE of them,
+  /// so its laziness never reaches them. A 30-minute recording is 300-400
+  /// cues, and 400 cues built 400 EditableTexts with a FocusNode and a
+  /// TextEditingController each on first open — then paid for the whole list
+  /// again on every correction, because a commit replaces the cue list.
+  static const int _inlineCueLimit = 40;
+
+  /// Height of the cue viewport once the inline limit is passed.
+  ///
+  /// Fixed rather than measured because a bounded height is what makes the
+  /// list lazy at all: sizing to the content (`shrinkWrap`) would build every
+  /// row again and undo the point.
+  static const double _cueViewportHeight = 360;
+
   const PostCaptionsSection({
     super.key,
     required this.capability,
@@ -32,6 +53,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onUseSystemChanged,
     required this.onGenerate,
     required this.onCancel,
+    this.onRetryProbe,
     required this.onCueTextChanged,
     required this.subtitleMode,
     required this.reflowed,
@@ -82,6 +104,11 @@ class PostCaptionsSection extends StatelessWidget {
   final ValueChanged<bool> onUseSystemChanged;
   final VoidCallback onGenerate;
   final VoidCallback onCancel;
+
+  /// Re-runs the capability probe. Only reachable from the probe-failure
+  /// notice: every other unavailable reason is a fact about the machine or
+  /// the recording, and a retry there would just fail the same way.
+  final VoidCallback? onRetryProbe;
   final void Function(String cueId, String text) onCueTextChanged;
 
   /// Where subtitles go on export. Only meaningful once cues exist, so the
@@ -111,8 +138,19 @@ class PostCaptionsSection extends StatelessWidget {
         showHeader: false,
         children: [
           AppInlineNotice(
+            key: const Key('captions_unavailable_notice'),
             message: _unavailableMessage(l10n, info.reason),
             variant: AppInlineNoticeVariant.warning,
+            // Retry only where retrying can help. A failed probe may be
+            // transient — SCENE_INPUT_MISSING fires on a bundle that cannot be
+            // read, which a moved or still-copying project produces.
+            actionLabel: info.reason == CaptionsUnavailableReason.probeFailed
+                ? l10n.captionsRetryProbe
+                : null,
+            onActionPressed:
+                info.reason == CaptionsUnavailableReason.probeFailed
+                ? onRetryProbe
+                : null,
           ),
         ],
       );
@@ -249,12 +287,12 @@ class PostCaptionsSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSidebarTokens.rowGap),
-          AppSettingsGroup(
-            title: l10n.captionsCueCount(captions.length),
-            showHeader: true,
-            children: [
-              for (final entry in _rowsInPlaybackOrder())
-                _CueRow(
+          Builder(
+            builder: (context) {
+              final rows = _rowsInPlaybackOrder();
+              Widget rowAt(int index) {
+                final entry = rows[index];
+                return _CueRow(
                   key: Key('captions_cue_${entry.caption.id}'),
                   caption: entry.caption,
                   // Null when an edit removed every moment this cue covered:
@@ -264,8 +302,31 @@ class PostCaptionsSection extends StatelessWidget {
                   enabled: !isGenerating && !isProcessing,
                   onTextChanged: (text) =>
                       onCueTextChanged(entry.caption.id, text),
-                ),
-            ],
+                );
+              }
+
+              return AppSettingsGroup(
+                title: l10n.captionsCueCount(captions.length),
+                showHeader: true,
+                children: [
+                  if (rows.length <= _inlineCueLimit)
+                    for (var i = 0; i < rows.length; i++) rowAt(i)
+                  else
+                    // Past the limit the rows move into a viewport of their
+                    // own so only the visible ones inflate. Every row is still
+                    // there — this scrolls, it does not cap.
+                    SizedBox(
+                      height: _cueViewportHeight,
+                      child: ListView.builder(
+                        key: const Key('captions_cue_list'),
+                        padding: EdgeInsets.zero,
+                        itemCount: rows.length,
+                        itemBuilder: (context, index) => rowAt(index),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ] else if (hasEverGenerated && !isGenerating) ...[
           const SizedBox(height: AppSidebarTokens.compactGap),
@@ -321,6 +382,8 @@ class PostCaptionsSection extends StatelessWidget {
         return l10n.captionsUnavailableIntel;
       case CaptionsUnavailableReason.noAudio:
         return l10n.captionsUnavailableNoAudio;
+      case CaptionsUnavailableReason.probeFailed:
+        return l10n.captionsUnavailableProbeFailed;
       case CaptionsUnavailableReason.platformNotSupported:
       case CaptionsUnavailableReason.unknown:
       case null:
@@ -421,7 +484,10 @@ class _CueRowState extends State<_CueRow> {
   @override
   void initState() {
     super.initState();
-    // Blur still commits, so the last edit is never lost to a pending timer.
+    // Blur commits too — but blur does not fire on an unmount that is not a
+    // Flutter tap (quit, project close, a tab rebuild), and disposing a
+    // FocusNode does not notify its listeners, so [dispose] has to flush as
+    // well. Both paths are needed; neither covers the other.
     _focusNode.addListener(() {
       if (!_focusNode.hasFocus) {
         _commitDebounce?.cancel();
@@ -454,6 +520,22 @@ class _CueRowState extends State<_CueRow> {
 
   @override
   void dispose() {
+    // Flush the pending correction instead of dropping it. Typing and then
+    // quitting, closing the recording, opening another one or switching tab
+    // within the debounce window used to discard the edit silently: no commit,
+    // no persist, nothing said, and the machine's original text back on the
+    // next open with no reason to suspect an edit was thrown away.
+    //
+    // Safe to call out during teardown: `_commit` only invokes
+    // `onTextChanged`, and `PostProcessingController.notifyListeners` is
+    // guarded against a disposed controller.
+    //
+    // Ordered before `_controller.dispose()` because `_commit` reads
+    // `_controller.text`.
+    if (_commitDebounce?.isActive ?? false) {
+      _commitDebounce!.cancel();
+      _commit();
+    }
     _commitDebounce?.cancel();
     _focusNode.dispose();
     _controller.dispose();

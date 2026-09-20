@@ -296,98 +296,84 @@ which are the only recorded numbers for this defect.
 
 ## Windows — recording engine teardown
 
-### A recording Start/Stop/Start can hang — in product code, cause still unknown
+### ~~A recording Start/Stop/Start can hang~~ — CAUSE FOUND, fixed 2026-09-19
 
-- **What:** `RecordingEngineTest.StartAfterStopIsAllowed` hangs indefinitely.
-  Silent: no exception, no log, the process stops. Same test and same signature
-  as the 43-minute CI timeout on run 35007670584.
-- **It is in the TEST BODY, not the harness — measured, not assumed.** Fixture
-  probes showed `[fixture] SetUp done` with no `TearDown begin`, so the block is
-  inside the body's real `Start` -> `Stop` -> `Start` on the engine. This is a
-  product path: stop a recording, immediately start another.
-- **Repro:** two `runner_tests` processes running
-  `--gtest_filter=RecordingEngineTest.*` concurrently, so they contend for the
-  real capture devices. See the frequency table below.
-- **SEVEN hypotheses refuted by measurement.** Each looked right and each was
-  wrong; do not re-chase them without new evidence:
-  1. sidecar `Cancel()` mutex contention — `Cancel: locking` -> `locked` printed
-  2. `FinalizeAudioSidecars` blocking — `FinalizeAudioSidecars done` printed
-  3. `IMFSinkWriter::Finalize` blocking — `IMFSinkWriter returned` printed
-  4. DXGI device-manager release — `dxgi_manager released` printed
-  5. teardown generally — `teardown complete` printed, every time
-  6. shared test sandbox as the CAUSE — still hangs with per-process dirs
-  7. fixture cleanup (`remove_all`) — `TearDown begin` never reached
-- **Where it has NOT been narrowed past:** after `Stop()`'s teardown completes.
-  Remaining candidates are the rest of `Stop` (project-bundle write, workflow
-  events, temp cleanup) and the SECOND `Start`. Probes for those were added but
-  the run that carried them went 25/25 clean, so they never fired.
-- **Test isolation changes the ODDS, measured over seven runs:**
+- **It was an ABBA lock inversion between `RecordingEngine::mutex_` and
+  `RecordingIndicatorController::provider_mutex_`.** Two threads, two locks,
+  opposite order, both bare non-recursive `std::mutex` with no timeout:
 
-  | sandbox | hang first seen at iteration |
-  |---|---|
-  | shared `%TEMP%clingfy_engine_test_recordings` | 5, 2, 4, 1 |
-  | per-process (PID-suffixed) | 15, 14, none in 25 |
+  | thread | holds | then wants |
+  |---|---|---|
+  | main, inside `Start()` | `mutex_` (`recording_engine.cpp:227`) | `provider_mutex_` — `Show()` at `recording_engine.cpp:1304` |
+  | overlay, inside `WM_PAINT` | `provider_mutex_` (`recording_indicator_controller.cpp:172`) | `mutex_` — `duration_provider_()` calls `ElapsedSeconds()` at `recording_engine.cpp:2187` |
 
-  Every shared-dir run hung by iteration 5; no per-PID run hung before 14. The
-  per-PID change has landed, so the repro is now RARER — budget more iterations.
-  It is a flakiness reduction, NOT a fix: rounds 6 and 7 hung with it in place.
-- **Severity:** a hang in Start/Stop is an app that never returns from stopping a
-  recording. Under contention here; a headless CI runner reaches it too.
-- **Next step:** re-run the recipe with the `Stop:`/`Start: enter` probes until it
-  hangs (expect 15+ iterations). If it lands on `Start: enter`, the bug is
-  restarting capture too soon after releasing the device — which is exactly what
-  this test's name describes. A debugger would be faster than printf from here;
-  this machine has no cdb/windbg/procdump.
-### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)
+- **Why only the SECOND Start.** The overlay thread and its 250 ms tick are
+  created lazily by the first `Show()`. Teardown only calls `Hide()`, which
+  stores a flag and posts a message — it retires nothing. So during Start #1
+  `provider_mutex_` is uncontended; by Start #2 there is a live thread taking
+  the two locks the other way round.
+- **Why it was silent.** Both waiters are on different threads, so MSVC's
+  same-thread relock check never fires — no exception, no HRESULT, no crash.
+  `Show`, `Paint` and `ElapsedSeconds` log nothing, and `NativeLogPublisher`
+  buffers to memory when there is no Flutter channel (always, in a test).
+- **Why the sandbox change moved the odds without fixing it** (see the table
+  that used to be here): per-PID dirs only changed how long `Stop` holds
+  `mutex_` during teardown, which is exactly the width of the window in which
+  the overlay thread gets parked.
+- **Fix:** `Paint` no longer invokes the provider under `provider_mutex_`. The
+  new `CurrentElapsedSeconds()` copies the `std::function` out, releases the
+  lock, then calls it. Pinned by
+  `windows/runner_tests/recording_indicator_provider_lock_test.cpp`, which
+  re-enters the lock from inside the provider — it throws
+  `resource deadlock would occur` if anyone re-inlines the lock.
+- **Not test-only.** The cycle is armed on every stop-then-start in the
+  shipping app, not just under test contention.
+- **What is still NOT proven.** The CI evidence shows the process blocked
+  somewhere after `[teardown] teardown complete`; "therefore inside Start #2"
+  is an inference. `Stop` runs ~90 untraced lines after `TeardownPipeline`
+  returns (`FillCameraWriterFields`, `MarkStopped`, `WriteRecordingProject`,
+  `CleanupSessionTempFiles`). If the hang recurs after this fix, instrument
+  that tail first — it is the one region the existing trace has never
+  discriminated.
+- **Evidence:** CI run 35457817219 (job 105936728845), `***Timeout 300.02 sec`,
+  with one complete teardown trace and 300 s of silence after it. Earlier
+  43-minute timeout on run 35007670584 is the same signature.
 
-- **What:** under capture/audio device contention, most `RecordingEngineTest`
-  Start/Stop cases throw
-  `C++ exception with description "resource deadlock would occur"`.
-  That is `EDEADLK` from `std::thread::join()`, which C++ raises for exactly one
-  reason: **a thread joining itself**. So `RecordingEngine::TeardownPipeline`
-  (`recording_engine.cpp:1960`) is reachable from a thread it then tries to join.
-- **10-second repro (2026-09-16).** Run two copies of the recording tests at once
-  so they contend for the real screen/audio devices:
+### ~~`TeardownPipeline` can join a thread from itself~~ — MISDIAGNOSED, and the symptom is gone
 
-  ```bash
-  EXE=./build/windows-tests/runner_tests/Debug/runner_tests.exe
-  "$EXE" --gtest_filter='RecordingEngineTest.*' > a.log 2>&1 &
-  "$EXE" --gtest_filter='RecordingEngineTest.*' > b.log 2>&1 &
-  wait; grep -c "resource deadlock" a.log b.log
-  ```
+- **It was never a self-join.** The entry's reasoning was: `resource deadlock
+  would occur` is `EDEADLK`, "which C++ raises for exactly one reason: a thread
+  joining itself". That is not true on MSVC, where a non-recursive `std::mutex`
+  re-locked by the thread that already owns it throws the identical
+  `std::system_error`. Both paths produce the same string, and the message
+  alone cannot tell them apart.
+- **Direct evidence, observed 2026-09-20.** The guard test added with the
+  indicator lock fix (`recording_indicator_provider_lock_test.cpp`) re-enters a
+  `std::mutex` on one thread, with no `std::thread` anywhere in the test, and
+  fails with:
+  `C++ exception with description "resource deadlock would occur" thrown in the test body.`
+- **What actually threw it:** `MfSinkWriterEncoder::Open` called the public
+  `Cancel()` on each of its failure paths while still holding `mutex_`. Under
+  the contention this repro creates, `Open` fails constantly — there are no
+  free capture devices — so nearly every contended Start took that path. Fixed
+  in #509 (`a234ab9`, 2026-09-16), which split out `CancelLocked()` for callers
+  that already hold the lock. The measurement in this entry was taken the same
+  day, before that landed.
+- **Re-measured 2026-09-20 with the entry's own recipe**, three rounds:
 
-  Measured over three rounds: **17-20 deadlock throws and 35-41 failed tests per
-  process, every round.** A single process passes cleanly (963 ms), so this is
-  device contention, not test ordering.
-- **Likely path:** `TeardownPipeline` is called from failure/callback sites, not
-  just from `Stop`. The target-loss handler at `recording_engine.cpp:1844`
-  ("window closed" / "display disconnected") tears down from what is plausibly a
-  capture-backend callback thread. Note the ordering inside `TeardownPipeline`:
-  `camera_floating_->Stop()`, `capture_backend_->Stop()`, `mic_capture_->Stop()`,
-  `loopback_capture_->Stop()` all run BEFORE the joins, so a blocking `Stop()`
-  never reaches them at all.
-- **NOT the same thing as the CI hang — do not conflate them.** The CI failure
-  (run 35007670584, `RecordingEngineTest.StartAfterStopIsAllowed`) was a SILENT
-  43-minute hang with no exception. This repro throws and FAILS in ~23ms. They
-  may share a root cause — device absence on a headless runner and device
-  contention here could reach the same failure path — but that is a hypothesis,
-  not a finding.
-- **Ruled out by measurement:** the fixture's shared sandbox
-  (`%TEMP%\clingfy_engine_test_recordings`, `recording_engine_test.cpp:39`) is a
-  real cross-process isolation smell — every process `remove_all`s the same
-  directory — but making it per-PID left the deadlock counts **identical**
-  (19/18 → 20/18). It is not the cause. Worth tidying for `ctest -j`, but do not
-  sell it as a fix.
-- **Severity:** in a test it is a failed assertion. In the app, an exception
-  escaping a capture callback during teardown is a crash, and teardown runs on
-  the path that finalizes the user's recording. Worth understanding before the
-  beta widens.
-- **Next step:** capture a stack at the throw (run under a debugger with
-  `--gtest_filter='RecordingEngineTest.StopReturnsToIdle'` and the contending
-  process running) to confirm which thread calls `TeardownPipeline`. Fix shape,
-  once confirmed: never join the calling thread — compare
-  `std::this_thread::get_id()` against each thread id and defer or detach — but
-  do not change teardown threading on the hypothesis alone.
+  | | documented 2026-09-16 | now |
+  |---|---|---|
+  | `resource deadlock` throws per process | 17-20, every round | **0** |
+  | failed tests per process | 35-41 | 4-6 |
+
+  The remaining 4-6 are ordinary device-contention failures — two processes
+  cannot both own the screen and the microphone, so `Start` legitimately fails.
+  They are not deadlocks and they reproduce identically on an unmodified build.
+- **Do not conflate with the CI hang.** That was a separate bug, also fixed:
+  an ABBA lock inversion between `RecordingEngine::mutex_` and the indicator's
+  `provider_mutex_`. See the entry above. This entry and that one shared a
+  symptom family and nothing else.
+
 
 ## Windows — capture exclusion
 
@@ -591,7 +577,8 @@ cannot do it. Fold it into the camera on-device QA pass.
 
 ### Windows AAC profile-level is pinned to "2ch / 48 kHz" while the rate is configurable
 - **What:** Both Media Foundation AAC writers hardcode `MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = 0x29`, which specifies AAC-LC at **2 channels, 48 kHz**, while the surrounding encoder config (`mf_encoder_config.h`) validates and permits **44.1 kHz** as well.
-- **Why:** A 44.1 kHz export would declare a profile level that does not describe the stream it contains. Today nothing reaches that path — the config defaults to 48 kHz and WASAPI capture hard-rejects any endpoint that is not 48 kHz float32 stereo — so this is latent, not live. It becomes real the moment 44.1 kHz is selectable or WASAPI accepts a wider range.
+- **Why:** A 44.1 kHz export would declare a profile level that does not describe the stream it contains. Today nothing reaches that path, so this is latent, not live.
+- **Re-checked 2026-09-20, and the reason it is latent CHANGED.** This entry used to say WASAPI "hard-rejects any endpoint that is not 48 kHz float32 stereo". That stopped being true in #468, which opens the stream with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` so a 44.1 kHz interface records instead of failing — so the stated gate ("becomes real the moment WASAPI accepts a wider range") has already been crossed. It is still latent for a different reason: the shared-mode engine resamples INTO the canonical 48 kHz float32 stereo pipeline format, and both `AudioEncoderConfig` call sites (`recording_engine.cpp:519`, `export_pipeline.cpp:786`) use the 48 kHz default, so the encoder never sees another rate. The live trigger is now narrower and more specific: `AudioEncoderConfig::sample_rate_hz` being set to anything but 48000, not anything about the capture device.
 - **Context:** Found by the completeness sweep during the 2026-07-26 macOS export `-11861 "Cannot Encode Media"` investigation. The macOS side of that bug class was the same shape: an encoder parameter fixed independently of the source. macOS is now fixed via `AACEncoderSettings`; Windows has no equivalent single source of truth.
 - **Do NOT "fix" this speculatively.** Changing a profile-level indicator without a stream that actually exercises it is how a working encoder gets broken. Wait until 44.1 kHz is genuinely reachable, then derive the indicator from the configured rate and channels.
 - **Start at:** `windows/runner/Encoding/mf_sink_writer_encoder.cpp:220-232`, the sibling MF writer, and `windows/runner/Encoding/mf_encoder_config.h:45-57`.

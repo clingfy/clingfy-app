@@ -21,10 +21,19 @@
 //     eRender + AUDCLNT_STREAMFLAGS_LOOPBACK → system audio)
 //   * The user-facing label in diagnostics
 //
-// Phase 3D rejects mix formats that aren't 48 kHz float32 stereo with a
-// structured error rather than attempting to resample. The pinned format
-// matches both the typical Windows shared-mode default and the AAC
-// encoder configured in `MfSinkWriterEncoder`.
+// The pipeline is pinned to 48 kHz float32 stereo, which matches both the
+// typical Windows shared-mode default and the AAC encoder configured in
+// `MfSinkWriterEncoder`. An endpoint that disagrees is no longer refused:
+// since #468 the stream is opened with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM`
+// and the shared-mode engine resamples into that canonical format, so a
+// 44.1 kHz interface records instead of failing. See
+// `wasapi_stream_format.h`.
+//
+// The pin therefore still holds at the ENCODER even though capture accepts
+// more: whatever the endpoint runs at, what leaves here is 48 kHz float32
+// stereo. That matters beyond this file — the AAC profile-level indicator is
+// hardcoded to 2ch/48 kHz, and it is this normalisation, not a refusal at the
+// device, that keeps it honest.
 namespace clingfy::audio {
 
 enum class WasapiCaptureKind {

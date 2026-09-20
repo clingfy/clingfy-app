@@ -116,8 +116,20 @@ abstract final class PostStateStore {
   /// clears the colour history, and an edit made during the asynchronous
   /// scene-load window would be thrown away by a "restore" of pure defaults.
   /// The store it replaced expressed this by returning null for a missing file.
+  /// Tests for canvas/grade CONTENT, not for the file. `post/state.json` is
+  /// shared with the caption, clip and zoom tracks, so writing a transcript
+  /// creates it on a recording that has never had a canvas or colour edit —
+  /// and answering "yes, there is state" there restored pure defaults over
+  /// whatever the user had just changed, clearing the colour history with it
+  /// so the edit could not even be undone back.
+  ///
+  /// A project whose stored canvas really is the default loses nothing by
+  /// being skipped: restoring it would be a no-op anyway.
   static bool hasStoredCanvas(String projectPath) {
-    if (!needsMigration(projectPath)) return true;
+    if (!needsMigration(projectPath)) {
+      final stored = load(projectPath);
+      return !stored.canvas.isDefault || !stored.grade.isIdentity;
+    }
     return _legacyFile(projectPath, 'editor_state.json').existsSync();
   }
 
@@ -131,7 +143,16 @@ abstract final class PostStateStore {
 
     final captions = CaptionStateStore.load(projectPath);
     if (captions != null && captions.captions.isNotEmpty) {
-      tracks.add(CaptionTrack(captions: captions.captions));
+      // `language` is carried across: the legacy store persisted it so a later
+      // translation pass would not have to re-detect the source, and dropping
+      // it here threw that away on the one migration that could preserve it.
+      tracks.add(
+        CaptionTrack(
+          captions: captions.captions,
+          language: captions.language ?? 'en',
+          sourceLanguage: captions.language,
+        ),
+      );
     }
 
     var canvas = const CanvasState();
