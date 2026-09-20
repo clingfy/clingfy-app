@@ -499,6 +499,58 @@ void main() {
     expect(commits, [('cue-7', 'Clingfy')]);
   });
 
+  testWidgets('an edit survives the panel going away mid-debounce', (
+    tester,
+  ) async {
+    // Type, then quit / close the recording / switch tab within the 350 ms
+    // debounce. Blur does not fire on an unmount that is not a Flutter tap,
+    // and disposing a FocusNode does not notify its listeners, so the pending
+    // timer used to be cancelled and the correction vanished — no commit, no
+    // persist, and the machine's original text back on the next open.
+    final commits = <(String, String)>[];
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('cue-7', 'wrong name')],
+          onCueTextChanged: (id, text) => commits.add((id, text)),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byType(TextField).first);
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).first, 'Clingfy');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(commits, isEmpty, reason: 'still inside the debounce window');
+
+    // Unmount the section entirely, as a project close or a tab switch does.
+    await tester.pumpWidget(host(const SizedBox.shrink()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(commits, [('cue-7', 'Clingfy')]);
+  });
+
+  testWidgets('an unmount with nothing pending commits nothing', (
+    tester,
+  ) async {
+    // The flush must not turn every teardown into an edit: a row disposed
+    // without a pending timer has nothing to say.
+    final commits = <(String, String)>[];
+    await tester.pumpWidget(
+      host(
+        section(
+          captions: [cue('cue-7', 'wrong name')],
+          onCueTextChanged: (id, text) => commits.add((id, text)),
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(host(const SizedBox.shrink()));
+    await tester.pump(const Duration(milliseconds: 600));
+
+    expect(commits, isEmpty);
+  });
+
   testWidgets('typing reaches the preview without leaving the field', (
     tester,
   ) async {
