@@ -1,4 +1,4 @@
-## [1.1.0] - 2026-09-19
+## [1.1.0] - 2026-09-20
 
 Clingfy 1.1.0 is two releases in one. On macOS it adds **auto-subtitles** — transcribed on the Mac itself, editable, burned in or written as `.srt`/`.vtt` — and fixes a bug that had been *deleting* colour-corrected exports since 1.0.5. On Windows the beta stops being a recorder with an editor bolted on: the zoom lane is editable, the inline preview finally shows what the exported file will actually look like, recordings no longer carry the yellow capture border, and HEVC exports are really HEVC.
 

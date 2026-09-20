@@ -16,7 +16,7 @@ Fill this section before starting verification.
 
 - Version: `v1.1.0`
 - Channel: `prod`
-- Date: `2026-09-19`
+- Date: `2026-09-20`
 - Verified by: `Nabil Alhafez`
 - Commit: `TBD` (filled at build)
 - Tag: `v1.1.0`
@@ -238,23 +238,21 @@ established by a pre-flight audit on 2026-09-19, before any dispatch.
   give prod artifacts build-numbered names. **If 1.1.0 needs re-cutting, purge
   `clingfy.com/updates/downloads/<artifact>` by hand first.**
 
-## Known issue, deliberately not fixed on this branch
+## Windows publisher required the wrong CLI
 
-`ops/release/windows/04_publish_azure.ps1:62` runs an unconditional
-`Get-Command az` and fails with "Azure CLI (az) not found on PATH" before the
-provider dispatch at line 111. So the Windows publisher hard-requires the Azure
-CLI even when the target is AWS. The macOS side does this correctly, via
-`require_release_storage_cli()` in `ops/release/lib/env.sh:259`, which dispatches
-on the provider before requiring a CLI.
+`ops/release/windows/04_publish_azure.ps1` demanded the **Azure** CLI before it
+knew which provider it was publishing to, and never checked for the AWS CLI at
+all -- the wrong tool required, the right one unverified. Dormant only because
+`windows-latest` ships `az`, so the Windows dev lane published straight through it.
 
-This has not bitten because `windows-latest` ships `az` and the Windows dev lane
-publishes through that exact line successfully -- measured, not assumed. It means
-a publish from a machine without `az` fails, and the lane breaks if GitHub ever
-drops the Azure CLI from the runner image.
+Fixed on this branch. The check could not simply be made conditional in place:
+`Initialize-WindowsReleaseContext` leaves `StorageProvider` as `$null`
+(`_config.ps1:289`) and `Import-AzurePublishSettings` is what sets it
+(`_config.ps1:323`), so any dispatch above that call reads `$null` and always takes
+the Azure branch. The check now sits after it and mirrors
+`require_release_storage_cli()` in `ops/release/lib/env.sh:259`.
 
-Left alone for 1.1.0 on purpose: editing the publish path immediately before its
-first-ever production execution swaps a dormant risk for a live one. Fix it after
-1.1.0 ships, by making the check mirror `require_release_storage_cli()`.
+* [ ] publish log shows `aws: <path>`, not `az: <path>`
 
 ## Windows prod publish
 
