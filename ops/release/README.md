@@ -6,14 +6,19 @@
 > location nothing reads — the upload succeeds, the smoke test passes (it checks the copy it just
 > wrote), and no installed app ever sees the release.
 >
-> `RELEASE_STORAGE_PROVIDER` selects the backend and defaults per channel: **prod -> `aws`**,
-> everything else -> `azure`. Dev deliberately stays on Azure (`clingfyreleasesdev`) because there is
-> no dev releases bucket yet. The S3 key is `<container>/<blob name>`, identical to the Azure layout,
+> `RELEASE_STORAGE_PROVIDER` selects the backend and defaults per channel: **prod and dev -> `aws`**,
+> `local` -> `azure`. Dev moved off Azure on 2026-09-15 when it got its own bucket
+> (`clingfy-labs-dev-releases-<account>`), seeded from the old `clingfyreleasesdev` updates container
+> with enclosure hosts rewritten to dev.clingfy.com. `local` is the only arm still selecting `azure`,
+> and it has no credentials for either cloud, so it dies at `require_release_storage_cli` long before
+> it matters — see `configure_storage_provider()` in `lib/env.sh`. The S3 key is
+> `<container>/<blob name>`, identical to the old Azure layout,
 > because the CloudFront `/updates/*` behaviour has no path rewrite.
 >
 > Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
 > would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
-> the azure branch, which is still live for dev.
+> the azure branch, which no release lane reaches any more — only the `local` channel selects it,
+> and the accounts it would write to no longer exist.
 >
 > **Three vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go),
 > `AWS_PUBLIC_ENDPOINT` (where they are SERVED from, e.g. `clingfy.com/updates`), and
@@ -41,14 +46,14 @@ The scripts in this directory are public. Private credentials, signing assets, a
 
 ## Structure
 
-- `00_restore_history.sh` - restore prior release artifacts such as `appcast.xml` and the previously published DMG from Azure storage
+- `00_restore_history.sh` - restore prior release artifacts such as `appcast.xml` and the previously published DMG from the release store (S3 on `dev` and `prod`; Azure blob only on the `local` channel)
 - `00_version_bump.sh` - bump the build number in `pubspec.yaml`
 - `00_version_guard.sh` - verify a `release/*` branch name matches the semantic version in `pubspec.yaml`
 - `01_build.sh` - build and archive the macOS app, install CocoaPods, and generate export options
 - `02_create_dmg.sh` - package the exported app into a signed DMG
 - `03_notarize.sh` - submit the DMG to Apple notarization and save logs under `dist/`
 - `04_finish.sh` - staple the notarization ticket and verify the DMG
-- `05_publish_azure.sh` - generate Sparkle metadata, upload the DMG and deltas, upload symbols, and purge CDN paths
+- `05_publish_azure.sh` - generate Sparkle metadata, upload the DMG and deltas, upload symbols, and invalidate the CloudFront `/updates/*` paths. The `azure` in the name is historical: it dispatches on `RELEASE_STORAGE_PROVIDER` and publishes to S3 on `dev` and `prod`. Do not rename it — the workflows call it by path.
 - `06_git_tag.sh` - create and push the release git tag
 - `notify_telegram.sh` - send release/failure notifications when Telegram credentials are configured. Renders the CHANGELOG section as Telegram HTML and caps it at Telegram's 4096-character limit. Preview without sending:
   ```bash
@@ -58,9 +63,9 @@ The scripts in this directory are public. Private credentials, signing assets, a
 - `commands/` - implementation scripts used by the wrapper entrypoints above
 - `workflows/ci_release.sh` - full CI release pipeline
 - `workflows/local_release.sh` - local release workflow with optional restore/publish steps
-- `lib/` - shared helpers for Apple signing/notary, Azure, environment loading, Sparkle, and common shell helpers
+- `lib/` - shared helpers for Apple signing/notary, AWS S3 + CloudFront (`aws.sh`), Azure blob (`azure.sh`, reachable only from the `local` channel), release context (`context.sh`), environment loading, Sparkle, and common shell helpers
 - `docs/sparkle.md` - notes specific to the Sparkle updater integration
-- `windows/` - Windows release lane (PowerShell): build/stage, Inno Setup packaging, signing, Azure publish, smoke - see `windows/README.md`
+- `windows/` - Windows release lane (PowerShell): build/stage, Inno Setup packaging, signing, publish (`04_publish_azure.ps1` — same historical name, same S3/CloudFront target), smoke - see `windows/README.md`
 
 ## What is safe to keep public
 
@@ -90,7 +95,8 @@ Depending on the script, the release flow expects:
 - CocoaPods / `pod`
 - `create-dmg`
 - Sparkle's `generate_appcast`
-- Azure CLI (`az`)
+- AWS CLI (`aws`) - the publisher for the `dev` and `prod` channels
+- Azure CLI (`az`) - only for the `local` channel's azure branch
 - Apple notarization tooling via `xcrun`
 - `codesign`, `spctl`, `zip`, `curl`, and standard Unix shell tools
 
@@ -126,12 +132,27 @@ The release scripts load private configuration from a local `.env.<flavor>` file
 
 - `SPARKLE_KEY_PATH`
 
-### Azure publishing and CDN
+### Release publishing and CDN
+
+- `RELEASE_STORAGE_PROVIDER` - `aws` or `azure`; defaults to `aws` on the `prod` and `dev` channels
+
+Shared by both backends. On AWS these are S3 key prefixes, not Azure containers (`S3 key = <container>/<blob name>`):
+
+- `AZ_CONTAINER` (default `updates`)
+- `AZ_BINARIES_FOLDER` (default `downloads`)
+- `AZ_CONTAINER_SYMBOLS` (default `symbols`)
+
+AWS — all three required whenever the provider is `aws`, validated at startup before any bytes move:
+
+- `AWS_RELEASES_BUCKET` - where the bytes go
+- `AWS_PUBLIC_ENDPOINT` - where they are SERVED from, e.g. `clingfy.com/updates` (baked into every appcast enclosure)
+- `AWS_CLOUDFRONT_DISTRIBUTION_ID` - how a republished feed reaches viewers
+
+CI authenticates to AWS with GitHub OIDC, not stored access keys, so no AWS key material belongs in `.env.*`.
+
+Azure — `local` channel only; the storage accounts were deleted on 2026-09-15:
 
 - `AZ_STORAGE_ACCOUNT`
-- `AZ_CONTAINER`
-- `AZ_BINARIES_FOLDER`
-- `AZ_CONTAINER_SYMBOLS`
 - `AZ_CDN_ENDPOINT`
 - `AZ_RESOURCE_GROUP`
 - `AZ_CDN_PROFILE`

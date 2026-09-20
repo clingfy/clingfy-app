@@ -238,6 +238,24 @@ established by a pre-flight audit on 2026-09-19, before any dispatch.
   give prod artifacts build-numbered names. **If 1.1.0 needs re-cutting, purge
   `clingfy.com/updates/downloads/<artifact>` by hand first.**
 
+## Known issue, deliberately not fixed on this branch
+
+`ops/release/windows/04_publish_azure.ps1:62` runs an unconditional
+`Get-Command az` and fails with "Azure CLI (az) not found on PATH" before the
+provider dispatch at line 111. So the Windows publisher hard-requires the Azure
+CLI even when the target is AWS. The macOS side does this correctly, via
+`require_release_storage_cli()` in `ops/release/lib/env.sh:259`, which dispatches
+on the provider before requiring a CLI.
+
+This has not bitten because `windows-latest` ships `az` and the Windows dev lane
+publishes through that exact line successfully -- measured, not assumed. It means
+a publish from a machine without `az` fails, and the lane breaks if GitHub ever
+drops the Azure CLI from the runner image.
+
+Left alone for 1.1.0 on purpose: editing the publish path immediately before its
+first-ever production execution swaps a dormant risk for a live one. Fix it after
+1.1.0 ships, by making the check mirror `require_release_storage_cli()`.
+
 ## Windows prod publish
 
 * [ ] build log shows `AZ_CDN_ENDPOINT=clingfy.com/updates`
