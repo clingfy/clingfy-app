@@ -692,7 +692,10 @@ class PostProcessingController extends ChangeNotifier {
         useMic: _captionsUseMic,
         useSystem: _captionsUseSystem,
       );
-      final cues = [for (final m in raw) Caption.fromMap(m)];
+      final cues = [for (final m in raw.cues) Caption.fromMap(m)];
+      // What the engine actually decoded, which may be null when it could not
+      // say. Not defaulted: see `CaptionTrack.language`.
+      final detectedLanguage = raw.language;
       if (_captionsCancelOrigin != _CaptionsCancelOrigin.none) {
         // A run nobody is waiting for any more. Native cancellation is POLLED,
         // so a job already past its last check finishes normally and arrives
@@ -722,7 +725,12 @@ class PostProcessingController extends ChangeNotifier {
         // open as above.
         if (_captionsCancelOrigin == _CaptionsCancelOrigin.recordingSwitch &&
             _projectPath != projectPath) {
-          _persistCaptions(projectPath, cues, onlyWhenAbsent: true);
+          _persistCaptions(
+            projectPath,
+            cues,
+            onlyWhenAbsent: true,
+            detectedLanguage: detectedLanguage,
+          );
         }
         return;
       }
@@ -736,7 +744,7 @@ class PostProcessingController extends ChangeNotifier {
       // Persisted against the CAPTURED project rather than the live one, which
       // is the invariant argued above; the flush below writes the same content
       // to the same path, so this is a duplicate write, not a second truth.
-      _persistCaptions(projectPath, cues);
+      _persistCaptions(projectPath, cues, detectedLanguage: detectedLanguage);
       // Through the session, so "Generate again" is one undo away. It is the
       // same button, in the same place, that said "Generate subtitles" before
       // cues existed, and pressing it replaces every hand correction with
@@ -898,6 +906,14 @@ class PostProcessingController extends ChangeNotifier {
     String projectPath,
     List<Caption> captions, {
     bool onlyWhenAbsent = false,
+
+    /// What the engine reported it decoded, when it could say.
+    ///
+    /// Only written when non-null. A correction re-persists the same cues and
+    /// knows nothing about the language, and overwriting the recorded one with
+    /// a guess on every keystroke is how the wrong metadata got there in the
+    /// first place.
+    String? detectedLanguage,
   }) {
     unawaited(
       PostStateStore.update(projectPath, (state) {
@@ -913,8 +929,18 @@ class PostProcessingController extends ChangeNotifier {
         // is reachable today only through a bundle written by another build or
         // edited by hand; it stops being latent the moment anything does.
         return state.withTrack(
-          stored?.copyWith(captions: captions) ??
-              CaptionTrack(captions: captions),
+          stored?.copyWith(
+                captions: captions,
+                language: detectedLanguage ?? stored.language,
+              ) ??
+              CaptionTrack(
+                captions: captions,
+                // Falls back to the constructor default only when the engine
+                // could not name a language. That default is still `'en'`, so
+                // an undetected track keeps claiming English -- see #447; the
+                // field wants to be nullable, which is a schema change.
+                language: detectedLanguage ?? CaptionTrack.defaultLanguage,
+              ),
         );
       }),
     );

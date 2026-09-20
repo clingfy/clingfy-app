@@ -138,7 +138,7 @@ final class CaptionsServiceTests: XCTestCase {
       options: TranscriptionOptions,
       progress: @escaping (TranscriptionProgress) -> Void,
       isCancelled: @escaping () -> Bool
-    ) throws -> [TranscribedSegment] {
+    ) throws -> TranscriptionOutcome {
       callCount += 1
       engineLock.lock()
       isCancelledProbes.append(isCancelled)
@@ -151,8 +151,12 @@ final class CaptionsServiceTests: XCTestCase {
       if let errorToThrow { throw errorToThrow }
       if isCancelled() { throw TranscriptionError.cancelled }
       progress(.transcribing(1.0))
-      return segments
+      return TranscriptionOutcome(segments: segments, detectedLanguage: detectedLanguage)
     }
+
+    /// What the engine reports it decoded. nil = "cannot say", which must stay
+    /// distinguishable from "English".
+    var detectedLanguage: String?
   }
 
   /// Polls until `condition` holds, or gives up.
@@ -246,7 +250,7 @@ final class CaptionsServiceTests: XCTestCase {
     wait(for: [started], timeout: 5)
 
     let secondDone = expectation(description: "second job refused")
-    var secondOutcome: Result<[Caption], Error>?
+    var secondOutcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: sources, language: nil,
       onProgress: { _ in },
@@ -293,7 +297,7 @@ final class CaptionsServiceTests: XCTestCase {
       micURL: URL(fileURLWithPath: "/tmp/mic.m4a"), systemURL: nil, embeddedURL: nil)
 
     let secondDone = expectation(description: "second run, chained from the first")
-    var secondResult: Result<[Caption], Error>?
+    var secondResult: Result<TranscriptionJob.Outcome, Error>?
 
     service.generateCaptions(
       sources: sources, language: nil, onProgress: { _ in },
@@ -455,7 +459,7 @@ final class CaptionsServiceTests: XCTestCase {
     let started = expectation(description: "running")
     started.assertForOverFulfill = false
     let done = expectation(description: "finished")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
 
     service.generateCaptions(
       sources: TranscriptionJob.Sources(
@@ -491,7 +495,7 @@ final class CaptionsServiceTests: XCTestCase {
     service.cancel()  // before anything is running
 
     let done = expectation(description: "runs anyway")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: sources, language: nil, onProgress: { _ in },
       completion: { result in
@@ -529,7 +533,7 @@ final class CaptionsServiceTests: XCTestCase {
     let service = CaptionsService(transcriber: fake)
 
     let done = expectation(description: "finished")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: micOnly(), language: nil, onProgress: { _ in },
       completion: { result in
@@ -558,7 +562,7 @@ final class CaptionsServiceTests: XCTestCase {
     let service = CaptionsService(transcriber: fake)
 
     let done = expectation(description: "finished")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: micOnly(), language: nil, onProgress: { _ in },
       completion: { result in
@@ -647,7 +651,7 @@ final class CaptionsServiceTests: XCTestCase {
     // The second job must not block on a gate the first one consumed.
     fake.gate = nil
     let second = expectation(description: "second")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: micOnly(), language: nil, onProgress: { _ in },
       completion: { result in

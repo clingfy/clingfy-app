@@ -92,9 +92,14 @@ void main() {
             'hasSystemAudio': true,
           };
         case 'generateCaptions':
-          return [
-            {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': cueText},
-          ];
+          // Native replies with a map now: the detected language joined the
+          // cues and a bare list had nowhere to put a run-level fact.
+          return {
+            'language': null,
+            'cues': [
+              {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': cueText},
+            ],
+          };
         case 'resolveExportSize':
           // Answers the way native does: a GIF is not rendered at the
           // resolution preset, it is capped to the size preset's long edge. A

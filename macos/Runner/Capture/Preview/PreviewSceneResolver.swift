@@ -510,8 +510,17 @@ extension ScreenRecorderFacade {
       completion: { outcome in
         DispatchQueue.main.async {
           switch outcome {
-          case .success(let cues):
-            result(cues.map { $0.toFlutter() })
+          case .success(let jobOutcome):
+            // A map, not the bare cue list this used to return. The detected
+            // language is one fact about the run and there was nowhere to put
+            // it in a list; every persisted track claimed English as a result.
+            // `NativeToFlutter`'s Dart half reads the same two keys.
+            result([
+              "cues": jobOutcome.captions.map { $0.toFlutter() },
+              // Omitted rather than defaulted when the engine cannot say:
+              // unknown and English must stay distinguishable.
+              "language": jobOutcome.detectedLanguage as Any?,
+            ])
           case .failure(let error):
             // Cancellation is a normal outcome, not a failure to report as one.
             if let transcriptionError = error as? TranscriptionError,

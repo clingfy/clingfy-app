@@ -240,7 +240,7 @@ final class CaptionsService {
     sources: TranscriptionJob.Sources,
     language: String?,
     onProgress: @escaping (JobProgress) -> Void,
-    completion: @escaping (Result<[Caption], Error>) -> Void
+    completion: @escaping (Result<TranscriptionJob.Outcome, Error>) -> Void
   ) {
     guard let token = beginRun() else {
       completion(.failure(TranscriptionError.engine("A transcription is already running")))
@@ -284,7 +284,7 @@ final class CaptionsService {
 
       let job = TranscriptionJob(transcriber: transcriber)
       do {
-        let cues = try job.run(
+        let jobOutcome = try job.run(
           sources: sources,
           micOptions: micOptions,
           systemOptions: systemOptions,
@@ -312,9 +312,12 @@ final class CaptionsService {
         )
         NativeLogger.i(
           "Captions", "Transcription finished",
-          context: ["cues": cues.count])
+          context: [
+            "cues": jobOutcome.captions.count,
+            "language": jobOutcome.detectedLanguage ?? "unknown",
+          ])
         finish()
-        completion(.success(cues))
+        completion(.success(jobOutcome))
       } catch {
         if let transcriptionError = error as? TranscriptionError,
           transcriptionError == .cancelled
