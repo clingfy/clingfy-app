@@ -166,14 +166,9 @@ void RecordingIndicatorController::Paint(HWND hwnd) {
     return;
   }
 
-  // Pull the elapsed text off the provider (may take the engine lock).
-  std::uint64_t seconds = 0;
-  {
-    std::lock_guard<std::mutex> lock(provider_mutex_);
-    if (duration_provider_) {
-      seconds = duration_provider_();
-    }
-  }
+  // Pull the elapsed text off the provider. Deliberately NOT under
+  // `provider_mutex_` — see CurrentElapsedSeconds.
+  const std::uint64_t seconds = CurrentElapsedSeconds();
   const std::wstring text = [&] {
     const std::string ascii = FormatIndicatorElapsed(seconds);
     return std::wstring(ascii.begin(), ascii.end());  // ASCII-only, safe widen.
@@ -408,6 +403,21 @@ void RecordingIndicatorController::ThreadMain(std::promise<bool>* ready) {
   hwnd_.store(nullptr);
   ::KillTimer(hwnd, kTickTimerId);
   ::DestroyWindow(hwnd);
+}
+
+std::uint64_t RecordingIndicatorController::CurrentElapsedSeconds() {
+  // Copy the provider out, release the lock, THEN call it. Holding
+  // `provider_mutex_` across the call is what closed the deadlock cycle with
+  // `RecordingEngine::mutex_`; the header documents the full ordering.
+  //
+  // Copying a std::function is not free, but this runs once per 250 ms tick on
+  // the overlay thread, and correctness here outranks an allocation.
+  std::function<std::uint64_t()> provider;
+  {
+    std::lock_guard<std::mutex> lock(provider_mutex_);
+    provider = duration_provider_;
+  }
+  return provider ? provider() : 0;
 }
 
 void RecordingIndicatorController::Show(

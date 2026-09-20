@@ -296,48 +296,49 @@ which are the only recorded numbers for this defect.
 
 ## Windows — recording engine teardown
 
-### A recording Start/Stop/Start can hang — in product code, cause still unknown
+### ~~A recording Start/Stop/Start can hang~~ — CAUSE FOUND, fixed 2026-09-19
 
-- **What:** `RecordingEngineTest.StartAfterStopIsAllowed` hangs indefinitely.
-  Silent: no exception, no log, the process stops. Same test and same signature
-  as the 43-minute CI timeout on run 35007670584.
-- **It is in the TEST BODY, not the harness — measured, not assumed.** Fixture
-  probes showed `[fixture] SetUp done` with no `TearDown begin`, so the block is
-  inside the body's real `Start` -> `Stop` -> `Start` on the engine. This is a
-  product path: stop a recording, immediately start another.
-- **Repro:** two `runner_tests` processes running
-  `--gtest_filter=RecordingEngineTest.*` concurrently, so they contend for the
-  real capture devices. See the frequency table below.
-- **SEVEN hypotheses refuted by measurement.** Each looked right and each was
-  wrong; do not re-chase them without new evidence:
-  1. sidecar `Cancel()` mutex contention — `Cancel: locking` -> `locked` printed
-  2. `FinalizeAudioSidecars` blocking — `FinalizeAudioSidecars done` printed
-  3. `IMFSinkWriter::Finalize` blocking — `IMFSinkWriter returned` printed
-  4. DXGI device-manager release — `dxgi_manager released` printed
-  5. teardown generally — `teardown complete` printed, every time
-  6. shared test sandbox as the CAUSE — still hangs with per-process dirs
-  7. fixture cleanup (`remove_all`) — `TearDown begin` never reached
-- **Where it has NOT been narrowed past:** after `Stop()`'s teardown completes.
-  Remaining candidates are the rest of `Stop` (project-bundle write, workflow
-  events, temp cleanup) and the SECOND `Start`. Probes for those were added but
-  the run that carried them went 25/25 clean, so they never fired.
-- **Test isolation changes the ODDS, measured over seven runs:**
+- **It was an ABBA lock inversion between `RecordingEngine::mutex_` and
+  `RecordingIndicatorController::provider_mutex_`.** Two threads, two locks,
+  opposite order, both bare non-recursive `std::mutex` with no timeout:
 
-  | sandbox | hang first seen at iteration |
-  |---|---|
-  | shared `%TEMP%clingfy_engine_test_recordings` | 5, 2, 4, 1 |
-  | per-process (PID-suffixed) | 15, 14, none in 25 |
+  | thread | holds | then wants |
+  |---|---|---|
+  | main, inside `Start()` | `mutex_` (`recording_engine.cpp:227`) | `provider_mutex_` — `Show()` at `recording_engine.cpp:1304` |
+  | overlay, inside `WM_PAINT` | `provider_mutex_` (`recording_indicator_controller.cpp:172`) | `mutex_` — `duration_provider_()` calls `ElapsedSeconds()` at `recording_engine.cpp:2187` |
 
-  Every shared-dir run hung by iteration 5; no per-PID run hung before 14. The
-  per-PID change has landed, so the repro is now RARER — budget more iterations.
-  It is a flakiness reduction, NOT a fix: rounds 6 and 7 hung with it in place.
-- **Severity:** a hang in Start/Stop is an app that never returns from stopping a
-  recording. Under contention here; a headless CI runner reaches it too.
-- **Next step:** re-run the recipe with the `Stop:`/`Start: enter` probes until it
-  hangs (expect 15+ iterations). If it lands on `Start: enter`, the bug is
-  restarting capture too soon after releasing the device — which is exactly what
-  this test's name describes. A debugger would be faster than printf from here;
-  this machine has no cdb/windbg/procdump.
+- **Why only the SECOND Start.** The overlay thread and its 250 ms tick are
+  created lazily by the first `Show()`. Teardown only calls `Hide()`, which
+  stores a flag and posts a message — it retires nothing. So during Start #1
+  `provider_mutex_` is uncontended; by Start #2 there is a live thread taking
+  the two locks the other way round.
+- **Why it was silent.** Both waiters are on different threads, so MSVC's
+  same-thread relock check never fires — no exception, no HRESULT, no crash.
+  `Show`, `Paint` and `ElapsedSeconds` log nothing, and `NativeLogPublisher`
+  buffers to memory when there is no Flutter channel (always, in a test).
+- **Why the sandbox change moved the odds without fixing it** (see the table
+  that used to be here): per-PID dirs only changed how long `Stop` holds
+  `mutex_` during teardown, which is exactly the width of the window in which
+  the overlay thread gets parked.
+- **Fix:** `Paint` no longer invokes the provider under `provider_mutex_`. The
+  new `CurrentElapsedSeconds()` copies the `std::function` out, releases the
+  lock, then calls it. Pinned by
+  `windows/runner_tests/recording_indicator_provider_lock_test.cpp`, which
+  re-enters the lock from inside the provider — it throws
+  `resource deadlock would occur` if anyone re-inlines the lock.
+- **Not test-only.** The cycle is armed on every stop-then-start in the
+  shipping app, not just under test contention.
+- **What is still NOT proven.** The CI evidence shows the process blocked
+  somewhere after `[teardown] teardown complete`; "therefore inside Start #2"
+  is an inference. `Stop` runs ~90 untraced lines after `TeardownPipeline`
+  returns (`FillCameraWriterFields`, `MarkStopped`, `WriteRecordingProject`,
+  `CleanupSessionTempFiles`). If the hang recurs after this fix, instrument
+  that tail first — it is the one region the existing trace has never
+  discriminated.
+- **Evidence:** CI run 35457817219 (job 105936728845), `***Timeout 300.02 sec`,
+  with one complete teardown trace and 300 s of silence after it. Earlier
+  43-minute timeout on run 35007670584 is the same signature.
+
 ### `TeardownPipeline` can join a thread from itself (`resource deadlock would occur`)
 
 - **What:** under capture/audio device contention, most `RecordingEngineTest`
