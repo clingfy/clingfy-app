@@ -65,6 +65,16 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   private let busyLock = NSLock()
   private var engineBusy = false
 
+  /// Mirrors `pipe != nil`, which is the actual fact about whether weights are
+  /// in memory.
+  ///
+  /// A separate flag rather than reading `pipe` directly, because `pipe` is
+  /// owned by `queue` and the caller is the UI: `queue.sync` from the main
+  /// thread would block for the whole of a transcription, which is exactly why
+  /// `engineBusy` above is lock-guarded rather than queue-hopped. Written only
+  /// where `pipe` is written, so the two cannot drift.
+  private var modelResident = false
+
   var isEngineBusy: Bool {
     busyLock.lock()
     let running = engineBusy
@@ -72,9 +82,30 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     return running || drain.isDraining
   }
 
+  /// Whether the weights are in memory right now.
+  ///
+  /// Deliberately NOT `isEngineBusy`. That answers "is something touching the
+  /// model files", which is wider on purpose -- it stays true through a
+  /// cancelled download's drain -- and it is false whenever nothing is running,
+  /// including while a loaded model is sitting in memory between jobs. A
+  /// Delete-model prompt keyed off busyness would tell the user "deleting also
+  /// unloads it" only while a transcription was in flight, which is the one
+  /// moment the delete is refused anyway.
+  var isModelResident: Bool {
+    busyLock.lock()
+    defer { busyLock.unlock() }
+    return modelResident
+  }
+
   private func setEngineBusy(_ value: Bool) {
     busyLock.lock()
     engineBusy = value
+    busyLock.unlock()
+  }
+
+  private func setModelResident(_ value: Bool) {
+    busyLock.lock()
+    modelResident = value
     busyLock.unlock()
   }
 
@@ -112,6 +143,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
         }
         let current = pipe
         pipe = nil
+        setModelResident(false)
         continuation.resume(returning: (true, current))
       }
     }
@@ -446,6 +478,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     )
     let created = try await WhisperKit(config)
     pipe = created
+    setModelResident(true)
     return created
   }
 

@@ -46,6 +46,17 @@ protocol CaptionTranscriber {
   /// that leaves a half-written tree the next run will happily load.
   var isEngineBusy: Bool { get }
 
+  /// Whether the model's weights are in memory right now.
+  ///
+  /// Narrower than `isEngineBusy` and not derivable from it. Busyness is
+  /// deliberately wide -- it covers a cancelled download still writing into the
+  /// model directory -- while residency is the single fact a Delete-model
+  /// prompt needs in order to say "this also unloads it". Between jobs a loaded
+  /// model is resident and nothing is busy, so reading one for the other is
+  /// wrong in exactly the state the user is most likely to be in when they
+  /// reach for Delete.
+  var isModelResident: Bool { get }
+
   /// Drops the loaded model so its files can be removed.
   ///
   /// Core ML holds the weights mmapped, so removing the directory while a
@@ -66,6 +77,8 @@ extension CaptionTranscriber {
   // Defaulted so the existing test doubles keep compiling: only the real engine
   // owns a model on disk. A double holding nothing has, trivially, released it.
   var isEngineBusy: Bool { false }
+  /// A double holds no weights, so it is trivially not resident.
+  var isModelResident: Bool { false }
   func releaseModel() async -> Bool { true }
 }
 
