@@ -360,6 +360,8 @@
   "colorCorrection": "Color Correction",
   "colorUndo": "Undo color edit",
   "colorRedo": "Redo color edit",
+  "captionsUndo": "Undo subtitle edit",
+  "captionsRedo": "Redo subtitle edit",
   "autoEnhance": "Auto-enhance",
   "exposure": "Exposure",
   "contrast": "Contrast",
@@ -656,6 +658,16 @@
   "externalProjectOpenFailed": "Couldn't open that Clingfy project.",
   "exportSuccess": "Export successful:",
   "exportSavedWithoutSubtitles": "Exported, but the subtitles could not be burned in:",
+  "exportSavedWithoutSubtitleFile": "Exported, but the subtitle file could not be written:",
+  "exportSavedWithoutAnySubtitles": "Exported, but no subtitles could be added:",
+  "exportSavedWithShortenedSubtitles": "Exported. {count} subtitles were too long for the frame and were shortened:",
+  "@exportSavedWithShortenedSubtitles": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "open": "Open",
   "cursorDataMissing": "Cursor data missing",
   "voiceBoost": "Voice Boost",
@@ -927,6 +939,8 @@
   "captionsUnavailableIntel": "Subtitles run slowly on Intel Macs, which have no Neural Engine.",
   "captionsUnavailableNoAudio": "This recording has no audio to transcribe.",
   "captionsUnavailablePlatform": "Subtitles are only available on macOS.",
+  "captionsUnavailableProbeFailed": "Couldn't check whether subtitles can run for this recording.",
+  "captionsRetryProbe": "Try again",
   "captionsMicOnlyRecording": "This recording predates separate audio capture, so only your microphone was recorded.",
   "captionsFirstRunDownload": "The first run downloads a speech model. This happens once.",
   "captionsFailed": "Couldn’t generate subtitles.",

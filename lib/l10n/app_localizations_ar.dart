@@ -1019,6 +1019,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get colorRedo => 'إعادة تعديل الألوان';
 
   @override
+  String get captionsUndo => 'تراجع عن تعديل الترجمة';
+
+  @override
+  String get captionsRedo => 'إعادة تعديل الترجمة';
+
+  @override
   String get autoEnhance => 'تحسين تلقائي';
 
   @override
@@ -1916,6 +1922,19 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم التصدير، لكن تعذّر دمج الترجمات في الفيديو:';
 
   @override
+  String get exportSavedWithoutSubtitleFile =>
+      'تم التصدير، لكن تعذّر كتابة ملف الترجمة:';
+
+  @override
+  String get exportSavedWithoutAnySubtitles =>
+      'تم التصدير، لكن تعذّر إضافة أي ترجمات:';
+
+  @override
+  String exportSavedWithShortenedSubtitles(int count) {
+    return 'تم التصدير. $count من الترجمات كانت أطول من إطار الفيديو وتمّ اختصارها:';
+  }
+
+  @override
   String get open => 'فتح';
 
   @override
@@ -2746,6 +2765,13 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get captionsUnavailablePlatform => 'الترجمة متاحة على macOS فقط.';
+
+  @override
+  String get captionsUnavailableProbeFailed =>
+      'تعذّر التحقق ممّا إذا كانت الترجمات تعمل لهذا التسجيل.';
+
+  @override
+  String get captionsRetryProbe => 'أعد المحاولة';
 
   @override
   String get captionsMicOnlyRecording =>

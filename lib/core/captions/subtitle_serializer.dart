@@ -90,7 +90,7 @@ abstract final class SubtitleSerializer {
         ..write(' --> ')
         ..write(_timestamp(_endOf(cue), decimalSeparator: '.'))
         ..write(_newline)
-        ..write(_sanitizeText(cue.text))
+        ..write(_escapeWebVttMarkup(_sanitizeText(cue.text)))
         ..write(_newline)
         ..write(_newline);
     }
@@ -166,4 +166,28 @@ abstract final class SubtitleSerializer {
         .where((line) => line.isNotEmpty);
     return lines.join(_newline);
   }
+
+  /// Escapes the three characters WebVTT reads as markup.
+  ///
+  /// WebVTT cue text is parsed by a tokenizer that enters tag state at `<`,
+  /// consumes to the next `>` or to end-of-input, and discards the tag when it
+  /// is not one it recognises. So `if x < y then` renders as `if x ` in every
+  /// conforming player — a browser `<track>`, YouTube, VLC — while the file
+  /// itself still looks correct in a text editor. Screen recordings of code
+  /// are this app's core use case, so a `<` in a cue is ordinary, not exotic.
+  ///
+  /// Deliberately WebVTT-only: SubRip has no markup layer of its own, several
+  /// SubRip parsers accept `<i>`/`<b>` as inline styling, and none of them
+  /// decode entities — escaping in [toSrt] would replace one wrong rendering
+  /// with another, printing a literal `&lt;` to the viewer.
+  ///
+  /// `&` is replaced first so an escape introduced here is not escaped again,
+  /// and so an ampersand the user typed does not read as the start of an
+  /// entity. `>` carries no meaning outside tag state, but is escaped for
+  /// symmetry: a cue reading `a > b` and one reading `a < b` should survive
+  /// the same way.
+  static String _escapeWebVttMarkup(String text) => text
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
 }

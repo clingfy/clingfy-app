@@ -2020,6 +2020,18 @@ abstract class AppLocalizations {
   /// **'Redo color edit'**
   String get colorRedo;
 
+  /// No description provided for @captionsUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo subtitle edit'**
+  String get captionsUndo;
+
+  /// No description provided for @captionsRedo.
+  ///
+  /// In en, this message translates to:
+  /// **'Redo subtitle edit'**
+  String get captionsRedo;
+
   /// No description provided for @autoEnhance.
   ///
   /// In en, this message translates to:
@@ -3628,6 +3640,24 @@ abstract class AppLocalizations {
   /// **'Exported, but the subtitles could not be burned in:'**
   String get exportSavedWithoutSubtitles;
 
+  /// No description provided for @exportSavedWithoutSubtitleFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported, but the subtitle file could not be written:'**
+  String get exportSavedWithoutSubtitleFile;
+
+  /// No description provided for @exportSavedWithoutAnySubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported, but no subtitles could be added:'**
+  String get exportSavedWithoutAnySubtitles;
+
+  /// No description provided for @exportSavedWithShortenedSubtitles.
+  ///
+  /// In en, this message translates to:
+  /// **'Exported. {count} subtitles were too long for the frame and were shortened:'**
+  String exportSavedWithShortenedSubtitles(int count);
+
   /// No description provided for @open.
   ///
   /// In en, this message translates to:
@@ -5043,6 +5073,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Subtitles are only available on macOS.'**
   String get captionsUnavailablePlatform;
+
+  /// No description provided for @captionsUnavailableProbeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t check whether subtitles can run for this recording.'**
+  String get captionsUnavailableProbeFailed;
+
+  /// No description provided for @captionsRetryProbe.
+  ///
+  /// In en, this message translates to:
+  /// **'Try again'**
+  String get captionsRetryProbe;
 
   /// No description provided for @captionsMicOnlyRecording.
   ///

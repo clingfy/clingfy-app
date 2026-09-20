@@ -1028,6 +1028,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get colorRedo => 'Redo color edit';
 
   @override
+  String get captionsUndo => 'Undo subtitle edit';
+
+  @override
+  String get captionsRedo => 'Redo subtitle edit';
+
+  @override
   String get autoEnhance => 'Auto-enhance';
 
   @override
@@ -1933,6 +1939,19 @@ class AppLocalizationsEn extends AppLocalizations {
       'Exported, but the subtitles could not be burned in:';
 
   @override
+  String get exportSavedWithoutSubtitleFile =>
+      'Exported, but the subtitle file could not be written:';
+
+  @override
+  String get exportSavedWithoutAnySubtitles =>
+      'Exported, but no subtitles could be added:';
+
+  @override
+  String exportSavedWithShortenedSubtitles(int count) {
+    return 'Exported. $count subtitles were too long for the frame and were shortened:';
+  }
+
+  @override
   String get open => 'Open';
 
   @override
@@ -2761,6 +2780,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get captionsUnavailablePlatform =>
       'Subtitles are only available on macOS.';
+
+  @override
+  String get captionsUnavailableProbeFailed =>
+      'Couldn\'t check whether subtitles can run for this recording.';
+
+  @override
+  String get captionsRetryProbe => 'Try again';
 
   @override
   String get captionsMicOnlyRecording =>

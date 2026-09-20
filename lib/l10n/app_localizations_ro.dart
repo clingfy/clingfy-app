@@ -1036,6 +1036,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get colorRedo => 'Refă editarea culorii';
 
   @override
+  String get captionsUndo => 'Anulează editarea subtitrării';
+
+  @override
+  String get captionsRedo => 'Refă editarea subtitrării';
+
+  @override
   String get autoEnhance => 'Auto-îmbunătățire';
 
   @override
@@ -1952,6 +1958,19 @@ class AppLocalizationsRo extends AppLocalizations {
       'Exportat, dar subtitrările nu au putut fi incluse în imagine:';
 
   @override
+  String get exportSavedWithoutSubtitleFile =>
+      'Exportat, dar fișierul de subtitrare nu a putut fi scris:';
+
+  @override
+  String get exportSavedWithoutAnySubtitles =>
+      'Exportat, dar nicio subtitrare nu a putut fi adăugată:';
+
+  @override
+  String exportSavedWithShortenedSubtitles(int count) {
+    return 'Exportat. $count subtitrări au fost prea lungi pentru cadru și au fost scurtate:';
+  }
+
+  @override
   String get open => 'Deschide';
 
   @override
@@ -2797,6 +2816,13 @@ class AppLocalizationsRo extends AppLocalizations {
   @override
   String get captionsUnavailablePlatform =>
       'Subtitrările sunt disponibile doar pe macOS.';
+
+  @override
+  String get captionsUnavailableProbeFailed =>
+      'Nu s-a putut verifica dacă subtitrările pot rula pentru această înregistrare.';
+
+  @override
+  String get captionsRetryProbe => 'Încearcă din nou';
 
   @override
   String get captionsMicOnlyRecording =>

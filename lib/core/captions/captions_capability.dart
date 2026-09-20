@@ -20,6 +20,15 @@ enum CaptionsUnavailableReason {
   /// Windows. The engine is not ported.
   platformNotSupported('platformNotSupported'),
 
+  /// The probe itself failed — native raised rather than answering. Distinct
+  /// from every other reason here because it may be transient and is the only
+  /// one worth retrying: the reachable trigger today is `SCENE_INPUT_MISSING`,
+  /// raised when the bundle cannot be read, which a moved or still-copying
+  /// project produces and a second attempt can clear.
+  ///
+  /// Never sent by native — set on this side when the call throws.
+  probeFailed('probeFailed'),
+
   /// Native sent something this build does not know. Treated as unavailable
   /// rather than crashing, so an older Flutter against a newer native binary
   /// degrades instead of throwing.
@@ -80,6 +89,16 @@ class CaptionsCapabilityInfo {
   static const CaptionsCapabilityInfo unsupported = CaptionsCapabilityInfo(
     available: false,
     reason: CaptionsUnavailableReason.platformNotSupported,
+  );
+
+  /// The probe raised instead of answering.
+  ///
+  /// Separate from [unsupported] because "not supported on this platform" is a
+  /// lie when the truth is that one call failed — and because this is the one
+  /// unavailable state the user can do something about.
+  static const CaptionsCapabilityInfo probeFailed = CaptionsCapabilityInfo(
+    available: false,
+    reason: CaptionsUnavailableReason.probeFailed,
   );
 
   factory CaptionsCapabilityInfo.fromMap(Map<dynamic, dynamic> map) {
