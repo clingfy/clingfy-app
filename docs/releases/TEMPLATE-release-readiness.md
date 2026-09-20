@@ -20,7 +20,7 @@ Fill this section before starting verification.
 - Verified by: `Name`
 - Commit: `TBD`
 - Tag: `vT.B.D`
-- Build: `Azure #255` or `GitHub Actions #4`
+- Build: `GitHub Actions #4` (the run id of the lane that built it)
 - Status: `In progress`
 
 Possible status values:

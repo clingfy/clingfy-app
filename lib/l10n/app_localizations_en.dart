@@ -2771,7 +2771,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get captionsUnavailableIntel =>
-      'Subtitles run slowly on Intel Macs, which have no Neural Engine.';
+      'Subtitles need a Mac with Apple silicon. Intel Macs have no Neural Engine to run the speech model.';
 
   @override
   String get captionsUnavailableNoAudio =>

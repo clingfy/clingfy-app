@@ -2757,7 +2757,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get captionsUnavailableIntel =>
-      'تعمل الترجمة ببطء على أجهزة Mac بمعالج Intel لعدم توفر Neural Engine.';
+      'تتطلب الترجمة جهاز Mac بمعالج Apple. أجهزة Mac بمعالج Intel لا تتوفر على Neural Engine لتشغيل نموذج الكلام.';
 
   @override
   String get captionsUnavailableNoAudio =>

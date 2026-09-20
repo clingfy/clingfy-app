@@ -15,7 +15,7 @@
 # wires the in-app update check against it. Publishing it now means 10.6 is
 # a client-only change.
 #
-# Mechanics mirror commands/publish_release.sh: Azure CLI only, AAD identity
+# Mechanics mirror commands/publish_release.sh: one cloud CLI, federated identity
 # (`--auth-mode login` — run `az login` first; no account keys or SAS), blob
 # overwrite, then — only when a Front Door endpoint is configured — an Azure
 # Front Door purge of exactly the touched paths. dev and prod are blob-direct
@@ -59,16 +59,40 @@ if (-not (Test-Path -LiteralPath $Ctx.InstallerPath -PathType Leaf)) {
     "Run 01_build.ps1 + 02_package_inno.ps1 -Channel $Channel first.")
 }
 
-$az = Get-Command az -ErrorAction SilentlyContinue
-if (-not $az) {
-  Fail ("Azure CLI (az) not found on PATH. Install it first:`n" +
-    "  winget install Microsoft.AzureCLI`n" +
-    "  # then: az login")
-}
-Write-Info "az: $($az.Source)"
-
 Import-AzurePublishSettings $Ctx
 $downloadBaseUrl = Get-WindowsDownloadBaseUrl $Ctx
+
+# Require the CLI this PROVIDER needs, not the one the filename suggests.
+#
+# This check used to sit above Import-AzurePublishSettings and demand `az`
+# unconditionally, so a publish to AWS failed with "Azure CLI (az) not found on
+# PATH" while never checking for `aws` at all -- the wrong tool required, the right
+# one unverified. It only stayed dormant because windows-latest ships az.
+#
+# It has to run HERE rather than earlier: Initialize-WindowsReleaseContext leaves
+# StorageProvider as $null (_config.ps1:289) and Import-AzurePublishSettings is what
+# sets it (_config.ps1:323), so dispatching any earlier reads $null and always takes
+# the Azure branch. Mirrors require_release_storage_cli() in ops/release/lib/env.sh.
+switch ($Ctx.StorageProvider) {
+  'aws' {
+    $cli = Get-Command aws -ErrorAction SilentlyContinue
+    if (-not $cli) {
+      Fail ("AWS CLI (aws) not found on PATH, and this channel publishes to S3. Install it first:`n" +
+        "  winget install Amazon.AWSCLI`n" +
+        "  # CI authenticates with OIDC; locally: aws sso login --profile clingfy-dev")
+    }
+    Write-Info "aws: $($cli.Source)"
+  }
+  default {
+    $cli = Get-Command az -ErrorAction SilentlyContinue
+    if (-not $cli) {
+      Fail ("Azure CLI (az) not found on PATH, and this channel publishes to Azure blob storage. Install it first:`n" +
+        "  winget install Microsoft.AzureCLI`n" +
+        "  # then: az login")
+    }
+    Write-Info "az: $($cli.Source)"
+  }
+}
 
 # --- Generate checksum + latest-windows.json --------------------------------------
 Write-Step 'Generating checksum and feed metadata'

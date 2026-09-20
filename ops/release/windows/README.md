@@ -1,19 +1,21 @@
 # Windows Release Lane
 
 > **⚠️ PUBLISH TARGET CHANGED 2026-09-12 — prod publishes to AWS S3, not Azure.**
-> Azure was decommissioned on 2026-09-10, and `clingfy.com/updates/*` has served from the AWS
+> Azure decommissioning finished 2026-09-15 — zero Clingfy resources remain, both release storage
+> accounts (`clingfyreleases`, `clingfyreleasesdev`) are deleted and their hostnames no longer resolve
+> in DNS. `clingfy.com/updates/*` has served from the AWS
 > releases bucket since the 2026-08-17 cutover. Publishing prod to Azure would have written to a
 > location nothing reads — the upload succeeds, the smoke test passes (it checks the copy it just
 > wrote), and no installed app ever sees the release.
 >
-> `RELEASE_STORAGE_PROVIDER` selects the backend and defaults per channel: **prod -> `aws`**,
-> everything else -> `azure`. Dev deliberately stays on Azure (`clingfyreleasesdev`) because there is
-> no dev releases bucket yet. The S3 key is `<container>/<blob name>`, identical to the Azure layout,
+> `RELEASE_STORAGE_PROVIDER` selects the backend and defaults per channel: **prod and dev -> `aws`**,
+> only the `local` channel -> `azure`. Dev publishes to `clingfy-labs-dev-releases-422661068605` and is
+> served from `dev.clingfy.com/updates`. The S3 key is `<container>/<blob name>`, identical to the old Azure layout,
 > because the CloudFront `/updates/*` behaviour has no path rewrite.
 >
 > Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
 > would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
-> the azure branch, which is still live for dev.
+> the `azure` branch, which is now reachable only from the `local` channel and has no storage account left behind it.
 >
 > **Three vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go),
 > `AWS_PUBLIC_ENDPOINT` (where they are SERVED from, e.g. `clingfy.com/updates`), and
@@ -35,7 +37,7 @@
 
 
 
-This directory contains the secret-free operational tooling used to build, package, sign, and publish Clingfy Windows releases. It is the PowerShell counterpart of the macOS bash lane one level up, sharing its release concepts — channel model, pubspec version source of truth, artifact naming, Azure publishing conventions — while staying fully independent of it: nothing here is sourced or invoked by the macOS scripts, and nothing here writes into the macOS lane's artifact locations (`release_archive/`, the `appcast.xml` feed, or `downloads/` outside the `windows/` prefix).
+This directory contains the secret-free operational tooling used to build, package, sign, and publish Clingfy Windows releases. It is the PowerShell counterpart of the macOS bash lane one level up, sharing its release concepts — channel model, pubspec version source of truth, artifact naming, publishing conventions (AWS S3 + CloudFront since the 2026-08-17 cutover) — while staying fully independent of it: nothing here is sourced or invoked by the macOS scripts, and nothing here writes into the macOS lane's artifact locations (`release_archive/`, the `appcast.xml` feed, or `downloads/` outside the `windows/` prefix).
 
 Like the parent lane, these scripts are public. Private credentials (Azure identities, signing certificates, Sentry tokens) are injected through the environment or local `.env.*` files that are never committed.
 
@@ -44,12 +46,12 @@ For the complete operator walkthrough — machine requirements, every secret and
 ## Structure
 
 - `RUNBOOK.md` - end-to-end signed-release runbook (requirements, secrets, steps, Azure locations)
-- `_config.ps1` - shared context dot-sourced by every script: channel/version/name/path resolution, Azure defaults, dotenv fallback loading, tool discovery
+- `_config.ps1` - shared context dot-sourced by every script: channel/version/name/path resolution, storage-provider selection (`aws` for prod/dev, `azure` only for `local`) and its defaults, dotenv fallback loading, tool discovery
 - `00_version_guard.ps1` - verify a `release/*` branch name matches the semantic version in `pubspec.yaml`
 - `01_build.ps1` - `flutter build windows --release` and stage a clean app folder into `dist/windows/app` (excludes PDBs/`runner_bridge.lib`/`native_assets.json`, bundles the VC++ CRT app-locally, verifies required runtime files)
 - `02_package_inno.ps1` - compile the per-user Inno Setup installer into `dist/windows/installer`
 - `03_sign.ps1` - Authenticode-sign the staged app binaries (`-Target app`, before packaging) or the installer (`-Target installer`, after); skips with a loud warning when no signing material is configured (decision D3 allows an unsigned private beta)
-- `04_publish_azure.ps1` - upload installer + `.sha256` + `latest-windows.json` to Azure blob storage under `downloads/windows/`, then purge the Front Door cache for exactly those paths
+- `04_publish_azure.ps1` - upload installer + `.sha256` + `latest-windows.json` under `updates/downloads/windows/`, then invalidate exactly those CloudFront paths (the filename still says `azure`; it dispatches on `$Ctx.StorageProvider`, and the Azure blob + Front Door purge branch now runs only for the `local` channel — do not rename the file, the workflows invoke it by path)
 - `05_smoke.ps1` - verify the published feed and installer through the public endpoint, including a download + SHA-256 comparison
 - `upload_symbols.ps1` - Sentry symbol upload (PDBs + Dart AOT snapshot); written in Phase 10.4, invoked by the workflows as a non-blocking publish step
 - `installer/Clingfy.iss` - Inno Setup source; channel identity arrives via `ISCC /D` defines from `02_package_inno.ps1`
@@ -62,8 +64,8 @@ For the complete operator walkthrough — machine requirements, every secret and
 # Dev installer on your machine (no publishing, no credentials needed):
 pwsh ops/release/windows/workflows/local_release.ps1
 
-# Full local gate, then publish the prod installer:
-az login
+# Full local gate, then publish the prod installer (prod publishes to AWS S3):
+aws sso login --profile clingfy-dev   # AWS creds for account 422661068605; CI uses GitHub OIDC instead
 pwsh ops/release/windows/workflows/local_release.ps1 -Channel prod -Clean -RunTests -Publish
 ```
 
@@ -80,7 +82,7 @@ Step numbering is nominal — signing straddles packaging, so the workflows run 
 
 ## Published artifact layout
 
-Same storage account and `updates` container as the macOS lane (isolation between dev and prod comes from the per-`.env` storage account, exactly like macOS):
+Same bucket and `updates/` key prefix as the macOS lane — isolation between dev and prod comes from the per-`.env` bucket (`clingfy-labs-dev-releases-422661068605` / `clingfy-labs-prod-releases-422661068605`), exactly like macOS:
 
 ```
 updates/
@@ -102,14 +104,23 @@ updates/
 - Flutter (with the Windows desktop toolchain / Visual Studio Build Tools)
 - Inno Setup 6.3+ (`winget install JRSoftware.InnoSetup`)
 - Windows 10/11 SDK `signtool.exe` (only when signing material is configured)
-- Azure CLI (`az`) logged in via `az login` (publish/smoke steps only)
+- AWS CLI v2 with credentials for the releases bucket (publish/smoke steps only; CI assumes the release role via GitHub OIDC, no stored keys)
+- Azure CLI (`az`) on PATH — `04_publish_azure.ps1` still hard-fails when the binary is missing, before it dispatches on the provider; no `az login` is needed on the aws path
 - `sentry-cli` (symbol upload step only; non-blocking when absent)
 
 ## Environment and credential categories
 
-Values are read from the process environment first; the channel's `.env` file is a fallback for the Azure publishing settings and (via `upload_symbols.ps1 -EnvFile`) the Sentry settings. Environment variables always win. Signing material is environment-only — never read from `.env` files.
+Values are read from the process environment first; the channel's `.env` file is a fallback for the publishing settings (`AWS_*` on the aws provider, `AZ_*` only on the legacy azure one) and (via `upload_symbols.ps1 -EnvFile`) the Sentry settings. Environment variables always win. Signing material is environment-only — never read from `.env` files.
 
-### Azure publishing and CDN (from `.env.<channel>` or environment)
+### Publishing and CDN (from `.env.<channel>` or environment)
+
+`RELEASE_STORAGE_PROVIDER` picks the backend (defaults: `aws` for prod and dev, `azure` for `local`). On `aws` all three of these are required and validated at startup, before any bytes move:
+
+- `AWS_RELEASES_BUCKET` — where the bytes go
+- `AWS_PUBLIC_ENDPOINT` — where they are served from (e.g. `clingfy.com/updates`), baked into every `latest-windows.json` URL
+- `AWS_CLOUDFRONT_DISTRIBUTION_ID` — the invalidation target, without which the republished feed stays stale at the edge
+
+Legacy `azure` provider (`local` channel only — the storage accounts behind these keys were deleted 2026-09-15, so the values still sitting in `.env.dev` / `.env.prod` are dead):
 
 - `AZ_STORAGE_ACCOUNT`
 - `AZ_RESOURCE_GROUP`
@@ -138,19 +149,22 @@ The PFX route hands the password to signtool as a process argument, where comman
 
 ## CI job shape
 
-Nothing in-repo invokes this workflow (the macOS release is likewise driven out-of-repo with secure variables). When wiring a pipeline, the Windows job needs a `windows-2022`-class agent and reduces to:
+Two GitHub Actions workflows drive this lane: `.github/workflows/release-windows-dev.yml` (push to `develop` on Windows-relevant paths, gated on the repo variable `GH_RELEASE_LANES_ENABLED == 'true'`) and `.github/workflows/release-windows-prod.yml` (manual dispatch, `release/*` branches only, and never run as of 2026-09-20). Both run on `windows-latest`, install Inno Setup with `choco install innosetup`, and authenticate to AWS with GitHub OIDC (`aws-actions/configure-aws-credentials@v4` + `vars.AWS_RELEASE_ROLE_ARN`, which is scoped per environment) — no stored cloud keys. The shape is:
 
 ```yaml
 steps:
-  - pwsh: az login --service-principal ... # or federated identity
-  - pwsh: winget install JRSoftware.InnoSetup --silent
-  - pwsh: Import-PfxCertificate -FilePath $(winSignCert.secureFilePath) `
+  - uses: aws-actions/configure-aws-credentials@v4   # GitHub OIDC, no stored keys
+    with:
+      role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+      aws-region: ${{ vars.AWS_REGION || 'eu-west-1' }}
+  - pwsh: choco install innosetup -y --no-progress   # not preinstalled on windows-latest
+  - pwsh: Import-PfxCertificate -FilePath $env:WIN_SIGN_CERT_PFX `   # signing is NOT wired in CI yet (D3: prod ships unsigned)
       -CertStoreLocation Cert:\CurrentUser\My `
-      -Password (ConvertTo-SecureString $(winSignCertPassword) -AsPlainText -Force)
+      -Password (ConvertTo-SecureString $env:WIN_SIGN_CERT_PASSWORD -AsPlainText -Force)   # injected from a GitHub secret, not an ADO $(...) macro
   - pwsh: ops/release/windows/workflows/ci_release.ps1 -Channel prod -RequireSignature
     env:
-      WIN_SIGN_CERT_THUMBPRINT: $(winSignCertThumbprint)
-      SENTRY_AUTH_TOKEN: $(sentryAuthToken)
+      WIN_SIGN_CERT_THUMBPRINT: ${{ secrets.WIN_SIGN_CERT_THUMBPRINT }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}   # the real lanes read Sentry settings from the staged .env.<channel>
 ```
 
 Keep the Windows job separate from the macOS job — never run Windows packaging inside the macOS pipeline or vice versa.

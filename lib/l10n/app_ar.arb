@@ -921,7 +921,7 @@
   "captionsNoneYet": "لا توجد ترجمة بعد.",
   "captionsNoSpeechFound": "لم يتم العثور على كلام في هذا التسجيل.",
   "captionsUnavailableOs": "تتطلب الترجمة إصدارًا أحدث من macOS.",
-  "captionsUnavailableIntel": "تعمل الترجمة ببطء على أجهزة Mac بمعالج Intel لعدم توفر Neural Engine.",
+  "captionsUnavailableIntel": "تتطلب الترجمة جهاز Mac بمعالج Apple. أجهزة Mac بمعالج Intel لا تتوفر على Neural Engine لتشغيل نموذج الكلام.",
   "captionsUnavailableNoAudio": "لا يحتوي هذا التسجيل على صوت لتفريغه.",
   "captionsUnavailablePlatform": "الترجمة متاحة على macOS فقط.",
   "captionsUnavailableProbeFailed": "تعذّر التحقق ممّا إذا كانت الترجمات تعمل لهذا التسجيل.",

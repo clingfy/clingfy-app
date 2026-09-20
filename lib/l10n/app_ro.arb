@@ -921,7 +921,7 @@
   "captionsNoneYet": "Încă nu există subtitrări.",
   "captionsNoSpeechFound": "Nu s-a găsit vorbire în această înregistrare.",
   "captionsUnavailableOs": "Subtitrările necesită o versiune mai nouă de macOS.",
-  "captionsUnavailableIntel": "Subtitrările rulează lent pe Mac-urile Intel, care nu au Neural Engine.",
+  "captionsUnavailableIntel": "Subtitrările necesită un Mac cu procesor Apple. Mac-urile Intel nu au Neural Engine pentru a rula modelul de vorbire.",
   "captionsUnavailableNoAudio": "Această înregistrare nu are sunet de transcris.",
   "captionsUnavailablePlatform": "Subtitrările sunt disponibile doar pe macOS.",
   "captionsUnavailableProbeFailed": "Nu s-a putut verifica dacă subtitrările pot rula pentru această înregistrare.",
