@@ -917,7 +917,15 @@ final class InlineCameraRenderer {
     /// A closure rather than caption types so this pipeline stays unaware of
     /// them; the exporter owns cue lookup and placement. `nil` = no overlay,
     /// which is the byte-for-byte-unchanged path.
-    composedOverlay: ((CIImage) -> CIImage)? = nil,
+    ///
+    /// DELIBERATELY NOT DEFAULTED. It used to default to nil, so deleting the
+    /// argument at the one call site compiled clean and silently produced
+    /// caption-free camera exports, reported as a successful export. Passing
+    /// `nil` is still fine -- it just has to be said out loud, which turns that
+    /// deletion from a silent behaviour change into a compile error. A test can
+    /// only catch the regression after someone writes it; this cannot be
+    /// skipped.
+    composedOverlay: ((CIImage) -> CIImage)?,
     to outputPixelBuffer: CVPixelBuffer
   ) {
     let rawScreenImage = VideoColorPipeline.sourceImage(
