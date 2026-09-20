@@ -383,6 +383,65 @@ void main() {
       }
     });
 
+    test('a cue too long for the frame is reported as shortened', () async {
+      // `layOut` caps at three lines with an ellipsis, so an over-long cue is
+      // drawn cut off while the .srt/.vtt beside it keeps the whole sentence.
+      // Nothing read `didExceedMaxLines`, so the two disagreed silently.
+      const r = CaptionRasterizer();
+      final manifest = await r.rasterize(
+        captions: [
+          cue('short', 'Hi', start: 0, end: 1000),
+          cue('long', 'a very long caption ' * 20, start: 2000, end: 3000),
+        ],
+        // Portrait is the worst case: the font scales with canvas HEIGHT while
+        // the wrap box is a fraction of canvas WIDTH, so the two axes work
+        // against each other.
+        videoSize: const Size(1080, 1920),
+        directory: tempDir,
+      );
+
+      expect(manifest.shortenedCueIds, ['long']);
+      expect(
+        manifest.entries.length,
+        2,
+        reason: 'both still burn in — shortening is a warning, not a drop',
+      );
+    });
+
+    test('cues that fit report nothing shortened', () async {
+      const r = CaptionRasterizer();
+      final manifest = await r.rasterize(
+        captions: [cue('c', 'Hello', start: 0, end: 1000)],
+        videoSize: const Size(1920, 1080),
+        directory: tempDir,
+      );
+
+      expect(manifest.shortenedCueIds, isEmpty);
+    });
+
+    test('a cached bitmap is still checked for overflow', () async {
+      // The bitmap name is a hash of text + canvas, so a second pass skips the
+      // render. Whether the TEXT fits the CANVAS does not depend on whether a
+      // PNG for it happens to be on disk already.
+      const r = CaptionRasterizer();
+      final cues = [cue('long', 'a very long caption ' * 20, start: 0, end: 1)];
+      const size = Size(1080, 1920);
+
+      final first = await r.rasterize(
+        captions: cues,
+        videoSize: size,
+        directory: tempDir,
+      );
+      final second = await r.rasterize(
+        captions: cues,
+        videoSize: size,
+        directory: tempDir,
+      );
+
+      expect(first.shortenedCueIds, ['long']);
+      expect(second.shortenedCueIds, ['long']);
+    });
+
     test('written files really are PNGs', () async {
       const r = CaptionRasterizer();
       final manifest = await r.rasterize(

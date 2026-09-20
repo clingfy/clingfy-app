@@ -1930,6 +1930,11 @@ class AppLocalizationsAr extends AppLocalizations {
       'تم التصدير، لكن تعذّر إضافة أي ترجمات:';
 
   @override
+  String exportSavedWithShortenedSubtitles(int count) {
+    return 'تم التصدير. $count من الترجمات كانت أطول من إطار الفيديو وتمّ اختصارها:';
+  }
+
+  @override
   String get open => 'فتح';
 
   @override
