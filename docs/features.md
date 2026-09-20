@@ -84,7 +84,8 @@ there, so there is nothing to ship).
 | Drag to reorder | Rearrange clips on the timeline. | ✅ | ✅ |
 | Smooth edited playback | Preview plays through cuts and reorders with no stalls. | ✅ | ✅ |
 | WYSIWYG export bake | Cuts export exactly as previewed — zoom, cursor, camera, and audio stay in sync. | ✅ | ✅ |
-| Undo / redo | Full edit history for clip and color edits. | ✅ | ✅ |
+| Undo / redo | Full edit history for clip, color and subtitle edits. | ✅ | ✅ |
+| Auto-subtitles | On-device transcription (WhisperKit), an editable cue list, captions in the live preview, and burn-in or `.srt` / `.vtt` sidecars on export. | ✅ | — (reports unavailable with a reason) |
 | Color correction | One-click Auto enhance, plus manual exposure / contrast / saturation / temperature / tint. Live preview + export bake. | ✅ | ✅ |
 | Auto-subtitles | On-device transcription (WhisperKit), a cue-level editor with undo/redo, captions in the live preview, and four destinations: Off / Burn in / File / Both, writing `.srt` and `.vtt` beside the video. Requires Apple silicon (v1.1.0). | ✅ | — |
 
