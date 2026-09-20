@@ -349,6 +349,7 @@ jobs:
             -only-testing:RunnerTests/CaptionAudioDecoderTests \
             -only-testing:RunnerTests/CaptionBurnInSeatTests \
             -only-testing:RunnerTests/CaptionCueTrackTests \
+            -only-testing:RunnerTests/CaptionReflowParityTests \
             -only-testing:RunnerTests/CaptionModelStoreTests \
             -only-testing:RunnerTests/CaptionOverlayRendererTests \
             -only-testing:RunnerTests/CaptionPreviewTrackTests \
