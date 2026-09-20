@@ -192,7 +192,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     options: TranscriptionOptions,
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
-  ) throws -> [TranscribedSegment] {
+  ) throws -> TranscriptionOutcome {
     // Held across the whole run, including the model load, so a delete cannot
     // land between loading the weights and reading them.
     setEngineBusy(true)
@@ -269,9 +269,9 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     options: TranscriptionOptions,
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
-  ) throws -> [TranscribedSegment] {
+  ) throws -> TranscriptionOutcome {
     let semaphore = DispatchSemaphore(value: 0)
-    var result: Result<[TranscribedSegment], Error> = .failure(TranscriptionError.cancelled)
+    var result: Result<TranscriptionOutcome, Error> = .failure(TranscriptionError.cancelled)
 
     let work = Task { [self] in
       do {
@@ -303,7 +303,13 @@ final class WhisperKitTranscriber: CaptionTranscriber {
           decodeOptions: Self.decodingOptions(from: options)
         )
         let merged = TranscriptionUtilities.mergeTranscriptionResults(raw)
-        result = .success(Self.map(merged.segments))
+        // `merged.language` is what the decoder actually used: the forced
+        // language when `options.language` was set, or the one it detected from
+        // the opening window when it was not. Empty rather than absent is how
+        // an unset field arrives, and an empty code is not a language.
+        let decoded = merged.language.isEmpty ? nil : merged.language
+        result = .success(
+          TranscriptionOutcome(segments: Self.map(merged.segments), detectedLanguage: decoded))
       } catch is CancellationError {
         result = .failure(TranscriptionError.cancelled)
       } catch {

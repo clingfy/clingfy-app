@@ -26,7 +26,7 @@ final class TranscriptionJobTests: XCTestCase {
       options: TranscriptionOptions,
       progress: @escaping (TranscriptionProgress) -> Void,
       isCancelled: @escaping () -> Bool
-    ) throws -> [TranscribedSegment] {
+    ) throws -> TranscriptionOutcome {
       transcribedFiles.append(url.lastPathComponent)
       optionsUsed.append(options)
       for step in progressSteps {
@@ -34,8 +34,16 @@ final class TranscriptionJobTests: XCTestCase {
         progress(.transcribing(step))
       }
       if isCancelled() { throw TranscriptionError.cancelled }
-      return byFile[url.lastPathComponent] ?? []
+      return TranscriptionOutcome(
+        segments: byFile[url.lastPathComponent] ?? [],
+        detectedLanguage: languageByFile[url.lastPathComponent]
+      )
     }
+
+    /// Per-file so a test can make the mic pass and the system pass disagree,
+    /// which is the case the job's "first pass that can name one wins" rule is
+    /// about.
+    var languageByFile: [String: String] = [:]
   }
 
   private func seg(
@@ -188,12 +196,12 @@ final class TranscriptionJobTests: XCTestCase {
       "system.m4a": [seg(5000, 7000, "from the system")],
     ]
     let job = TranscriptionJob(transcriber: fake)
-    let cues = try job.run(
+    let outcome = try job.run(
       sources: .init(micURL: url("mic.m4a"), systemURL: url("system.m4a"), embeddedURL: nil),
       progress: { _ in }, isCancelled: { false })
 
     XCTAssertEqual(fake.transcribedFiles.sorted(), ["mic.m4a", "system.m4a"])
-    XCTAssertEqual(cues.count, 2)
+    XCTAssertEqual(outcome.captions.count, 2)
   }
 
   func testAppliesTheStrictProfileToSystemAudioOnly() throws {
@@ -213,12 +221,12 @@ final class TranscriptionJobTests: XCTestCase {
     let fake = FakeTranscriber()
     fake.byFile = ["screen.mov": [seg(0, 2000, "from the premix")]]
     let job = TranscriptionJob(transcriber: fake)
-    let cues = try job.run(
+    let outcome = try job.run(
       sources: .init(micURL: nil, systemURL: nil, embeddedURL: url("screen.mov")),
       progress: { _ in }, isCancelled: { false })
 
     XCTAssertEqual(fake.transcribedFiles, ["screen.mov"])
-    XCTAssertEqual(cues.first?.source, .mic, "that backend never captured system audio")
+    XCTAssertEqual(outcome.captions.first?.source, .mic, "that backend never captured system audio")
   }
 
   func testSidecarsWinOverEmbeddedAudioWhenBothExist() throws {
@@ -232,10 +240,10 @@ final class TranscriptionJobTests: XCTestCase {
 
   func testNoAudioAtAllYieldsNoCuesRatherThanThrowing() throws {
     let job = TranscriptionJob(transcriber: FakeTranscriber())
-    let cues = try job.run(
+    let outcome = try job.run(
       sources: .init(micURL: nil, systemURL: nil, embeddedURL: nil),
       progress: { _ in }, isCancelled: { false })
-    XCTAssertTrue(cues.isEmpty)
+    XCTAssertTrue(outcome.captions.isEmpty)
   }
 
   // MARK: - Progress and cancellation
