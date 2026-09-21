@@ -9,10 +9,15 @@ enum CaptionsUnavailableReason {
   /// Below the transcription engine's minimum macOS.
   unsupportedOs('unsupportedOS'),
 
-  /// Intel Mac. The engine builds there but has no Neural Engine, so it falls
-  /// back to CPU and is slow. Deliberately distinct from a hard block — the
-  /// honest message is "this will take a while", not "you cannot".
-  intelSlowPath('intelSlowPath'),
+  /// Intel Mac. The engine needs the Neural Engine, so subtitles are not
+  /// available at all here.
+  ///
+  /// This comment used to say the opposite — that Intel fell back to a slow
+  /// CPU path and the honest message was "this will take a while". It never
+  /// did: the resolver returns `.unavailable`, and an Intel Mac gets no
+  /// Generate button. That misreading reached users twice, as UI copy and as
+  /// release notes, before the name was fixed.
+  requiresAppleSilicon('requiresAppleSilicon'),
 
   /// The recording has no decodable audio at all. Nothing to transcribe.
   noAudio('noAudio'),

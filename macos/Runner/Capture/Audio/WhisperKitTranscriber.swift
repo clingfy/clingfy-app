@@ -181,7 +181,10 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       // WhisperKit builds on x86_64 but there is no Neural Engine, so compute
       // falls back to CPU+GPU. That is slow rather than broken — surfaced as a
       // distinct reason so the UI can warn rather than refuse.
-      return .unavailable(reason: "intelSlowPath")
+      // Same wire value as `CaptionsCapability.Reason.requiresAppleSilicon`.
+      // A literal rather than the enum because this type does not import it;
+      // the pair is pinned by `CaptionsCapabilityTests`.
+      return .unavailable(reason: "requiresAppleSilicon")
     #endif
   }
 

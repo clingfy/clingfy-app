@@ -37,12 +37,12 @@ final class CaptionsCapabilityTests: XCTestCase {
   func testIntelIsReportedAsItsOwnReasonNotAsNoAudio() {
     let capability = resolve(appleSilicon: false, mic: true)
     XCTAssertEqual(
-      capability.reason, .intelSlowPath,
-      "Intel is a slow path, not a missing recording — the message differs")
+      capability.reason, .requiresAppleSilicon,
+      "Intel is unsupported, not a missing recording — the message differs")
   }
 
   func testIntelOutranksMissingAudio() {
-    XCTAssertEqual(resolve(appleSilicon: false).reason, .intelSlowPath)
+    XCTAssertEqual(resolve(appleSilicon: false).reason, .requiresAppleSilicon)
   }
 
   // MARK: - Recording contents
@@ -137,10 +137,10 @@ final class CaptionsCapabilityTests: XCTestCase {
   }
 
   func testUnavailablePayloadCarriesAMachineReadableReason() {
-    let payload = CaptionsCapability.unavailable(.intelSlowPath).toFlutter()
+    let payload = CaptionsCapability.unavailable(.requiresAppleSilicon).toFlutter()
     XCTAssertEqual(payload["available"] as? Bool, false)
     XCTAssertEqual(
-      payload["reason"] as? String, "intelSlowPath",
+      payload["reason"] as? String, "requiresAppleSilicon",
       "the UI localises from this, so it must be stable and not a message")
   }
 
@@ -148,7 +148,7 @@ final class CaptionsCapabilityTests: XCTestCase {
     // These strings cross the bridge and get localised on the Dart side.
     // Changing one is a breaking change, not a rename.
     XCTAssertEqual(CaptionsCapability.Reason.unsupportedOS.rawValue, "unsupportedOS")
-    XCTAssertEqual(CaptionsCapability.Reason.intelSlowPath.rawValue, "intelSlowPath")
+    XCTAssertEqual(CaptionsCapability.Reason.requiresAppleSilicon.rawValue, "requiresAppleSilicon")
     XCTAssertEqual(CaptionsCapability.Reason.noAudio.rawValue, "noAudio")
     XCTAssertEqual(
       CaptionsCapability.Reason.platformNotSupported.rawValue, "platformNotSupported")
