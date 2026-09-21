@@ -7,7 +7,7 @@
 # Fixed sequence, no toggles:
 #
 #   version guard -> build+stage -> sign app -> package -> sign installer ->
-#   publish Azure -> Sentry symbols (non-blocking) -> smoke test
+#   publish -> Sentry symbols (non-blocking) -> smoke test
 #
 # Differences from the macOS CI workflow, on purpose:
 #   * no restore-history step — there is no Sparkle delta/feed history to
@@ -18,7 +18,7 @@
 # Like the macOS lane, nothing in-repo invokes this: the release pipeline
 # runs out-of-repo with credentials injected as secure variables (see
 # ops/release/windows/README.md for the expected CI job shape). It works
-# identically on a maintainer machine after `az login`.
+# identically on a maintainer machine after `aws sso login`.
 #
 # Signing follows decision D3: unsigned is allowed for the private beta, so
 # the default only warns. Pass -RequireSignature once a certificate exists.

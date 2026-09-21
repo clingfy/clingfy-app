@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # aws.sh
 #
-# S3 counterpart to lib/azure.sh, written to the SAME call signatures so the publish scripts can
+# The storage backend for every published release. It was written to the same call signatures as
+# the Azure helpers it replaced (lib/azure.sh, deleted 2026-09-21) so the publish scripts can
 # dispatch on RELEASE_STORAGE_PROVIDER without reshaping any call site.
 #
 # Key mapping is 1:1 with the Azure layout and is not a convention we invented — it is what
