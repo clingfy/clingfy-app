@@ -154,19 +154,13 @@ function Find-SignTool {
 }
 
 # --- Context ----------------------------------------------------------------------
-# The Azure settings that exist in the real .env files. Container/folder names
-# are defaults below (same values as lib/env.sh), not env-file keys.
-#
-# Split into two groups: the settings every publish needs (blob upload target +
-# public URL composition), and the settings used ONLY by the Front Door cache
-# purge. The purge group is optional — dev and prod are blob-direct (no Front
-# Door) as of 2026-07, so those keys are empty and the purge is skipped. This
-# mirrors the macOS lane's publish_release.sh Front Door guard.
-$script:AzureRequiredKeys = @(
+# Legacy Azure keys. Nothing validates or reads these any more -- the azure
+# provider arm was deleted 2026-09-21 -- but they are still LOADED from the .env
+# file so that a file carrying them does not trip the unknown-key handling, and
+# so an operator reading a stale .env sees them accounted for. Drop the list once
+# the keys are gone from every .env on every machine.
+$script:AzureLegacyKeys = @(
   'AZ_STORAGE_ACCOUNT',
-  'AZ_CDN_ENDPOINT'
-)
-$script:AzurePurgeKeys = @(
   'AZ_RESOURCE_GROUP',
   'AZ_CDN_PROFILE',
   'AZ_FRONTDOOR_ENDPOINT_NAME'
@@ -310,7 +304,7 @@ function Initialize-WindowsReleaseContext {
 # (blob-direct), they stay empty and 04_publish.ps1 skips the purge.
 function Import-AzurePublishSettings([pscustomobject]$Context) {
   Import-DotenvFallback $Context.EnvFile `
-    ($script:AzureRequiredKeys + $script:AzurePurgeKeys + $script:StorageProviderKeys)
+    ($script:AzureLegacyKeys + $script:StorageProviderKeys)
 
   # Provider first: it decides WHICH settings are required. Mirrors configure_storage_provider()
   # in ops/release/lib/env.sh — prod and dev publish to AWS, and `local` gets 'none' rather than a

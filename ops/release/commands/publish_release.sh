@@ -316,17 +316,8 @@ if [[ "$RELEASE_STORAGE_PROVIDER" == "aws" ]]; then
     "$AWS_CLOUDFRONT_DISTRIBUTION_ID" \
     "/updates/${FEED_PATH}" \
     "/updates/${AZ_BINARIES_FOLDER}/${FINAL_DMG_URL_NAME}"
-elif [[ -n "$AZ_FRONTDOOR_ENDPOINT_NAME" ]]; then
-  log_info "Purging Azure Front Door cache"
-  purge_frontdoor_paths \
-    "$AZ_RESOURCE_GROUP" \
-    "$AZ_CDN_PROFILE" \
-    "$AZ_FRONTDOOR_ENDPOINT_NAME" \
-    "$AZ_CDN_ENDPOINT" \
-    "/${FEED_PATH}" \
-    "/${AZ_BINARIES_FOLDER}/${FINAL_DMG_NAME}"
 else
-  log_info "No Front Door configured (blob-direct); skipping cache purge"
+  log_info "No CDN invalidation for provider ${RELEASE_STORAGE_PROVIDER}; skipping"
 fi
 
 log_info "Smoke testing published assets"
