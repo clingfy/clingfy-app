@@ -387,4 +387,99 @@ void main() {
 
     expect(changedValue, 'second');
   });
+
+  testWidgets('a null-valued row is selectable and reports null', (
+    tester,
+  ) async {
+    // THE REGRESSION THIS FILE EXISTS FOR. `PopupMenuButton` routes a null
+    // result to `onCanceled`, because a DISMISSED menu also completes with
+    // null -- it cannot tell them apart. So while the menu was keyed on item
+    // VALUES, any row whose value was null highlighted, closed the menu, and
+    // never fired `onChanged`: silently dead.
+    //
+    // It shipped that way. The window picker's "Select an app window" row did
+    // nothing, and the captions language picker had to carry a sentinel to
+    // dodge it. Keying the menu on the item's index fixes every call site at
+    // once; this pins it so the "simplification" back to values cannot land
+    // quietly.
+    var called = false;
+    String? reported = 'untouched';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildLightTheme(),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 260,
+              child: app.PlatformDropdown<String?>(
+                value: 'picked',
+                onChanged: (value) {
+                  called = true;
+                  reported = value;
+                },
+                items: const [
+                  app.PlatformMenuItem<String?>(
+                    value: null,
+                    label: 'Select something',
+                  ),
+                  app.PlatformMenuItem<String?>(
+                    value: 'picked',
+                    label: 'Picked',
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(app.PlatformDropdown.fieldKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Select something').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      called,
+      isTrue,
+      reason: 'the null-valued row never fired onChanged -- it is dead again',
+    );
+    expect(reported, isNull, reason: 'it must report its own value, null');
+  });
+
+  testWidgets('two rows sharing a value still resolve to the tapped one', (
+    tester,
+  ) async {
+    // Keying on index rather than value means duplicates are addressable.
+    // Keying on value could not tell these apart at all.
+    var tapped = -1;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildLightTheme(),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 260,
+              child: app.PlatformDropdown<String>(
+                value: 'same',
+                onChanged: (_) => tapped += 1,
+                items: const [
+                  app.PlatformMenuItem<String>(value: 'same', label: 'First'),
+                  app.PlatformMenuItem<String>(value: 'same', label: 'Second'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(app.PlatformDropdown.fieldKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Second').last);
+    await tester.pumpAndSettle();
+
+    expect(tapped, 0, reason: 'onChanged fired exactly once');
+  });
 }

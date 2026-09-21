@@ -180,23 +180,21 @@ class PostCaptionsSection extends StatelessWidget {
             // means an older native half, and a language picker that cannot
             // name a language is worse than none.
             if (info.languages.isNotEmpty) ...[
-              PlatformDropdown<String>(
+              PlatformDropdown<String?>(
                 key: const Key('captions_language'),
                 labelText: l10n.captionsLanguage,
-                // SENTINEL, NOT NULL, and this is load-bearing. A
-                // `PopupMenuItem` with a null value pops the route with null,
-                // which is indistinguishable from the menu being dismissed --
-                // so `onSelected` never fires and the row is silently
-                // unclickable. Auto therefore carries `_autoLanguageValue` and
-                // is mapped back to null at the boundary below.
-                value: language ?? _autoLanguageValue,
+                // Auto carries a plain null. `PlatformDropdown` keys its menu
+                // on the item's index, so a null-valued row is selectable like
+                // any other -- this used to need a sentinel, because keying on
+                // the value made such a row silently unclickable.
+                value: language,
                 items: [
-                  PlatformMenuItem<String>(
-                    value: _autoLanguageValue,
+                  PlatformMenuItem<String?>(
+                    value: null,
                     label: l10n.captionsLanguageAuto,
                   ),
                   for (final option in info.languages)
-                    PlatformMenuItem<String>(
+                    PlatformMenuItem<String?>(
                       value: option.code,
                       // The engine's names are lowercase English; the UI is
                       // where that becomes presentable.
@@ -205,9 +203,7 @@ class PostCaptionsSection extends StatelessWidget {
                 ],
                 onChanged: isGenerating || isProcessing
                     ? null
-                    : (selected) => onLanguageChanged(
-                        selected == _autoLanguageValue ? null : selected,
-                      ),
+                    : onLanguageChanged,
               ),
               const SizedBox(height: AppSidebarTokens.rowGap),
             ],
@@ -663,15 +659,6 @@ class _CueRowState extends State<_CueRow> {
     return TextDirection.ltr;
   }
 }
-
-/// The value the Auto row carries.
-///
-/// Not null, deliberately: a `PopupMenuItem` whose value is null pops its route
-/// with null, which the menu cannot tell apart from being dismissed, so
-/// `onSelected` never fires and the row looks broken. Any non-null sentinel
-/// works; this one cannot collide with a Whisper code because codes are
-/// two-letter lowercase.
-const String _autoLanguageValue = '__auto__';
 
 /// The engine hands back lowercase English names ("english", "arabic").
 String _displayLanguage(String name) =>
