@@ -4,18 +4,29 @@
 /// dart-define via `--dart-define-from-file`).
 ///
 /// The release pipeline (ops/release/windows/04_publish.ps1) publishes
-/// `latest-windows.json` under `downloads/windows/` on the channel's
-/// AZ_CDN_ENDPOINT domain. Dev and prod builds carry different domains in
-/// their .env files, which is what keeps a dev build from ever seeing the
-/// prod feed.
+/// `latest-windows.json` under `downloads/windows/` on the channel's public
+/// host. Dev and prod builds carry different hosts in their .env files, which
+/// is what keeps a dev build from ever seeing the prod feed.
 library;
 
-/// The channel's Front Door domain, e.g.
-/// `clingfy-downloads-dev-xxxx.z02.azurefd.net`. Empty when the build ran
-/// without the .env defines (bare `flutter test`, fresh clones).
+/// The channel's public host + path prefix, e.g. `clingfy.com/updates` on prod
+/// and `dev.clingfy.com/updates` on dev. Empty when the build ran without the
+/// .env defines (bare `flutter test`, fresh clones).
+///
+/// Reads the provider-neutral key first and falls back to the historical
+/// AZ_CDN_ENDPOINT. That fallback is the whole safety of this rename: this value
+/// is COMPILED INTO THE INSTALLER, and a build that saw neither key would
+/// produce an empty host, which windowsUpdateFeedUrl() turns into a null feed
+/// URL -- an installer whose update check can never succeed, shipped by a lane
+/// that still goes green. Nesting the old key as the default means the code can
+/// land before, after, or between the .env changes and always resolve.
+///
+/// Remove the fallback only once both .env files and both ENV_*_B64 secrets
+/// carry CLINGFY_UPDATE_FEED_HOST, and a Windows build has been confirmed to
+/// report the right feed URL.
 const String windowsUpdateCdnEndpointDefine = String.fromEnvironment(
-  'AZ_CDN_ENDPOINT',
-  defaultValue: '',
+  'CLINGFY_UPDATE_FEED_HOST',
+  defaultValue: String.fromEnvironment('AZ_CDN_ENDPOINT', defaultValue: ''),
 );
 
 /// This build's release channel, matched against the feed's `channel`
@@ -45,7 +56,7 @@ String? windowsUpdateFeedUrl({required String cdnEndpoint}) {
   return 'https://$endpoint/downloads/windows/latest-windows.json';
 }
 
-/// The feed URL for this build, or null when AZ_CDN_ENDPOINT was not
+/// The feed URL for this build, or null when no feed host was
 /// provided at build time.
 String? defaultWindowsUpdateFeedUrl() =>
     windowsUpdateFeedUrl(cdnEndpoint: windowsUpdateCdnEndpointDefine);
