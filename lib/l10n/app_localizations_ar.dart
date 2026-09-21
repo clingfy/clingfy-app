@@ -2741,6 +2741,12 @@ class AppLocalizationsAr extends AppLocalizations {
   String get captionsTranscribing => 'جارٍ التفريغ…';
 
   @override
+  String get captionsLanguage => 'لغة الكلام';
+
+  @override
+  String get captionsLanguageAuto => 'اكتشاف تلقائي';
+
+  @override
   String get captionsSourceMic => 'الميكروفون';
 
   @override

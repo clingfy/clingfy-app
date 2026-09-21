@@ -916,6 +916,8 @@
   "captionsCancel": "إيقاف",
   "captionsPreparing": "جارٍ التحضير…",
   "captionsTranscribing": "جارٍ التفريغ…",
+  "captionsLanguage": "لغة الكلام",
+  "captionsLanguageAuto": "اكتشاف تلقائي",
   "captionsSourceMic": "الميكروفون",
   "captionsSourceSystem": "صوت الشاشة",
   "captionsNoneYet": "لا توجد ترجمة بعد.",

@@ -931,6 +931,8 @@
   "captionsCancel": "Stop",
   "captionsPreparing": "Preparing…",
   "captionsTranscribing": "Transcribing…",
+  "captionsLanguage": "Spoken language",
+  "captionsLanguageAuto": "Detect automatically",
   "captionsSourceMic": "Microphone",
   "captionsSourceSystem": "Screen audio",
   "captionsNoneYet": "No subtitles yet.",

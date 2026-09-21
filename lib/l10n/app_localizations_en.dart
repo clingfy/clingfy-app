@@ -2754,6 +2754,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get captionsTranscribing => 'Transcribing…';
 
   @override
+  String get captionsLanguage => 'Spoken language';
+
+  @override
+  String get captionsLanguageAuto => 'Detect automatically';
+
+  @override
   String get captionsSourceMic => 'Microphone';
 
   @override

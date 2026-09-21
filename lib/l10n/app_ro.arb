@@ -916,6 +916,8 @@
   "captionsCancel": "Oprește",
   "captionsPreparing": "Se pregătește…",
   "captionsTranscribing": "Se transcrie…",
+  "captionsLanguage": "Limba vorbită",
+  "captionsLanguageAuto": "Detectare automată",
   "captionsSourceMic": "Microfon",
   "captionsSourceSystem": "Sunetul ecranului",
   "captionsNoneYet": "Încă nu există subtitrări.",
