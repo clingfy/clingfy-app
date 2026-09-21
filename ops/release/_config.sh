@@ -11,8 +11,6 @@ source "$SCRIPT_ROOT/lib/context.sh"
 source "$SCRIPT_ROOT/lib/env.sh"
 # shellcheck source=ops/release/lib/apple.sh
 source "$SCRIPT_ROOT/lib/apple.sh"
-# shellcheck source=ops/release/lib/azure.sh
-source "$SCRIPT_ROOT/lib/azure.sh"
 # shellcheck source=ops/release/lib/aws.sh
 source "$SCRIPT_ROOT/lib/aws.sh"
 # shellcheck source=ops/release/lib/sparkle.sh
