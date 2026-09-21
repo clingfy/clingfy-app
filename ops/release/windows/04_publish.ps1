@@ -47,7 +47,7 @@ param(
 
 . (Join-Path $PSScriptRoot '_config.ps1')
 
-Write-Step "Publishing ($Channel -> $($Ctx.StorageProvider))"
+Write-Step "Publishing ($Channel)"
 $initArgs = @{ Channel = $Channel }
 if ($EnvFile) { $initArgs.EnvFile = $EnvFile }
 $Ctx = Initialize-WindowsReleaseContext @initArgs
