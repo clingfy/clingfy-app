@@ -935,11 +935,9 @@ class PostProcessingController extends ChangeNotifier {
               ) ??
               CaptionTrack(
                 captions: captions,
-                // Falls back to the constructor default only when the engine
-                // could not name a language. That default is still `'en'`, so
-                // an undetected track keeps claiming English -- see #447; the
-                // field wants to be nullable, which is a schema change.
-                language: detectedLanguage ?? CaptionTrack.defaultLanguage,
+                // Null when the engine could not say, and that is written as
+                // absent rather than guessed.
+                language: detectedLanguage,
               ),
         );
       }),
