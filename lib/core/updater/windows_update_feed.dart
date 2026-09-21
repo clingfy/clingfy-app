@@ -13,20 +13,19 @@ library;
 /// and `dev.clingfy.com/updates` on dev. Empty when the build ran without the
 /// .env defines (bare `flutter test`, fresh clones).
 ///
-/// Reads the provider-neutral key first and falls back to the historical
-/// AZ_CDN_ENDPOINT. That fallback is the whole safety of this rename: this value
-/// is COMPILED INTO THE INSTALLER, and a build that saw neither key would
-/// produce an empty host, which windowsUpdateFeedUrl() turns into a null feed
-/// URL -- an installer whose update check can never succeed, shipped by a lane
-/// that still goes green. Nesting the old key as the default means the code can
-/// land before, after, or between the .env changes and always resolve.
+/// COMPILED INTO THE INSTALLER, and the only source for it. A build that does
+/// not carry this define produces an empty host, which windowsUpdateFeedUrl()
+/// turns into a null feed URL -- an installer whose update check can never
+/// succeed, shipped by a lane that still reports success, because 05_smoke.ps1
+/// verifies AWS_PUBLIC_ENDPOINT rather than the value inside the binary. Both
+/// .env files and both ENV_*_B64 secrets must define it.
 ///
-/// Remove the fallback only once both .env files and both ENV_*_B64 secrets
-/// carry CLINGFY_UPDATE_FEED_HOST, and a Windows build has been confirmed to
-/// report the right feed URL.
+/// Until 2026-09-21 this fell back to AZ_CDN_ENDPOINT. That key is gone from the
+/// env files and from both secrets, verified in CI before the fallback was
+/// dropped, so nothing reads it any more.
 const String windowsUpdateCdnEndpointDefine = String.fromEnvironment(
   'CLINGFY_UPDATE_FEED_HOST',
-  defaultValue: String.fromEnvironment('AZ_CDN_ENDPOINT', defaultValue: ''),
+  defaultValue: '',
 );
 
 /// This build's release channel, matched against the feed's `channel`
