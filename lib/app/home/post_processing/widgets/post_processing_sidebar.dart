@@ -148,6 +148,11 @@ class PostProcessingSidebar extends StatelessWidget {
   final CaptionsCapabilityInfo? captionsCapability;
   final List<Caption> captions;
   final bool captionsUseMic;
+
+  /// Null = Auto (let the engine detect).
+  final String? captionsLanguage;
+
+  final ValueChanged<String?> onCaptionsLanguageChanged;
   final bool captionsUseSystem;
   final bool isGeneratingCaptions;
   final bool isCancellingCaptions;
@@ -317,6 +322,8 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsCapability,
     required this.captions,
     required this.captionsUseMic,
+    required this.captionsLanguage,
+    required this.onCaptionsLanguageChanged,
     required this.captionsUseSystem,
     required this.isGeneratingCaptions,
     required this.isCancellingCaptions,
@@ -541,6 +548,8 @@ class PostProcessingSidebar extends StatelessWidget {
         capability: captionsCapability,
         captions: captions,
         useMic: captionsUseMic,
+        language: captionsLanguage,
+        onLanguageChanged: onCaptionsLanguageChanged,
         useSystem: captionsUseSystem,
         isGenerating: isGeneratingCaptions,
         isCancelling: isCancellingCaptions,

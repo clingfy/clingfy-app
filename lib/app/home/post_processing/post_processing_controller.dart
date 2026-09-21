@@ -221,6 +221,13 @@ class PostProcessingController extends ChangeNotifier {
 
   List<Caption> _captions = const [];
   bool _captionsUseMic = true;
+
+  /// The language the user asked for, or null for Auto (let the engine detect).
+  ///
+  /// Per recording rather than persisted, matching `_captionsUseMic` beside it:
+  /// the right language is a property of the recording, not a standing
+  /// preference, and a stale one silently mis-transcribes the next video.
+  String? _captionsLanguage;
   bool _captionsUseSystem = true;
 
   /// True while THIS recording is transcribing. Cleared when the controller
@@ -631,10 +638,24 @@ class PostProcessingController extends ChangeNotifier {
       _captionsCapability = info;
       _captionsUseMic = info.defaultUsesMic;
       _captionsUseSystem = info.defaultUsesSystem;
+      // Auto for each newly attached recording. Carrying the last choice over
+      // is how a one-off Arabic transcription silently mis-detects the next
+      // ten English ones.
+      _captionsLanguage = null;
       notifyListeners();
     } catch (e, st) {
       Log.e("PostProcessing", "Captions capability probe failed", e, st);
     }
+  }
+
+  /// Null = Auto. See `PostCaptionsSection` for why the menu never carries a
+  /// null value of its own.
+  String? get captionsLanguage => _captionsLanguage;
+
+  void setCaptionsLanguage(String? code) {
+    if (code == _captionsLanguage) return;
+    _captionsLanguage = code;
+    notifyListeners();
   }
 
   void setCaptionsUseMic(bool value) {
@@ -691,6 +712,9 @@ class PostProcessingController extends ChangeNotifier {
         projectPath: projectPath,
         useMic: _captionsUseMic,
         useSystem: _captionsUseSystem,
+        // Null means Auto, and the bridge omits the key entirely -- which is
+        // what makes the engine detect rather than be forced.
+        language: _captionsLanguage,
       );
       final cues = [for (final m in raw.cues) Caption.fromMap(m)];
       // What the engine actually decoded, which may be null when it could not
