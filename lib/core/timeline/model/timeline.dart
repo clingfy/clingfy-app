@@ -7,7 +7,11 @@ import 'package:clingfy/core/timeline/model/edit_track.dart';
 /// v3 added [Timeline.canvas], folding what used to be `editor_state.json`
 /// into this envelope. A v2 file has no `canvas` block and decodes to the
 /// defaults, which is exactly what a project with no canvas edits looked like.
-const int kTimelineSchemaVersion = 3;
+/// 4: `CaptionTrack.language` became nullable. Before it, every track carried
+/// `'en'` from a constructor default whether or not anything had detected a
+/// language, so a stored `'en'` at version 3 or below is not evidence of
+/// English -- see `CaptionTrack.fromMap`.
+const int kTimelineSchemaVersion = 4;
 
 /// The whole editing state for one recording: an immutable tree of tracks plus
 /// the canvas-wide color grade.

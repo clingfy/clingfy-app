@@ -22,10 +22,22 @@ sealed class EditTrack {
 
   Map<String, dynamic> toMap();
 
-  static EditTrack? fromMap(Map<dynamic, dynamic> m) => switch (m['kind']) {
+  /// [schemaVersion] is the BUNDLE's version, which only the caption track
+  /// currently needs -- it cannot tell an old defaulted `'en'` from a real
+  /// detection without knowing when the map was written. Defaulted so callers
+  /// that genuinely have no bundle (a freshly built map) keep working.
+  ///
+  /// The default is the gate rather than `kTimelineSchemaVersion` because
+  /// `timeline.dart` imports this file, and the only question asked of this
+  /// number is whether it sits below the gate. A caller with no bundle means
+  /// "current", which is what the gate value answers.
+  static EditTrack? fromMap(
+    Map<dynamic, dynamic> m, {
+    int schemaVersion = CaptionTrack.languageBecameNullableInSchema,
+  }) => switch (m['kind']) {
     'zoom' => ZoomTrack.fromMap(m),
     'clip' => ClipTrack.fromMap(m),
-    'caption' => CaptionTrack.fromMap(m),
+    'caption' => CaptionTrack.fromMap(m, schemaVersion: schemaVersion),
     'audio' => AudioTrack.fromMap(m),
     _ => null,
   };
@@ -300,26 +312,25 @@ class CaptionStyle {
 /// Caption track — an editable list of timed cues plus the source/target
 /// language and render style.
 final class CaptionTrack extends EditTrack {
-  /// What a track claims when nothing told it otherwise.
+  /// The schema version at which `language` stopped being defaulted.
   ///
-  /// Named rather than inlined so the one remaining place that GUESSES a
-  /// language is greppable. Every track used to carry this regardless of what
-  /// was spoken, because nothing passed a real value; the transcription path
-  /// now writes what the engine decoded. This is reached only when the engine
-  /// could not say, and the honest value there is null -- which is a schema
-  /// change, tracked on #447.
-  static const String defaultLanguage = 'en';
+  /// Below this, every track carried `'en'` whether or not anything detected a
+  /// language, so a stored `'en'` is a default rather than a fact and is read
+  /// back as unknown. See `fromMap`.
+  static const int languageBecameNullableInSchema = 4;
 
   const CaptionTrack({
     super.id = 'caption',
     super.enabled = true,
-    this.language = CaptionTrack.defaultLanguage,
+    this.language,
     this.sourceLanguage,
     this.style = const CaptionStyle(),
     this.captions = const <Caption>[],
   });
 
-  final String language;
+  /// Whisper language code ('en', 'ar', 'ro'), or null when nothing has
+  /// detected one. Null is a real state, not a placeholder: see `fromMap`.
+  final String? language;
   final String? sourceLanguage;
   final CaptionStyle style;
   final List<Caption> captions;
@@ -332,16 +343,43 @@ final class CaptionTrack extends EditTrack {
     'kind': 'caption',
     'id': id,
     'enabled': enabled,
-    'language': language,
+    // Omitted when unknown rather than written as a guess: a reader must be
+    // able to tell "nothing detected this" from "this is English".
+    if (language != null) 'language': language,
     if (sourceLanguage != null) 'sourceLanguage': sourceLanguage,
     'style': style.toMap(),
     'captions': [for (final c in captions) c.toMap()],
   };
 
-  factory CaptionTrack.fromMap(Map<dynamic, dynamic> m) => CaptionTrack(
+  static String? _languageFrom(Object? raw, {required int schemaVersion}) {
+    final stored = raw as String?;
+    if (stored == null || stored.isEmpty) return null;
+    // A default, not a detection. Only 'en' was ever written this way.
+    if (schemaVersion < languageBecameNullableInSchema && stored == 'en') {
+      return null;
+    }
+    return stored;
+  }
+
+  /// [schemaVersion] is the bundle's, not this build's.
+  ///
+  /// It is the only way to tell an old default from a real detection: a track
+  /// written before [languageBecameNullableInSchema] carried `'en'` from a
+  /// constructor default regardless of what was spoken, so by VALUE the two are
+  /// identical and by PROVENANCE they are not. Below that version a stored
+  /// `'en'` is read as unknown; anything else is trusted, because nothing ever
+  /// wrote a non-English default and a hand-edited bundle means what it says.
+  ///
+  /// The cost is that a genuinely English v3 recording also reads as unknown.
+  /// That is the honest answer -- it was never evidence -- and it is cheap,
+  /// because the field has no consumer that predates this.
+  factory CaptionTrack.fromMap(
+    Map<dynamic, dynamic> m, {
+    int schemaVersion = CaptionTrack.languageBecameNullableInSchema,
+  }) => CaptionTrack(
     id: m['id'] as String? ?? 'caption',
     enabled: m['enabled'] as bool? ?? true,
-    language: m['language'] as String? ?? 'en',
+    language: _languageFrom(m['language'], schemaVersion: schemaVersion),
     sourceLanguage: m['sourceLanguage'] as String?,
     style: m['style'] is Map
         ? CaptionStyle.fromMap(m['style'] as Map)
