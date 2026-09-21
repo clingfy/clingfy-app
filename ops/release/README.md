@@ -65,7 +65,7 @@ The scripts in this directory are public. Private credentials, signing assets, a
 - `commands/` - implementation scripts used by the wrapper entrypoints above
 - `workflows/ci_release.sh` - full CI release pipeline
 - `workflows/local_release.sh` - local release workflow with optional restore/publish steps
-- `lib/` - shared helpers for Apple signing/notary, AWS S3 + CloudFront (`aws.sh`), Azure blob (`azure.sh`, reachable only from the `local` channel), release context (`context.sh`), environment loading, Sparkle, and common shell helpers
+- `lib/` - shared helpers for Apple signing/notary, AWS S3 + CloudFront (`aws.sh`), release context (`context.sh`), environment loading, Sparkle, and common shell helpers
 - `docs/sparkle.md` - notes specific to the Sparkle updater integration
 - `windows/` - Windows release lane (PowerShell): build/stage, Inno Setup packaging, signing, publish (`04_publish.ps1` — same historical name, same S3/CloudFront target), smoke - see `windows/README.md`
 
