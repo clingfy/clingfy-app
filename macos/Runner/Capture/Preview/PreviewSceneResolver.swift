@@ -677,7 +677,18 @@ extension ScreenRecorderFacade {
         "embeddedOnly": capability.usesEmbeddedAudioOnly,
       ])
 
-    result(capability.toFlutter())
+    // The engine's language inventory rides the capability reply rather than a
+    // second method: the panel needs it exactly when it learns it can caption
+    // at all, so this is one round trip instead of two. Only sent when the
+    // feature is actually available -- offering a language list for a machine
+    // that cannot transcribe is an invitation to a button that does nothing.
+    var payload = capability.toFlutter()
+    if capability.isAvailable {
+      payload["languages"] = WhisperKitTranscriber.supportedLanguages.map {
+        ["code": $0.code, "name": $0.name]
+      }
+    }
+    result(payload)
   }
 
   func getRecordingSceneInfo(projectPath: String, result: @escaping FlutterResult) {

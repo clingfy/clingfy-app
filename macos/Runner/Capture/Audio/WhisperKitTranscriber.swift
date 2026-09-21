@@ -185,6 +185,27 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     #endif
   }
 
+  // MARK: - Supported languages
+
+  /// Every language the engine can decode, as `(code, englishName)` sorted by
+  /// name.
+  ///
+  /// Read from the WhisperKit module's `Constants.languages` rather than
+  /// curated here -- a top-level enum in that module, not nested under the
+  /// `WhisperKit` class. A
+  /// hand-written list is a second opinion about someone else's capability: it
+  /// goes stale on the next engine bump, and the failure is silent -- a
+  /// language the engine supports simply never appears, or one it dropped is
+  /// offered and fails at decode time. Asking the engine cannot drift.
+  ///
+  /// Names are the engine's own lowercase English keys ("english", "arabic").
+  /// Presenting them is the UI's job; this is the inventory, not the copy.
+  static var supportedLanguages: [(code: String, name: String)] {
+    Constants.languages
+      .map { (code: $0.value, name: $0.key) }
+      .sorted { $0.name < $1.name }
+  }
+
   // MARK: - Transcription
 
   func transcribe(

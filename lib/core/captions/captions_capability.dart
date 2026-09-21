@@ -58,6 +58,7 @@ class CaptionsCapabilityInfo {
     required this.available,
     this.reason,
     this.hasMicAudio = false,
+    this.languages = const [],
     this.hasSystemAudio = false,
     this.usesEmbeddedAudioOnly = false,
   });
@@ -67,6 +68,13 @@ class CaptionsCapabilityInfo {
 
   /// Whether this recording has a decodable `capture/mic.m4a`.
   final bool hasMicAudio;
+
+  /// Every language the engine can decode, `(code, name)` sorted by name.
+  ///
+  /// Comes from the engine rather than a list held here, so it cannot drift
+  /// from what the engine actually supports. Empty when the feature is
+  /// unavailable, or on a build whose native half predates this.
+  final List<CaptionLanguage> languages;
 
   /// Whether this recording has a decodable `capture/system.m4a`.
   final bool hasSystemAudio;
@@ -108,6 +116,16 @@ class CaptionsCapabilityInfo {
           ? null
           : CaptionsUnavailableReason.fromWire(map['reason'] as String?),
       hasMicAudio: map['hasMicAudio'] as bool? ?? false,
+      languages: [
+        for (final raw in (map['languages'] as List<dynamic>? ?? const []))
+          if (raw is Map &&
+              raw['code'] is String &&
+              (raw['code'] as String).isNotEmpty)
+            CaptionLanguage(
+              code: raw['code'] as String,
+              name: raw['name'] as String? ?? raw['code'] as String,
+            ),
+      ],
       hasSystemAudio: map['hasSystemAudio'] as bool? ?? false,
       usesEmbeddedAudioOnly: map['usesEmbeddedAudioOnly'] as bool? ?? false,
     );
@@ -144,4 +162,16 @@ class CaptionsCapabilityInfo {
       'CaptionsCapabilityInfo(available: $available, reason: $reason, '
       'mic: $hasMicAudio, system: $hasSystemAudio, '
       'embeddedOnly: $usesEmbeddedAudioOnly)';
+}
+
+/// One language the engine can decode.
+class CaptionLanguage {
+  const CaptionLanguage({required this.code, required this.name});
+
+  /// Whisper code, e.g. `en`, `ar`, `ro`.
+  final String code;
+
+  /// The engine's own lowercase English name, e.g. `english`. Display casing
+  /// is the UI's business.
+  final String name;
 }

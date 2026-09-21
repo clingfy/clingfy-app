@@ -450,4 +450,30 @@ final class WhisperKitTranscriberTests: XCTestCase {
       WhisperKitTranscriber.decodingOptions(from: options).language,
       "nil means auto-detect, not a missing value to substitute")
   }
+  /// The picker is built from this list, so an empty or inverted one is a
+  /// feature that silently offers nothing or offers nonsense.
+  func testSupportedLanguagesComeFromTheEngineAndAreCodeKeyed() throws {
+    let languages = WhisperKitTranscriber.supportedLanguages
+
+    XCTAssertGreaterThan(
+      languages.count, 50,
+      "the engine publishes ~99 languages; a short list means the constant "
+        + "moved and this is reading something else")
+
+    // Codes and names are easy to swap, and the swap is invisible until a user
+    // opens the picker and sees two-letter codes -- or worse, until a decode is
+    // forced with "english" as the language.
+    let english = try XCTUnwrap(
+      languages.first { $0.name == "english" },
+      "no entry named 'english' -- the engine's keys are names, not codes")
+    XCTAssertEqual(english.code, "en")
+
+    let arabic = try XCTUnwrap(languages.first { $0.name == "arabic" })
+    XCTAssertEqual(arabic.code, "ar")
+
+    XCTAssertEqual(
+      languages.map(\.name), languages.map(\.name).sorted(),
+      "sorted by name, because the UI presents them in this order")
+  }
+
 }

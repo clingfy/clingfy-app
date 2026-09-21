@@ -2789,6 +2789,12 @@ class AppLocalizationsRo extends AppLocalizations {
   String get captionsTranscribing => 'Se transcrie…';
 
   @override
+  String get captionsLanguage => 'Limba vorbită';
+
+  @override
+  String get captionsLanguageAuto => 'Detectare automată';
+
+  @override
   String get captionsSourceMic => 'Microfon';
 
   @override
