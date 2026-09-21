@@ -129,7 +129,8 @@ void main() {
     final l10n = await AppLocalizations.delegate.load(const Locale('en'));
     final expected = {
       CaptionsUnavailableReason.unsupportedOs: l10n.captionsUnavailableOs,
-      CaptionsUnavailableReason.intelSlowPath: l10n.captionsUnavailableIntel,
+      CaptionsUnavailableReason.requiresAppleSilicon:
+          l10n.captionsUnavailableIntel,
       CaptionsUnavailableReason.noAudio: l10n.captionsUnavailableNoAudio,
       CaptionsUnavailableReason.platformNotSupported:
           l10n.captionsUnavailablePlatform,
@@ -186,7 +187,7 @@ void main() {
     final l10n = await AppLocalizations.delegate.load(const Locale('en'));
     for (final reason in [
       CaptionsUnavailableReason.unsupportedOs,
-      CaptionsUnavailableReason.intelSlowPath,
+      CaptionsUnavailableReason.requiresAppleSilicon,
       CaptionsUnavailableReason.noAudio,
       CaptionsUnavailableReason.platformNotSupported,
     ]) {
