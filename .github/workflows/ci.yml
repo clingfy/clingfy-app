@@ -261,40 +261,42 @@ jobs:
       - name: Run fast native tests
         run: |
           set -euo pipefail
-          # These classes were previously covered by a single
-          # -only-testing:RunnerTests/RunnerTests selector. No class of that
-          # name exists — RunnerTests.swift declares LetterboxExporterTests,
-          # ColorGradeTests and 20 others — so xcodebuild matched nothing and
-          # reported success on zero tests.
+          # RUNS THE WHOLE BUNDLE, AND SKIPS BY EXCEPTION.
           #
-          # Enumerating the real classes surfaced five problems that had been
-          # invisible for months: three stale assertions, a flaky one, and four
-          # that hung for 180-360s each on a runner with no microphone. All are
-          # fixed, so nothing here is skipped. If a -skip-testing line ever
-          # reappears, it should say why and name what would remove it.
+          # This was an allowlist of 57 `-only-testing` lines, and it had the
+          # same failure mode as the single broken selector it replaced, one
+          # class at a time: a NEW class is dead in CI until someone adds it
+          # here, and nothing fails to say so. That is how the whole captions
+          # surface stayed unrun -- ~775 of 824 new native test lines -- and a
+          # reviewer proved it by mutating the GIF long-edge cap and watching
+          # only the one listed class fail.
           #
-          # An allowlist has the same failure mode as the selector it replaced,
-          # one class at a time: a NEW class is dead in CI until someone adds it
-          # here, and nothing fails to say so. That is what happened to the whole
-          # captions surface — ~775 of 824 new native test lines never ran, and a
-          # reviewer proved it by mutating the GIF long-edge cap in
-          # PreviewSceneResolver: the only class that failed was
-          # ResolveExportSizeTests, which was not listed. The caption /
-          # export-size block below is the fix. It is all unit-level work: no
-          # GPU, no model download, no network. CaptionBurnInSeat and
-          # ResolveExportSize do run real AVFoundation encodes, which is what the
-          # other export classes here already do; measured together the block
-          # adds ~30s wall on this developer's machine.
+          # Inverted, the default is coverage: a class added tomorrow runs
+          # tomorrow. Every exclusion below is visible, and has to earn its
+          # line.
           #
-          # Deliberately NOT added: CaptionBurnInProofTests. It composites a
-          # burned-in .mov for a human to look at, from bitmaps that
+          # All 37 classes this list used to omit were run before the flip and
+          # passed -- 292 tests, no failures -- so the "several may be stale"
+          # worry that deferred this is settled. Whole bundle minus the two
+          # skips: 847 tests, ~68s of testing on a developer machine.
+          #
+          # SKIPS, and what would remove each:
+          #
+          # LetterboxExporterTests — not excluded, relocated. The export lane
+          # below owns it, deliberately split: everything bar the large fixture
+          # there, and that one method alone on schedule/workflow_dispatch.
+          # Running it here too would duplicate the slowest suite in the repo.
+          # Removing this line means moving that split back up here.
+          #
+          # CaptionBurnInProofTests — composites a burned-in .mov for a human
+          # to look at, from bitmaps that
           # `flutter test test/core/captions/caption_proof_bitmaps.dart` writes
-          # to /tmp — absent on a runner, so it skips and can never fail here.
+          # to /tmp. Absent on a runner, so it skips there and can never fail.
+          # Removing this line means checking those bitmaps in as a fixture.
           #
-          # This list is still far short of the 93 classes in RunnerTests. Adding
-          # the rest is worth doing, but it is a separate change: several have
-          # never run in CI and would need triaging first, and the point of this
-          # block is that the code THIS branch changes is covered.
+          # `test/ci/native_test_coverage_test.dart` enforces the shape: every
+          # skip must name a real class, and no class may be skipped without
+          # being listed there with a reason.
           xcodebuild \
             -workspace macos/Runner.xcworkspace \
             -scheme "$APP_ENV" \
@@ -308,62 +310,9 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="" \
             DEVELOPMENT_TEAM="" \
             COMPILER_INDEX_STORE_ENABLE=NO \
-            -only-testing:RunnerTests/OverlayUpdateDeduperTests \
-            -only-testing:RunnerTests/CameraOverlayLayoutTests \
-            -only-testing:RunnerTests/CameraOverlayShapeTests \
-            -only-testing:RunnerTests/CursorFrameResolverTests \
-            -only-testing:RunnerTests/DisplayLabelerTests \
-            -only-testing:RunnerTests/InlinePreviewViewLayoutTests \
-            -only-testing:RunnerTests/PauseResumeSupportTests \
-            -only-testing:RunnerTests/PreviewProfileTests \
-            -only-testing:RunnerTests/RecordingFailureRecoveryTests \
-            -only-testing:RunnerTests/RecordingIndicatorViewTests \
-            -only-testing:RunnerTests/RenamedRecordingProjectOpenTests \
-            -only-testing:RunnerTests/RecordingProjectPathsTests \
-            -only-testing:RunnerTests/RecordingMetadataTests \
-            -only-testing:RunnerTests/RecordingProjectPackageRegistrationTests \
-            -only-testing:RunnerTests/CameraRecorderTests \
-            -only-testing:RunnerTests/CameraLayoutResolverTests \
-            -only-testing:RunnerTests/CameraTransformTimelineBuilderTests \
-            -only-testing:RunnerTests/CameraAnimationTimelineBuilderTests \
-            -only-testing:RunnerTests/ScreenCaptureKitOverlayFilterPolicyTests \
-            -only-testing:RunnerTests/ScreenCaptureKitMicrophoneFallbackTests \
-            -only-testing:RunnerTests/MicrophoneLevelTelemetryTests \
-            -only-testing:RunnerTests/ScreenRecorderFacadeStartFailureTests \
-            -only-testing:RunnerTests/ScreenRecorderFacadeSeparateCameraTests \
-            -only-testing:RunnerTests/ColorGradeTests \
-            -only-testing:RunnerTests/ClipKeptRangeTests \
-            -only-testing:RunnerTests/ClipPlaybackPlannerTests \
-            -only-testing:RunnerTests/NativeLoggerTests \
-            -only-testing:RunnerTests/ColorGradeGoldenDumpTests \
-            -only-testing:RunnerTests/RecordingBundleHonestyTests \
-            -only-testing:RunnerTests/AudioSceneGateTests \
-            -only-testing:RunnerTests/SourceAudioBitRateTests \
-            -only-testing:RunnerTests/RNNoiseEngineTests \
-            -only-testing:RunnerTests/AudioEnhancementPipelineTests \
-            -only-testing:RunnerTests/ExportDestinationPreflightTests \
-            -only-testing:RunnerTests/GifExportPolicyTests \
-            -only-testing:RunnerTests/GifEncoderTests \
-            -only-testing:RunnerTests/GifExportSessionTests \
-            -only-testing:RunnerTests/ColorTransferFunctionTests \
-            -only-testing:RunnerTests/CaptionAudioDecoderTests \
-            -only-testing:RunnerTests/CaptionBurnInSeatTests \
-            -only-testing:RunnerTests/CaptionCueTrackTests \
-            -only-testing:RunnerTests/CaptionReflowParityTests \
-            -only-testing:RunnerTests/CaptionModelStoreTests \
-            -only-testing:RunnerTests/CaptionOverlayRendererTests \
-            -only-testing:RunnerTests/CaptionPreviewTrackTests \
-            -only-testing:RunnerTests/CaptionsCapabilityTests \
-            -only-testing:RunnerTests/CaptionsServiceTests \
-            -only-testing:RunnerTests/TranscriptionJobTests \
-            -only-testing:RunnerTests/WhisperKitTranscriberTests \
-            -only-testing:RunnerTests/ExportCaptionWiringTests \
-            -only-testing:RunnerTests/ExportEngineTests \
-            -only-testing:RunnerTests/ExportPrepTests \
-            -only-testing:RunnerTests/ExportVideoRequestParsingTests \
-            -only-testing:RunnerTests/PreviewSceneResolverTests \
-            -only-testing:RunnerTests/ResolveExportSizeTests \
-            -only-testing:RunnerTests/StorageDiagnosticsServiceTests \
+            -only-testing:RunnerTests \
+            -skip-testing:RunnerTests/LetterboxExporterTests \
+            -skip-testing:RunnerTests/CaptionBurnInProofTests \
             test-without-building 2>&1 | tee build/ci/xcode-fast-test.log
 
       - name: Upload fast native test artifacts
