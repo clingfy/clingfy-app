@@ -419,7 +419,7 @@ class PostCaptionsSection extends StatelessWidget {
     switch (reason) {
       case CaptionsUnavailableReason.unsupportedOs:
         return l10n.captionsUnavailableOs;
-      case CaptionsUnavailableReason.intelSlowPath:
+      case CaptionsUnavailableReason.requiresAppleSilicon:
         return l10n.captionsUnavailableIntel;
       case CaptionsUnavailableReason.noAudio:
         return l10n.captionsUnavailableNoAudio;
