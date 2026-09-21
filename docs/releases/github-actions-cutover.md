@@ -18,7 +18,7 @@ they already ran off a maintainer's laptop, so that step was a harness swap, not
 a rewrite. They did change later, when the storage moved off Azure: publishing
 now dispatches on `RELEASE_STORAGE_PROVIDER` (which defaults to `aws` for both
 `dev` and `prod`) through `ops/release/lib/aws.sh`. Note that
-`ops/release/05_publish_azure.sh` and `ops/release/windows/04_publish_azure.ps1`
+`ops/release/05_publish.sh` and `ops/release/windows/04_publish.ps1`
 kept their original filenames and are still the live publishers — the workflows
 invoke them by path, so do not "fix" the names.
 

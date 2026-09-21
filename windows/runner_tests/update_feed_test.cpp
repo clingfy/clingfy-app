@@ -5,7 +5,7 @@
 #include <string>
 
 // Phase 10.6 — pure feed parse + version compare + decision tests. The
-// sample body below is the VERBATIM shape 04_publish_azure.ps1 writes
+// sample body below is the VERBATIM shape 04_publish.ps1 writes
 // (ConvertTo-Json of the ordered hashtable), so a pipeline shape change
 // that breaks the client parse fails here first.
 namespace clingfy::updater {

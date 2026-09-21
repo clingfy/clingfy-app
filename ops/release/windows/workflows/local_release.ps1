@@ -163,7 +163,7 @@ Invoke-Step '03_sign.ps1' $signInstallerArgs
 
 # --- Optional publish + symbols + smoke -------------------------------------------
 if ($Publish) {
-  Invoke-Step '04_publish_azure.ps1' $channelArgs
+  Invoke-Step '04_publish.ps1' $channelArgs
 
   # Sentry symbol upload is non-blocking, like the macOS publish step: a
   # missing sentry-cli or missing SENTRY_* settings must not abort a release.

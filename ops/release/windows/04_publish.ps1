@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 #Requires -Version 7
-# 04_publish_azure.ps1
+# 04_publish.ps1
 #
 # Phase 10.5 (Windows installer + release pipeline): publishes the Windows
 # installer to the same Azure release storage the macOS lane uses, under a

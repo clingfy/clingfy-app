@@ -13,9 +13,10 @@
 > served from `dev.clingfy.com/updates`. The S3 key is `<container>/<blob name>`, identical to the old Azure layout,
 > because the CloudFront `/updates/*` behaviour has no path rewrite.
 >
-> Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
-> would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
-> the `azure` branch, which is now reachable only from the `local` channel and has no storage account left behind it.
+> The publish scripts were named `05_publish_azure.sh` / `04_publish_azure.ps1` until
+> 2026-09-21, then renamed to `05_publish.sh` / `04_publish.ps1` once every caller was
+> found. Mentions of Azure below describe the `azure` branch, which is now reachable only
+> from the `local` channel and has no storage account left behind it.
 >
 > **Three vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go),
 > `AWS_PUBLIC_ENDPOINT` (where they are SERVED from, e.g. `clingfy.com/updates`), and
@@ -51,7 +52,7 @@ For the complete operator walkthrough — machine requirements, every secret and
 - `01_build.ps1` - `flutter build windows --release` and stage a clean app folder into `dist/windows/app` (excludes PDBs/`runner_bridge.lib`/`native_assets.json`, bundles the VC++ CRT app-locally, verifies required runtime files)
 - `02_package_inno.ps1` - compile the per-user Inno Setup installer into `dist/windows/installer`
 - `03_sign.ps1` - Authenticode-sign the staged app binaries (`-Target app`, before packaging) or the installer (`-Target installer`, after); skips with a loud warning when no signing material is configured (decision D3 allows an unsigned private beta)
-- `04_publish_azure.ps1` - upload installer + `.sha256` + `latest-windows.json` under `updates/downloads/windows/`, then invalidate exactly those CloudFront paths (the filename still says `azure`; it dispatches on `$Ctx.StorageProvider`, and the Azure blob + Front Door purge branch now runs only for the `local` channel — do not rename the file, the workflows invoke it by path)
+- `04_publish.ps1` - upload installer + `.sha256` + `latest-windows.json` under `updates/downloads/windows/`, then invalidate exactly those CloudFront paths (dispatches on `$Ctx.StorageProvider`; the Azure blob + Front Door purge branch now runs only for the `local` channel. The workflows invoke this file by path, so a rename has to move with them)
 - `05_smoke.ps1` - verify the published feed and installer through the public endpoint, including a download + SHA-256 comparison
 - `upload_symbols.ps1` - Sentry symbol upload (PDBs + Dart AOT snapshot); written in Phase 10.4, invoked by the workflows as a non-blocking publish step
 - `installer/Clingfy.iss` - Inno Setup source; channel identity arrives via `ISCC /D` defines from `02_package_inno.ps1`
@@ -105,7 +106,7 @@ updates/
 - Inno Setup 6.3+ (`winget install JRSoftware.InnoSetup`)
 - Windows 10/11 SDK `signtool.exe` (only when signing material is configured)
 - AWS CLI v2 with credentials for the releases bucket (publish/smoke steps only; CI assumes the release role via GitHub OIDC, no stored keys)
-- Azure CLI (`az`) on PATH — `04_publish_azure.ps1` still hard-fails when the binary is missing, before it dispatches on the provider; no `az login` is needed on the aws path
+- Azure CLI (`az`) on PATH — `04_publish.ps1` still hard-fails when the binary is missing, before it dispatches on the provider; no `az login` is needed on the aws path
 - `sentry-cli` (symbol upload step only; non-blocking when absent)
 
 ## Environment and credential categories
