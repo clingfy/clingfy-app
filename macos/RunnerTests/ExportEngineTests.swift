@@ -34,6 +34,7 @@ final class ExportEngineTests: XCTestCase {
       filename: nil,
       directoryOverride: nil,
       format: "mov",
+      writesSubtitleSidecars: false,
       codec: "hevc",
       bitrate: "auto",
       audioGainDb: 0,
@@ -108,4 +109,81 @@ final class ExportEngineTests: XCTestCase {
     let engine = ExportEngine()
     engine.cancel()  // no-op when no export is in flight — must not throw or crash
   }
+  // MARK: - Output name collision, video + sidecars
+
+  private func makeTempFolder() -> URL {
+    let dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_names_\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    return dir
+  }
+
+  private func touch(_ folder: URL, _ name: String) {
+    FileManager.default.createFile(
+      atPath: folder.appendingPathComponent(name).path, contents: Data())
+  }
+
+  /// The case that silently destroyed a user's subtitles.
+  ///
+  /// Export A as "Demo" to MOV with subtitles, then B as "Demo" to MP4. The
+  /// VIDEO does not clash -- different extension -- so the old walk was happy,
+  /// wrote `Demo.mp4`, and the Dart side then replaced `Demo.srt` with B's
+  /// cues while it still sat beside A's `Demo.mov`, describing the wrong
+  /// video.
+  func testASidecarClashMovesTheVideoToo() throws {
+    let folder = makeTempFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    touch(folder, "Demo.mov")
+    touch(folder, "Demo.srt")
+    touch(folder, "Demo.vtt")
+
+    let url = ExportEngine.resolveOutputURL(
+      folder: folder, stem: "Demo", ext: "mp4", writesSubtitleSidecars: true)
+
+    XCTAssertEqual(
+      url.lastPathComponent, "Demo (1).mp4",
+      "the video must move even though no .mp4 existed, because its sidecars "
+        + "have to keep its stem to be found by a player")
+  }
+
+  /// The other half: renaming only the sidecar would "avoid" the clash and
+  /// produce a subtitle file nothing loads. The video name is what carries it.
+  func testTheChosenStemIsFreeForEveryExtensionAtOnce() throws {
+    let folder = makeTempFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    touch(folder, "Demo.mp4")
+    touch(folder, "Demo (1).srt")
+
+    let url = ExportEngine.resolveOutputURL(
+      folder: folder, stem: "Demo", ext: "mp4", writesSubtitleSidecars: true)
+
+    XCTAssertEqual(
+      url.lastPathComponent, "Demo (2).mp4",
+      "(1) was unusable because its .srt was taken, so the whole trio skips to (2)")
+  }
+
+  /// Without sidecars the walk must not widen: an unrelated `.srt` in the
+  /// folder is none of this export's business.
+  func testAnExportWithNoSidecarsIgnoresThem() throws {
+    let folder = makeTempFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    touch(folder, "Demo.srt")
+
+    let url = ExportEngine.resolveOutputURL(
+      folder: folder, stem: "Demo", ext: "mp4", writesSubtitleSidecars: false)
+
+    XCTAssertEqual(
+      url.lastPathComponent, "Demo.mp4",
+      "a GIF or a burn-in-only export writes no sidecar, so an existing one "
+        + "must not push the video's name around")
+  }
+
+  func testAFreeNameIsUsedUnchanged() throws {
+    let folder = makeTempFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let url = ExportEngine.resolveOutputURL(
+      folder: folder, stem: "Demo", ext: "mp4", writesSubtitleSidecars: true)
+    XCTAssertEqual(url.lastPathComponent, "Demo.mp4")
+  }
+
 }

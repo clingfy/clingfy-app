@@ -50,7 +50,7 @@ class CaptionRasterizer {
     this.maxWidthFraction = 0.9,
     this.referenceHeight = 1080.0,
     this.fontFamily = bundledCaptionFontFamily,
-    this.fontFamilyFallback,
+    this.fontFamilyFallback = defaultFontFamilyFallback,
   }) : assert(maxWidthFraction > 0 && maxWidthFraction <= 1),
        assert(referenceHeight > 0);
 
@@ -65,6 +65,42 @@ class CaptionRasterizer {
   /// font used by `flutter test` claims coverage of every codepoint, so the
   /// fallback chain is never consulted and text silently renders as boxes.
   static const String bundledCaptionFontFamily = 'ClingfyCaption';
+
+  /// Faces to try when the bundled one has no glyph, in order.
+  ///
+  /// The bundled face covers Latin, Romanian and Arabic — the three locales the
+  /// app ships — but a transcript contains whatever was said, and the model is
+  /// multilingual with no language pinned. Russian, Japanese, Hindi, Greek or
+  /// Chinese speech, or an emoji typed into a cue, falls straight out of that
+  /// coverage.
+  ///
+  /// Without a list, those glyphs resolve through whatever the host font stack
+  /// happens to supply — which restores exactly the machine-to-machine drift
+  /// bundling a face was meant to remove: different metrics, different line
+  /// breaking, so the same project wraps differently on another Mac, and a cue
+  /// that fits on one machine is ellipsized on another.
+  ///
+  /// Naming the chain does not make uncovered scripts deterministic — only
+  /// bundling more coverage does, at ~152 KB a face — but it makes the choice
+  /// explicit, reviewable, and the same on every Mac that has these system
+  /// faces.
+  ///
+  /// Defaulted on the constructor rather than set at the call site, because
+  /// there is exactly one production construction and a future second one must
+  /// not have to remember.
+  static const List<String> defaultFontFamilyFallback = <String>[
+    // Latin/Cyrillic/Greek, and the system's own broad coverage.
+    '.AppleSystemUIFont',
+    'Helvetica Neue',
+    // CJK. Separate faces: one does not cover the others' regional forms.
+    'Hiragino Sans',
+    'PingFang SC',
+    'Apple SD Gothic Neo',
+    // Devanagari and friends.
+    'Kohinoor Devanagari',
+    // Last, and only for glyphs nothing above has: colour emoji.
+    'Apple Color Emoji',
+  ];
 
   final CaptionStyle style;
 

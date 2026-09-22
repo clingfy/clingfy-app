@@ -31,6 +31,14 @@ struct ExportVideoRequest: Equatable {
   let filename: String?
   let directoryOverride: String?
   let format: String
+
+  /// Whether the Dart side will write `.srt`/`.vtt` beside the finished video.
+  ///
+  /// Only used to widen the output-name collision walk. Native does not write
+  /// the sidecars -- the bundled font and the bidi engine live on the Flutter
+  /// side -- but it is the only place that CHOOSES the name, and a sidecar has
+  /// to keep its video's stem to be found by a player.
+  let writesSubtitleSidecars: Bool
   let codec: String
   let bitrate: String
   /// GIF-only long-edge size preset ("small"/"medium"/"large"). Absent in
@@ -100,6 +108,8 @@ struct ExportVideoRequest: Equatable {
       filename: args["filename"] as? String,
       directoryOverride: args["directoryOverride"] as? String,
       format: (args["format"] as? String) ?? "mov",
+      // Absent on older payloads, which never wrote sidecars either.
+      writesSubtitleSidecars: (args["writesSubtitleSidecars"] as? Bool) ?? false,
       codec: (args["codec"] as? String) ?? "hevc",
       bitrate: (args["bitrate"] as? String) ?? "auto",
       gifSize: (args["gifSize"] as? String) ?? "large",

@@ -2557,6 +2557,14 @@ class PostProcessingController extends ChangeNotifier {
             _settings.workspace.saveFolderPath,
         'sessionId': _activeSessionId,
         'format': _settings.export.exportFormat,
+        // Widens native's output-name collision walk to cover `.srt`/`.vtt`.
+        // A sidecar has to keep its video's stem to be found by a player, so
+        // the trio has to be named together -- and native is the only side
+        // that chooses the name. GIF never gets sidecars.
+        'writesSubtitleSidecars':
+            subtitleMode.writesSidecar &&
+            _settings.export.exportFormat != 'gif' &&
+            reflowedCaptions().sidecar.isNotEmpty,
         'codec': _settings.export.exportCodec,
         'bitrate': _settings.export.exportBitrate,
         // GIF-only: long-edge size preset (small/medium/large). Native ignores

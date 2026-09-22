@@ -71,6 +71,11 @@ final class ExportEngine {
     let filename: String?
     let directoryOverride: String?
     let format: String
+
+    /// Whether Dart will write `.srt`/`.vtt` beside the finished video. Only
+    /// widens the output-name walk; native does not write them.
+    let writesSubtitleSidecars: Bool
+
     let codec: String
     let bitrate: String
     /// GIF-only long-edge size preset ("small"/"medium"/"large"). Resolved to a
@@ -152,6 +157,47 @@ final class ExportEngine {
     return nil
   }
 
+  /// Picks an output name that is free for the video AND for its sidecars.
+  ///
+  /// The sidecars are in the walk when they are coming, and that is the point
+  /// rather than tidiness. A player finds `Demo.srt` by its video's stem, so a
+  /// sidecar cannot be renamed away from its video to dodge a clash --
+  /// `Demo.mp4` beside `Demo (1).srt` is a subtitle file nothing will ever
+  /// load. The whole trio has to move together, and this is the only place
+  /// that chooses the name.
+  ///
+  /// Without it: export A as "Demo" to MOV with subtitles, then B as "Demo" to
+  /// MP4. The video does not clash (different extension) so B is written as
+  /// `Demo.mp4`, and `Demo.srt` is silently replaced with B's cues while still
+  /// sitting beside A's `Demo.mov`, now describing the wrong video.
+  ///
+  /// Native does not write the sidecars -- the bundled font and the bidi engine
+  /// live on the Flutter side -- which is why this takes a flag rather than
+  /// knowing.
+  static func resolveOutputURL(
+    folder: URL,
+    stem: String,
+    ext: String,
+    writesSubtitleSidecars: Bool
+  ) -> URL {
+    let sidecarExtensions = writesSubtitleSidecars ? ["srt", "vtt"] : []
+
+    func isFree(_ candidate: String) -> Bool {
+      (["\(candidate).\(ext)"] + sidecarExtensions.map { "\(candidate).\($0)" })
+        .allSatisfy {
+          !FileManager.default.fileExists(atPath: folder.appendingPathComponent($0).path)
+        }
+    }
+
+    var chosen = stem
+    var idx = 1
+    while !isFree(chosen) {
+      chosen = "\(stem) (\(idx))"
+      idx += 1
+    }
+    return folder.appendingPathComponent("\(chosen).\(ext)")
+  }
+
   func export(
     input: Input,
     dependencies: Dependencies,
@@ -211,13 +257,12 @@ final class ExportEngine {
     let info = dependencies.exportFormatInfo(input.format)
     let name = (input.filename?.isEmpty ?? true) ? "processed" : input.filename!
     let stem = (name as NSString).deletingPathExtension
-    let finalName = "\(stem).\(info.ext)"
-    var outputURL = folder.appendingPathComponent(finalName)
-    var idx = 1
-    while FileManager.default.fileExists(atPath: outputURL.path) {
-      outputURL = folder.appendingPathComponent("\(stem) (\(idx)).\(info.ext)")
-      idx += 1
-    }
+    let outputURL = ExportEngine.resolveOutputURL(
+      folder: folder,
+      stem: stem,
+      ext: info.ext,
+      writesSubtitleSidecars: input.writesSubtitleSidecars
+    )
 
     // 6b. Pre-flight the destination BEFORE any rendering.
     //

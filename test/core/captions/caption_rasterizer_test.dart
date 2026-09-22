@@ -14,6 +14,7 @@ bool _identical(List<int> a, List<int> b) {
 }
 
 void main() {
+  _fontFallbackContract();
   // ---- Content addressing -----------------------------------------------
   //
   // The file name is a hash of everything the pixels depend on. That is what
@@ -641,6 +642,58 @@ void main() {
       expect(bytes, isNotNull);
       expect(bytes!.lengthInBytes, image.width * image.height * 4);
       image.dispose();
+    });
+  });
+}
+
+void _fontFallbackContract() {
+  group('font fallback chain', () {
+    // GLYPH COVERAGE IS NOT TESTABLE HERE, and pretending otherwise is the
+    // trap this group exists inside of: the stub font `flutter test` uses
+    // claims coverage of every codepoint, so the fallback chain is never
+    // consulted and a CJK cue renders as boxes while the test passes. See
+    // `bundledCaptionFontFamily`'s own doc comment.
+    //
+    // What IS testable, and what actually regressed, is whether production
+    // asks for a fallback at all. It did not: both the export and the preview
+    // path ran with a null list, so anything outside Latin/Romanian/Arabic
+    // resolved through the host font stack — different metrics on different
+    // Macs, which is the drift bundling a face was meant to remove.
+    test('a default rasterizer carries a non-empty fallback chain', () {
+      const rasterizer = CaptionRasterizer();
+      expect(
+        rasterizer.fontFamilyFallback,
+        isNotEmpty,
+        reason:
+            'production built one with no fallback, so uncovered scripts fell '
+            'through to whatever the host stack supplied',
+      );
+    });
+
+    test('the chain covers the scripts the bundled face does not', () {
+      // The bundled face is Latin + Romanian + Arabic. These are the gaps a
+      // multilingual model can produce with no language pinned.
+      const chain = CaptionRasterizer.defaultFontFamilyFallback;
+      expect(chain, contains('Hiragino Sans'), reason: 'Japanese');
+      expect(chain, contains('PingFang SC'), reason: 'Chinese');
+      expect(chain, contains('Apple SD Gothic Neo'), reason: 'Korean');
+      expect(chain, contains('Apple Color Emoji'), reason: 'emoji in a cue');
+    });
+
+    test('emoji sits last, so it cannot win a glyph a text face has', () {
+      const chain = CaptionRasterizer.defaultFontFamilyFallback;
+      expect(
+        chain.last,
+        'Apple Color Emoji',
+        reason:
+            'a colour-emoji face earlier in the chain can claim codepoints '
+            'that belong to text, and they come out as pictures',
+      );
+    });
+
+    test('an explicit chain still overrides the default', () {
+      const rasterizer = CaptionRasterizer(fontFamilyFallback: ['Only This']);
+      expect(rasterizer.fontFamilyFallback, ['Only This']);
     });
   });
 }
