@@ -841,6 +841,7 @@ class MainFlutterWindow: NSWindow {
             filename: req.filename,
             directoryOverride: req.directoryOverride,
             format: req.format,
+            writesSubtitleSidecars: req.writesSubtitleSidecars,
             codec: req.codec,
             bitrate: req.bitrate,
             gifSize: req.gifSize,
