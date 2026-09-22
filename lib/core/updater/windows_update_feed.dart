@@ -20,9 +20,13 @@ library;
 /// verifies AWS_PUBLIC_ENDPOINT rather than the value inside the binary. Both
 /// .env files and both ENV_*_B64 secrets must define it.
 ///
-/// Until 2026-09-21 this fell back to AZ_CDN_ENDPOINT. That key is gone from the
-/// env files and from both secrets, verified in CI before the fallback was
-/// dropped, so nothing reads it any more.
+/// Until 2026-09-21 this fell back to AZ_CDN_ENDPOINT, the Azure-era name this
+/// key was renamed from (8a4e3ca); #556 deleted the fallback. Nothing reads
+/// AZ_CDN_ENDPOINT any more -- not this define, not the release scripts, where
+/// the `azure` storage-provider arm is gone and _config.ps1's AzureLegacyKeys
+/// load-only allowlist does not even name it. It is still IN both secrets
+/// though: run 35609712749 (2026-09-21) printed it from both ENV_DEV_B64 and
+/// ENV_PROD_B64. Gone from the vault .env files, not yet from the secrets.
 const String windowsUpdateCdnEndpointDefine = String.fromEnvironment(
   'CLINGFY_UPDATE_FEED_HOST',
   defaultValue: '',

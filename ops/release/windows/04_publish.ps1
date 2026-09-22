@@ -3,7 +3,7 @@
 # 04_publish.ps1
 #
 # Phase 10.5 (Windows installer + release pipeline): publishes the Windows
-# installer to the same Azure release storage the macOS lane uses, under a
+# installer to the same release storage the macOS lane uses, under a
 # windows/ prefix so the artifacts can never collide with the DMGs and
 # Sparkle deltas:
 #
@@ -19,8 +19,14 @@
 # (GitHub OIDC in CI, `aws sso login` locally; no stored keys), object overwrite,
 # then a CloudFront invalidation of exactly the touched paths. The settings come from
 # the environment first with the channel's .env file as fallback (environment
-# variables always win); only AZ_STORAGE_ACCOUNT and AZ_CDN_ENDPOINT are
-# required, the purge settings are optional.
+# variables always win); on the aws provider AWS_RELEASES_BUCKET,
+# AWS_CLOUDFRONT_DISTRIBUTION_ID and the public endpoint (AWS_PUBLIC_ENDPOINT, or
+# RELEASE_PUBLIC_ENDPOINT to override it) are ALL required and validated before any
+# bytes move. Nothing here is optional any more: the old Front Door purge settings
+# went with the azure arm, and the invalidation is required rather than
+# nice-to-have because latest-windows.json is republished on every run, so without
+# it the edge keeps serving the previous release while S3 already holds the new
+# bytes.
 
 [CmdletBinding()]
 param(

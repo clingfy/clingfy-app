@@ -136,10 +136,12 @@ configure_azure_defaults() {
 # Which cloud this channel publishes to.
 #
 # Azure was decommissioned on 2026-09-10 and clingfy.com/updates/* has served from the AWS releases
-# bucket since the 2026-08-17 cutover. Publishing prod to Azure therefore writes to a location
-# NOTHING READS: the upload succeeds, the smoke test below passes (it fetches FEED_URL, which is
-# built from AZ_CDN_ENDPOINT, so it verifies the copy it just wrote), and no installed app ever sees
-# the release. That silent-success shape is why this switch exists rather than a hard swap.
+# bucket since the 2026-08-17 cutover. While the `azure` arm still existed, publishing prod to it
+# wrote to a location NOTHING READ: the upload succeeded, the smoke test passed as long as FEED_URL
+# was still composed from AZ_CDN_ENDPOINT (it then verified the copy it had just written), and no
+# installed app ever saw the release. That silent-success shape is why this switch exists rather
+# than a hard swap — and it is why FEED_URL is now composed in configure_public_endpoint() below,
+# off the endpoint the artifacts are actually SERVED from.
 #
 # dev used to stay on Azure because there was no dev releases bucket. There is one now
 # (`clingfy-labs-dev-releases-<account>`, clingfy-labs PR #209, applied 2026-09-15), it has been

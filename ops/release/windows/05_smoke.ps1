@@ -3,8 +3,9 @@
 # 05_smoke.ps1
 #
 # Phase 10.5 (Windows installer + release pipeline): post-publish smoke test.
-# Verifies, through the public download endpoint (AZ_CDN_ENDPOINT — a Front
-# Door host when configured, or the blob endpoint directly; the same path
+# Verifies, through the public download endpoint (RELEASE_PUBLIC_ENDPOINT
+# when set, else AWS_PUBLIC_ENDPOINT — the CloudFront host + path prefix in
+# front of the releases bucket, e.g. clingfy.com/updates; the same path
 # testers download through):
 #
 #   1. latest-windows.json is reachable, parses, and advertises this

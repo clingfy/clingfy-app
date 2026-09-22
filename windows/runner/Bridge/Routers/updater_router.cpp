@@ -28,9 +28,9 @@ std::string ReadStringArg(
 
 // Args (Windows-only; macOS ignores arguments entirely and lets Sparkle own
 // the feed): { feedUrl: "https://.../latest-windows.json", channel: "dev" }.
-// Dart fills feedUrl from the AZ_CDN_ENDPOINT dart-define; a build without
-// the define sends no args and gets an honest false + updateError event
-// instead of a silent no-op (the 10.3 "never silent-false" rule).
+// Dart fills feedUrl from the CLINGFY_UPDATE_FEED_HOST dart-define; a build
+// without the define sends no args and gets an honest false + updateError
+// event instead of a silent no-op (the 10.3 "never silent-false" rule).
 void HandleCheckForUpdates(
     const flutter::MethodCall<flutter::EncodableValue>& call,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
