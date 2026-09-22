@@ -24,19 +24,60 @@ class LicenseService {
   static const String _firstActivatedAtStorageKey = 'first_activated_at';
   static const String _fallbackHardwareIdStorageKey = 'fallback_hardware_id';
 
+  /// How long to wait for `/v1/validate-license` before treating the call as
+  /// unanswered. package:http has no default timeout, so without this a
+  /// half-open connection — an ALB that accepted the socket but has nothing
+  /// behind it — leaves entitlement pending forever and the offline grace
+  /// never runs at all. A timeout throws, which is already the path that
+  /// reaches [_checkOfflineLicense].
+  static const Duration defaultValidateTimeout = Duration(seconds: 15);
+
+  /// Whether [statusCode] means "ask again later" rather than "this licence is
+  /// not valid".
+  ///
+  /// The distinction decides whether a paying customer keeps Pro. A 4xx is the
+  /// server ANSWERING about this licence (expired, revoked, unknown key), so it
+  /// is a verdict and [validateLicense] returns a hard error. A 5xx, a 408, or
+  /// a 429 is the server FAILING TO ANSWER — we learned nothing about the
+  /// licence, so the 7-day offline grace applies exactly as it does when the
+  /// network is down.
+  ///
+  /// Before this existed, an outage was punished HARDER than being offline: a
+  /// dead socket throws and lands in the `catch` that grants the grace, while a
+  /// 503 returns normally and fell through to `LICENSE_VALIDATION_FAILED`,
+  /// revoking Pro instantly. Clingfy's own dev API is parked at zero tasks to
+  /// save Fargate cost (clingfy-labs `infra/aws/dev-park.sh`), so its ALB
+  /// answers 503 as a matter of routine — this path is walked daily, not only
+  /// during a production incident.
+  ///
+  /// This grants nothing a determined user cannot already take: blackholing the
+  /// API with a hosts entry or a firewall reject throws, and has always been
+  /// given the same 7 days. Nor can it extend the window — `last_check` is
+  /// written only on a 200, so the grace still expires 7 days after the last
+  /// genuine success no matter how many 503s arrive in between.
+  static bool isTransientStatus(int statusCode) {
+    if (statusCode >= 500) {
+      return true;
+    }
+    return statusCode == 408 || statusCode == 429;
+  }
+
   final FlutterSecureStorage _storage;
   final DateTime _appBuildDate = BuildConfig.buildDate;
 
   final http.Client _httpClient;
   final Future<String> Function()? _hardwareIdProvider;
+  final Duration _validateTimeout;
 
   LicenseService({
     FlutterSecureStorage? storage,
     http.Client? httpClient, // Allow injecting a client for testing
     Future<String> Function()? hardwareIdProvider,
+    Duration? validateTimeout, // Shortened in tests; see defaultValidateTimeout
   }) : _storage = storage ?? const FlutterSecureStorage(),
        _httpClient = httpClient ?? HttpLoggerClient(http.Client()),
-       _hardwareIdProvider = hardwareIdProvider;
+       _hardwareIdProvider = hardwareIdProvider,
+       _validateTimeout = validateTimeout ?? defaultValidateTimeout;
 
   Future<String?> readStoredLicenseKey() {
     return _storage.read(key: _licenseKeyStorageKey);
@@ -60,11 +101,13 @@ class LicenseService {
         body['license_key'] = trimmedKey;
       }
 
-      final response = await _httpClient.post(
-        Uri.parse(_validateUrl),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
+      final response = await _httpClient
+          .post(
+            Uri.parse(_validateUrl),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(_validateTimeout);
 
       final data = _decodeMap(response.body);
 
@@ -78,6 +121,10 @@ class LicenseService {
         }
         state = await _applyFirstActivatedFallback(state);
         return state;
+      }
+
+      if (isTransientStatus(response.statusCode)) {
+        return _checkOfflineLicense();
       }
 
       return LicenseState.error(
