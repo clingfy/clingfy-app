@@ -191,16 +191,21 @@ established by a pre-flight audit on 2026-09-19, before any dispatch.
 
 ## Fixed before the cut
 
-* [x] **Windows in-app updater pointed at a deleted host.** `AZ_CDN_ENDPOINT` is not dead
-  Azure config despite the name: `01_build.ps1` passes the env file through
+* [x] **Windows in-app updater pointed at a deleted host.** The feed host is not dead Azure
+  config despite the name it carried at the time: `01_build.ps1` passes the env file through
   `--dart-define-from-file`, and `lib/core/updater/windows_update_feed.dart` reads it via
   `String.fromEnvironment` to build the feed URL. It is **compiled into the installer**.
-  It held `clingfyreleases.blob.core.windows.net/updates`, which stopped resolving when
-  Azure was decommissioned on 2026-09-15. The lane would have gone **green** regardless,
-  because the smoke test builds its URL from `AWS_PUBLIC_ENDPOINT` — a different address
-  than the one in the binary. Corrected to `clingfy.com/updates`; `ENV_PROD_B64` and
-  `ENV_DEV_B64` re-uploaded 2026-09-19. **An installer already cut cannot be fixed after
-  the fact**, so confirm the build log shows the corrected value.
+  The key was then called `AZ_CDN_ENDPOINT` and it held
+  `clingfyreleases.blob.core.windows.net/updates`, which stopped resolving when Azure was
+  decommissioned on 2026-09-15. The lane would have gone **green** regardless, because the
+  smoke test builds its URL from `AWS_PUBLIC_ENDPOINT` — a different address than the one
+  in the binary. Corrected to `clingfy.com/updates`; `ENV_PROD_B64` and `ENV_DEV_B64`
+  re-uploaded 2026-09-19. The key has since been renamed to `CLINGFY_UPDATE_FEED_HOST`
+  (8a4e3ca1) and the Dart fallback to the old name deleted in #556, so a build today reads
+  that name and nothing else. **An installer already cut cannot be fixed after the fact**,
+  so confirm the env payload carries `CLINGFY_UPDATE_FEED_HOST=clingfy.com/updates` before
+  dispatch — `01_build.ps1` hands the file to Flutter whole and never prints the value, so
+  no build log will show it.
 * [x] **A failed download could erase the update history.** `s3_download_if_exists()`
   returned `1` (= genuinely absent) when `head-object` found the appcast but the `cp`
   failed. `restore_release_history.sh` then declares "first release" and republishes an
@@ -256,7 +261,17 @@ the Azure branch. The check now sits after it and mirrors
 
 ## Windows prod publish
 
-* [ ] build log shows `AZ_CDN_ENDPOINT=clingfy.com/updates`
+* [ ] before dispatch: `ENV_PROD_B64` decodes to a `.env.prod` carrying
+  `CLINGFY_UPDATE_FEED_HOST=clingfy.com/updates`. No build log can show this — `01_build.ps1`
+  hands the env file to Flutter as a path (`--dart-define-from-file=$($Ctx.EnvFile)`, :142) and
+  never echoes its contents, and the only loader that logs a key at all, `Import-DotenvFallback`
+  (`_config.ps1:64-76`), prints the name and not the value, for `$script:AzureLegacyKeys` +
+  `$script:StorageProviderKeys` only (:306-307) — neither of which contains the feed host. So the
+  host compiled into the installer never appears in the lane's output. As of 2026-09-21 the secret
+  still carried the pre-rename `AZ_CDN_ENDPOINT`, which nothing has read since #556; a build cut
+  from that secret compiles an empty host, so `windowsUpdateFeedUrl()` returns null and every
+  update check fails with `UPDATE_FEED_NOT_CONFIGURED` — and the lane still goes green, because
+  `05_smoke.ps1` checks the feed under `AWS_PUBLIC_ENDPOINT`, not the binary.
 * [ ] `Clingfy_Setup_1.1.0.exe` reachable at `clingfy.com/updates/downloads/windows/`
 * [ ] `latest-windows.json` updated and served
 * [ ] in-app "check for updates" resolves on a freshly installed 1.1.0
