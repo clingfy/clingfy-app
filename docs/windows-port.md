@@ -241,11 +241,11 @@ It mirrors the macOS lane's concepts: channel switch (prod "Clingfy" /
 dev "Clingfy Dev" / local), pubspec `version: X.Y.Z+N` as the version
 source of truth, `release/*` branch version guard, artifact naming
 (`Clingfy_Setup_1.0.4.exe` prod, `Clingfy_Dev_Setup_1.0.4+5.exe` dev),
-Azure CLI upload with `--auth-mode login`, Front Door purge of exactly
-the touched paths, and a retried post-publish smoke (plus a SHA-256
-download comparison the macOS lane doesn't need — there is no Sparkle
-signature on Windows yet). See `ops/release/windows/README.md` for the
-full script inventory and credential categories.
+AWS CLI upload to the releases bucket, a CloudFront invalidation of
+exactly the touched paths, and a retried post-publish smoke (plus a
+SHA-256 download comparison the macOS lane doesn't need — there is no
+Sparkle signature on Windows yet). See `ops/release/windows/README.md`
+for the full script inventory and credential categories.
 
 Pipeline: `00_version_guard` → `01_build` (release build, stage to
 `dist/windows/app` excluding PDBs/`runner_bridge.lib`/
@@ -328,9 +328,13 @@ own docs recommend per-platform feeds, and the split means a `.dmg` can
 never be offered to Windows.
 
 Architecture: the feed URL travels as a `checkForUpdates` argument
-("Dart handoff" — the per-channel Front Door domain is already a
-dart-define via `AZ_CDN_ENDPOINT`, composed by
+("Dart handoff" — the per-channel public host is already a dart-define
+via `CLINGFY_UPDATE_FEED_HOST`, a host plus path prefix like
+`dev.clingfy.com/updates`, composed into the full feed URL by
 `lib/core/updater/windows_update_feed.dart`; channel = `APP_ENV`).
+That define was named `AZ_CDN_ENDPOINT` until 2026-09-21; the rename
+followed the Azure→AWS move and the Dart fallback to the old name is
+gone, so a build carrying only the old key now has no feed at all.
 `Bridge/Routers/updater_router.cpp` validates and starts
 `Updater/update_checker.cpp`: a single-flight worker thread fetches the
 feed over WinHTTP (https-only, 256 KB cap, timeouts that also bound the
@@ -345,10 +349,10 @@ and the Windows-only `checking` / `noUpdateAvailable` / `updateError`
 events drive an honest inline status in Settings → About (button
 restored after the 10.3 hide; opening the installer URL re-checks https
 in Dart before `launchUrl`). Channel isolation is primarily the
-per-channel Front Door domains; the native check additionally rejects a
+per-channel public hosts; the native check additionally rejects a
 feed whose `channel`/`platform` fields contradict the build. A build
-without `AZ_CDN_ENDPOINT` replies false + `UPDATE_FEED_NOT_CONFIGURED`
-— never a silent no-op.
+without `CLINGFY_UPDATE_FEED_HOST` replies false +
+`UPDATE_FEED_NOT_CONFIGURED` — never a silent no-op.
 
 Deliberately out of scope: in-app download/SHA verify (the browser gets
 the trusted https URL; the installer is the signed artifact),
@@ -363,7 +367,8 @@ Check for Updates with the published feed advertising the SAME version →
 "You're on the latest version"; republish the feed with a higher
 `version`/`build` (or install an older build) → update dialog +
 Download opens the installer URL in the browser; point
-`AZ_CDN_ENDPOINT` at a dead domain and rebuild → "update check failed".
+`CLINGFY_UPDATE_FEED_HOST` at a dead domain and rebuild →
+"update check failed".
 
 ### Phase 10.7 — beta closeout (docs)
 

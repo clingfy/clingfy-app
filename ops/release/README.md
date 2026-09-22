@@ -97,8 +97,7 @@ Depending on the script, the release flow expects:
 - CocoaPods / `pod`
 - `create-dmg`
 - Sparkle's `generate_appcast`
-- AWS CLI (`aws`) - the publisher for the `dev` and `prod` channels
-- Azure CLI (`az`) - only for the `local` channel's azure branch
+- AWS CLI (`aws`) - the publisher for the `dev` and `prod` channels; the `local` channel publishes nowhere and needs no cloud CLI at all
 - Apple notarization tooling via `xcrun`
 - `codesign`, `spctl`, `zip`, `curl`, and standard Unix shell tools
 
@@ -113,6 +112,7 @@ The release scripts load private configuration from a local `.env.<flavor>` file
 - `APP_ENV`
 - `API_BASE_URL`
 - `CLINGFY_SITE_URL`
+- `CLINGFY_UPDATE_FEED_HOST` - the Windows in-app updater's feed host + path prefix (`clingfy.com/updates` on prod, `dev.clingfy.com/updates` on dev). Compiled into the installer by `--dart-define-from-file` and the ONLY source for that URL (`lib/core/updater/windows_update_feed.dart`), so a build missing it ships an updater that can never succeed while the lane still reports success. No release script reads it — `AWS_PUBLIC_ENDPOINT` is the publishing side of the same host, and the two must move together. Renamed from `AZ_CDN_ENDPOINT` on 2026-09-21; the fallback to the old name is gone.
 - `SENTRY_DSN`
 - `SENTRY_ENVIRONMENT`
 - `SENTRY_TRACES_SAMPLE_RATE`
@@ -136,9 +136,9 @@ The release scripts load private configuration from a local `.env.<flavor>` file
 
 ### Release publishing and CDN
 
-- `RELEASE_STORAGE_PROVIDER` - `aws` or `azure`; defaults to `aws` on the `prod` and `dev` channels
+- `RELEASE_STORAGE_PROVIDER` - `aws` or `none`; defaults to `aws` on the `prod` and `dev` channels and `none` on `local`, which does not publish at all. Any other value is a hard failure before any bytes move.
 
-Shared by both backends. On AWS these are S3 key prefixes, not Azure containers (`S3 key = <container>/<blob name>`):
+Azure-era names that outlived Azure — `configure_azure_defaults()` still exports them and they are live on the only remaining backend. On AWS they are S3 key prefixes, not containers (`S3 key = <container>/<blob name>`):
 
 - `AZ_CONTAINER` (default `updates`)
 - `AZ_BINARIES_FOLDER` (default `downloads`)
@@ -152,13 +152,14 @@ AWS — all three required whenever the provider is `aws`, validated at startup 
 
 CI authenticates to AWS with GitHub OIDC, not stored access keys, so no AWS key material belongs in `.env.*`.
 
-Azure — `local` channel only; the storage accounts were deleted on 2026-09-15:
+Azure — gone, not merely unused. The provider switch accepts only `aws` and `none` (`prod` and `dev` default to `aws`, every other channel including `local` to `none`, and `configure_storage_provider()` in `lib/env.sh` dies on anything else), so no release script reads any of these on any channel:
 
 - `AZ_STORAGE_ACCOUNT`
-- `AZ_CDN_ENDPOINT`
 - `AZ_RESOURCE_GROUP`
 - `AZ_CDN_PROFILE`
 - `AZ_FRONTDOOR_ENDPOINT_NAME`
+
+The Windows lane still *loads* those four (`$script:AzureLegacyKeys` in `windows/_config.ps1`), purely so an operator reading a stale `.env` sees them accounted for; nothing validates or uses the values. `AZ_CDN_ENDPOINT` is not on that list, and it is not dead in the same way: it was renamed `CLINGFY_UPDATE_FEED_HOST` on 2026-09-21 — the Windows updater's feed host (`clingfy.com/updates`, `dev.clingfy.com/updates`), compiled into the installer via `--dart-define-from-file` — and nothing reads the old name any more, though the `ENV_DEV_B64` / `ENV_PROD_B64` CI secrets still carry it. Both Azure release storage accounts were deleted on 2026-09-15, and the `azure` provider arm itself (`lib/azure.sh` and the `azure` case in both provider switches) on 2026-09-21.
 
 ### Optional release integrations
 

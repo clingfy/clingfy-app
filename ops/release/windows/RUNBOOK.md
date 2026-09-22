@@ -39,12 +39,13 @@ Gitignored (`.gitignore` line 66); obtained per `docs/development.md`. The relea
 
 | Key | Used by | Purpose |
 |---|---|---|
-| `RELEASE_STORAGE_PROVIDER` | `_config.ps1` | `aws` or `azure` — **optional**; defaults to `aws` for the `prod` and `dev` channels and `azure` only for `local` |
+| `RELEASE_STORAGE_PROVIDER` | `_config.ps1` | `aws` or `none` — **optional**; defaults to `aws` for the `prod` and `dev` channels and `none` for `local`, which does not publish at all. Any other value (including the old `azure`) is a hard failure before any bytes move |
 | `AWS_RELEASES_BUCKET` | `04_publish.ps1`, `05_smoke.ps1` | **required on `aws`** — target S3 bucket — **dev and prod use different buckets**; that is the channel isolation model |
 | `AWS_PUBLIC_ENDPOINT` | `04_publish.ps1`, `05_smoke.ps1` | **required on `aws`** — public host + path prefix the artifacts are SERVED from (`clingfy.com/updates`; dev `dev.clingfy.com/updates`). Builds the URLs above and is baked into every `latest-windows.json`, so it must move with the bucket |
 | `AWS_CLOUDFRONT_DISTRIBUTION_ID` | `04_publish.ps1` | **required on `aws`** — `/updates/*` is cached with CachingOptimized and `latest-windows.json` is republished on every run; without the invalidation the edge keeps serving the previous release |
 | `RELEASE_PUBLIC_ENDPOINT` | `_config.ps1` | **optional** — overrides `AWS_PUBLIC_ENDPOINT` when set |
-| `AZ_STORAGE_ACCOUNT`, `AZ_CDN_ENDPOINT`, `AZ_RESOURCE_GROUP`, `AZ_CDN_PROFILE`, `AZ_FRONTDOOR_ENDPOINT_NAME` | `04_publish.ps1`, `05_smoke.ps1` | **dead for prod and dev** — read only by the `azure` provider, i.e. only `-Channel local`. Both Azure release storage accounts were deleted 2026-09-15, so an `azure` publish now writes where nothing reads |
+| `AZ_STORAGE_ACCOUNT`, `AZ_RESOURCE_GROUP`, `AZ_CDN_PROFILE`, `AZ_FRONTDOOR_ENDPOINT_NAME` | `_config.ps1` (loaded, never read) | **dead on every channel** — the `azure` provider arm was deleted 2026-09-21, so no script reads these anywhere, and `RELEASE_STORAGE_PROVIDER=azure` is now a hard failure rather than a fallback. `_config.ps1` keeps them in `$script:AzureLegacyKeys` only so a stale `.env` that still carries them stays accounted for. Both Azure release storage accounts were deleted 2026-09-15. Delete them from any `.env` you have rather than updating them |
+| `AZ_CDN_ENDPOINT` | nothing | **renamed, not merely dead** — it became `CLINGFY_UPDATE_FEED_HOST` on 2026-09-21, same value (the channel's public host + path prefix: `clingfy.com/updates`, dev `dev.clingfy.com/updates`), and the Dart fallback to the old name was removed. It is not even on the legacy load list, so a file that still sets it is setting a name nothing answers to |
 | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | `upload_symbols.ps1` | symbol upload (optional; missing → warn + continue) |
 
 The same file also feeds the app itself via `--dart-define-from-file` (`API_BASE_URL`, `CLINGFY_SITE_URL`, `SENTRY_DSN`, …) — the build step passes it through verbatim.

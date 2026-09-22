@@ -1292,9 +1292,9 @@ class NativeBridge {
   /// D2's Dart handoff); both default from the build's dart-defines so
   /// every call site — the About button, the pre-recording bar's update
   /// tap — gets the same behavior. macOS sends no arguments and Sparkle
-  /// owns the feed. A Windows build without AZ_CDN_ENDPOINT sends no
-  /// arguments either, and native replies false + an `updateError` event
-  /// instead of a silent no-op.
+  /// owns the feed. A Windows build without CLINGFY_UPDATE_FEED_HOST sends
+  /// no arguments either, and native replies false + an `updateError` event
+  /// (UPDATE_FEED_NOT_CONFIGURED) instead of a silent no-op.
   Future<bool> checkForUpdates({String? feedUrl, String? channel}) async {
     try {
       Map<String, dynamic>? args;
