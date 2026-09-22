@@ -1,7 +1,7 @@
 // lib/controllers/license_controller.dart
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:uuid/uuid.dart';
 import 'package:clingfy/commercial/licensing/license_error_codes.dart';
 import 'package:clingfy/commercial/licensing/models/license_plan.dart';
@@ -18,19 +18,36 @@ enum LicensePrimaryAction {
   lifetimeActive,
 }
 
-class LicenseController extends ChangeNotifier {
+class LicenseController extends ChangeNotifier with WidgetsBindingObserver {
+  /// How long to wait before a second unverified-state retry is allowed.
+  ///
+  /// Every resume is a retry opportunity, and a desktop recorder gets resumed
+  /// constantly — alt-tab, moving between the editor and another app. Without
+  /// a floor, a user sitting through a backend outage would post a validate
+  /// call on every window focus. Long enough to be quiet, short enough that a
+  /// recovered backend is noticed within about a minute of the user coming
+  /// back to the app.
+  static const Duration revalidateCooldown = Duration(seconds: 60);
+
   final LicenseService _service;
   final Uuid _uuid;
+  final DateTime Function() _now;
 
-  LicenseController({LicenseService? service, Uuid? uuid})
-    : _service = service ?? LicenseService(),
-      _uuid = uuid ?? const Uuid();
+  LicenseController({
+    LicenseService? service,
+    Uuid? uuid,
+    DateTime Function()? now, // Fake clock in tests; see revalidateCooldown
+  }) : _service = service ?? LicenseService(),
+       _uuid = uuid ?? const Uuid(),
+       _now = now ?? DateTime.now;
 
   bool isLoading = true;
   String? currentKey;
   LicenseState state = LicenseState.error(LicenseErrorCodes.initializing);
   String? deactivationError;
   bool _initialized = false;
+  DateTime? _lastRevalidateAt;
+  Future<void>? _inFlight;
 
   bool get isEntitledPro => state.entitledPro;
   String get currentPlan => state.plan;
@@ -108,10 +125,97 @@ class LicenseController extends ChangeNotifier {
     return false;
   }
 
+  /// True when the last answer came from the grace path rather than the
+  /// server. See [LicenseState.isUnverified].
+  bool get isUnverified => state.isUnverified;
+
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
+    // Registered before the first check so a resume that lands while the
+    // initial validate is still in flight is not lost. Guarded because a
+    // binding is not guaranteed in every host (plain `flutter test` without
+    // a widget binding, for one) and a throw here would otherwise leave the
+    // controller permanently `isLoading` with `_initialized` already set.
+    try {
+      WidgetsBinding.instance.addObserver(this);
+    } catch (_) {
+      // No binding: the resume hook simply does not exist. Every other
+      // revalidation trigger still works.
+    }
     await refreshEntitlement();
+  }
+
+  // The parameter must keep the overridden name, so it shadows this class's
+  // own `state` field for the length of this method. Nothing here reads the
+  // field, so the shadowing is contained.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(revalidateIfUnverified());
+    }
+  }
+
+  @override
+  void dispose() {
+    try {
+      WidgetsBinding.instance.removeObserver(this);
+    } catch (_) {
+      // Never registered; nothing to undo.
+    }
+    super.dispose();
+  }
+
+  /// Re-asks the server, but only when the last answer was not the server's.
+  ///
+  /// Fixes the shape where one bad response outlived the thing that caused it:
+  /// `refreshEntitlement()` ran once at launch and assigned `state`
+  /// unconditionally, so a user who opened the app during an outage stayed
+  /// downgraded for the whole session even after the backend came back. They
+  /// had to quit and relaunch to get their licence recognised. With Clingfy's
+  /// dev API parked at zero tasks by design, that was the ordinary dev
+  /// experience rather than a rare one.
+  ///
+  /// Does nothing when the state is a real verdict, when a check is already in
+  /// flight, or inside [revalidateCooldown] of the last attempt. Unlike
+  /// [refreshEntitlement] it does NOT touch [isLoading]: that flag means "a
+  /// user-initiated licence operation is running" and several widgets render
+  /// spinners off it, so a background retry must not make the settings panel
+  /// and the paywall flicker on every window focus.
+  Future<void> revalidateIfUnverified({bool force = false}) async {
+    if (!state.isUnverified) return;
+    final pending = _inFlight;
+    if (pending != null) return pending;
+
+    final last = _lastRevalidateAt;
+    if (!force &&
+        last != null &&
+        _now().difference(last) < revalidateCooldown) {
+      return;
+    }
+
+    final run = _runRevalidation();
+    _inFlight = run;
+    try {
+      await run;
+    } finally {
+      _inFlight = null;
+    }
+  }
+
+  Future<void> _runRevalidation() async {
+    _lastRevalidateAt = _now();
+    final key = await _service.readStoredLicenseKey();
+    final refreshed = await _service.validateLicense(key);
+
+    // Only adopt an answer that is better than the one we have. A retry that
+    // hits the same outage returns another cached/no-internet state, and
+    // replacing one unverified state with another would just churn listeners.
+    if (refreshed.isUnverified && state.isUnverified) return;
+
+    currentKey = key;
+    state = refreshed;
+    notifyListeners();
   }
 
   Future<bool> activateKey(String key) async {
