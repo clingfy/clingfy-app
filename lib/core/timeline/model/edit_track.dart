@@ -253,12 +253,29 @@ class Caption {
   final List<CaptionWord> words;
   final String? translatedText;
 
+  /// Word timings are deliberately NOT written.
+  ///
+  /// They are still carried in memory — native sends them with every segment
+  /// and [PostProcessingController] passes them through an edit — but nothing
+  /// in `lib/` reads their contents, so persisting them bought a project
+  /// bundle ~590 KB of dead weight and made every caption edit pay for it.
+  ///
+  /// Measured on a 400-cue transcript at 11 words per cue: 677,564 bytes with
+  /// them against 86,512 without, and a decode-plus-encode of 9.8 ms against
+  /// 1.0 ms. `PostStateStore.update` does that round trip synchronously on the
+  /// main isolate, debounced at 350 ms, so the cost landed as dropped frames
+  /// in the very panel the user was typing in.
+  ///
+  /// The one component that would plausibly want them refuses to use them —
+  /// see `caption_reflow.dart`, which rebuilds cues from full text and never
+  /// from a word subset. Restore this key when word-level editing actually
+  /// ships; [fromMap] still reads it, so projects written before this change
+  /// load without complaint and simply drop the timings on their next save.
   Map<String, dynamic> toMap() => {
     'id': id,
     'startMs': startMs,
     'endMs': endMs,
     'text': text,
-    'words': [for (final w in words) w.toMap()],
     if (translatedText != null) 'translatedText': translatedText,
   };
 

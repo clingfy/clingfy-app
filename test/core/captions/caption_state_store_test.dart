@@ -49,32 +49,72 @@ void main() {
     expect(loaded.captions.last.endMs, 2500);
   });
 
-  test('word timings survive the round trip', () async {
-    // Cut-reflow needs these. Dropping them on save would break re-cutting a
-    // recording that was transcribed in an earlier session.
-    await CaptionStateStore.save(
-      project.path,
-      CaptionPersistState(
-        captions: [
-          Caption(
-            id: 'c1',
-            startMs: 0,
-            endMs: 1000,
-            text: 'hello world',
-            words: const [
-              CaptionWord(startMs: 0, endMs: 400, text: 'hello'),
-              CaptionWord(startMs: 400, endMs: 1000, text: 'world'),
-            ],
-          ),
-        ],
-      ),
-    );
+  test(
+    'word timings are not persisted, but a legacy file still loads',
+    () async {
+      // They were persisted until #442. Nothing in lib/ reads their contents —
+      // caption_reflow rebuilds cues from full text and explicitly never from a
+      // word subset — so the only thing they did on disk was make every caption
+      // edit more expensive. Measured on a 400-cue transcript: 677,564 bytes
+      // with them against 86,512 without, and a decode-plus-encode of 9.8 ms
+      // against 1.0 ms, paid synchronously on the main isolate every 350 ms
+      // while the user types.
+      await CaptionStateStore.save(
+        project.path,
+        CaptionPersistState(
+          captions: [
+            Caption(
+              id: 'c1',
+              startMs: 0,
+              endMs: 1000,
+              text: 'hello world',
+              words: const [
+                CaptionWord(startMs: 0, endMs: 400, text: 'hello'),
+                CaptionWord(startMs: 400, endMs: 1000, text: 'world'),
+              ],
+            ),
+          ],
+        ),
+      );
 
-    final loaded = CaptionStateStore.load(project.path);
-    expect(loaded!.captions.first.words, hasLength(2));
-    expect(loaded.captions.first.words.last.text, 'world');
-    expect(loaded.captions.first.words.last.startMs, 400);
-  });
+      final onDisk = File(
+        '${project.path}${Platform.pathSeparator}captions_state.json',
+      ).readAsStringSync();
+      expect(
+        onDisk.contains('"words"'),
+        isFalse,
+        reason: 'the key is what costs ~590 KB a bundle',
+      );
+
+      final loaded = CaptionStateStore.load(project.path);
+      expect(loaded!.captions.first.text, 'hello world');
+      expect(loaded.captions.first.words, isEmpty);
+
+      // Backward read compatibility: a project written before #442 carries the
+      // key, and must still open rather than fail to parse. Built by injecting
+      // `words` back into a file the store itself just wrote, so everything
+      // around it is genuinely valid and only that one key differs.
+      final decoded = jsonDecode(onDisk) as Map<String, dynamic>;
+      final cues = (decoded['captions'] as List).cast<Map<String, dynamic>>();
+      cues.first['words'] = <Map<String, dynamic>>[
+        {'startMs': 0, 'endMs': 400, 'text': 'hello'},
+        {'startMs': 400, 'endMs': 1000, 'text': 'world'},
+      ];
+      File(
+        '${project.path}${Platform.pathSeparator}captions_state.json',
+      ).writeAsStringSync(jsonEncode(decoded));
+
+      final legacy = CaptionStateStore.load(project.path);
+      expect(legacy!.captions.first.text, 'hello world');
+      expect(
+        legacy.captions.first.words,
+        hasLength(2),
+        reason:
+            'fromMap still reads the key, so an older project opens with its '
+            'timings intact in memory and simply drops them on the next save',
+      );
+    },
+  );
 
   test('non-latin text survives the round trip', () async {
     await CaptionStateStore.save(
