@@ -1,3 +1,86 @@
+## [1.2.0] - 2026-09-23
+
+A reliability release, and most of it is about Clingfy getting out of your way
+rather than doing anything new. A backend hiccup no longer takes your licence
+away. A long export no longer gets killed by the Mac going to sleep, and
+neither does a recording. Correcting a subtitle is roughly ten times cheaper,
+and the project file it writes is about a seventh the size.
+
+### Your licence survives our bad days
+
+- **An outage on our side no longer revokes Pro.** Clingfy has always honoured
+  a cached licence for seven days when it cannot reach the internet — but that
+  only applied when the *network* failed. If our server answered and the answer
+  was an error, Pro was withdrawn on the spot. The fault being ours was
+  punished harder than the fault being yours. A server error, a timeout or a
+  rate limit now takes the same seven-day grace a dead wifi connection has
+  always had. A refund or a chargeback still revokes immediately, because that
+  is the server actually answering about your licence.
+- **A revoked licence now stays revoked.** The mirror of the above: a
+  revocation that arrived as an error code never reached the cache, so going
+  offline afterwards could hand Pro back for up to another week.
+- **Mistyping a licence key no longer destroys the one you have.** Entering a
+  wrong key in the paywall overwrote your stored licence with the rejection.
+  With a healthy backend the next check repaired it; with an unhealthy one it
+  did not, and you were left holding a typo.
+- **A failed check no longer follows you around.** If the first check when the
+  app opened could not reach us, that answer stood for the whole session even
+  after the connection came back — you had to quit and reopen. Clingfy now
+  re-checks when you return to the app, and once more if you press Export.
+- **Licence checks now time out.** A server that accepted the connection and
+  then said nothing left entitlement unresolved indefinitely.
+
+### Your Mac stays awake for the work, and sleeps after
+
+- **A long export is no longer killed by idle sleep.** Nothing held a sleep
+  assertion during an export, so a long render on battery could be interrupted
+  and leave you with no file and no explanation.
+- **Recording holds its own assertion now, including the display.** Sleep
+  protection during a recording used to be a side effect of cursor capture
+  being switched on: excluding Clingfy from its own capture recorded with no
+  protection at all, and pausing dropped it for the length of the pause. A
+  display that sleeps records black frames, so recording now keeps it awake
+  too — an export does not, because it reads nothing off your screen.
+
+### Subtitles
+
+- **Correcting a caption is much faster, and projects are much smaller.**
+  Every edit rewrote the whole project file, and word-level timings that
+  nothing in the app reads made that file about eight times larger than it
+  needed to be. Measured on a twenty-minute transcript: 677 KB down to 86 KB,
+  and the work each keystroke pause triggers down roughly tenfold. Projects
+  made before this open unchanged and shrink the next time you save.
+- **Each recording remembers where its subtitles go.** The destination — off,
+  burned in, sidecar, or both — was one app-wide setting, so changing it on one
+  recording silently changed what every other recording would export. It is
+  still the default for new transcripts; it is no longer retroactive.
+- **You can choose the spoken language**, or leave it on automatic detection.
+  A transcript whose language nothing detected now says so instead of claiming
+  English.
+- **Subtitle sidecars no longer overwrite an existing `.srt`/`.vtt`** that the
+  video's own collision avoidance would have spared.
+- **Non-Latin subtitle text renders on every machine.** The font fallback chain
+  is named explicitly rather than left to whatever the system picked.
+
+### Fixed
+
+- **An export could stop silently.** When memory pressure exhausted the frame
+  pool, four separate render paths gave up without finishing the file and
+  without reporting an error — no output, no failure, no progress. They now
+  wait for the pressure to pass, and fail properly if it never does.
+- **A dropdown row with no value was unclickable**, which is what the window
+  picker's "no window" row was.
+- **Intel Macs are told why subtitles are unavailable** rather than being
+  refused against copy that promised a slow path.
+
+### Internal
+
+- Release tooling: the dead Azure storage paths are deleted from both the bash
+  and PowerShell lanes, and the Windows updater feed host is read from a
+  provider-neutral key. Docs across the repo name the key that exists.
+- CI runs every native macOS test class and skips by explicit exception, so a
+  new test file is covered by default instead of silently unrun.
+
 ## [1.1.0] - 2026-09-20
 
 Clingfy 1.1.0 is two releases in one. On macOS it adds **auto-subtitles** — transcribed on the Mac itself, editable, burned in or written as `.srt`/`.vtt` — and fixes a bug that had been *deleting* colour-corrected exports since 1.0.5. On Windows the beta stops being a recorder with an editor bolted on: the zoom lane is editable, the inline preview finally shows what the exported file will actually look like, recordings no longer carry the yellow capture border, and HEVC exports are really HEVC.
