@@ -79,6 +79,7 @@
 		5B54272E2F21985F00B06BA6 /* NativeUIStringKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426FA2F21985F00B06BA6 /* NativeUIStringKey.swift */; };
 		5B54272F2F21985F00B06BA6 /* CaptureBackendFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426E52F21985F00B06BA6 /* CaptureBackendFactory.swift */; };
 		5B5427302F21985F00B06BA6 /* SaveFolderStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */; };
+		CA11AC0E2F30A00100KEEP01 /* KeepAwake.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11AC0E2F30A00100KEEP02 /* KeepAwake.swift */; };
 		5B5427312F21985F00B06BA6 /* NativeLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B54271A2F21985F00B06BA6 /* NativeLogger.swift */; };
 		193E0C2FDA9743A29C651BEA /* TrailingDebouncer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9C120E099404694B2032107 /* TrailingDebouncer.swift */; };
 		5B5427322F21985F00B06BA6 /* NativeChannel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B5426F72F21985F00B06BA6 /* NativeChannel.swift */; };
@@ -150,6 +151,7 @@
 		C4P71002CAP71002CAP71002 /* CaptionPreviewTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71001CAP71001CAP71001 /* CaptionPreviewTrack.swift */; };
 		12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */; };
 		B22CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */; };
+		B22KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift */; };
 		C4P71008CAP71008CAP71008 /* ExportCaptionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */; };
 		C4P71006CAP71006CAP71006 /* WhisperKitTranscriberTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71005CAP71005CAP71005 /* WhisperKitTranscriberTests.swift */; };
 		C4P71004CAP71004CAP71004 /* CaptionPreviewTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */; };
@@ -343,6 +345,7 @@
 		C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRendererTests.swift; sourceTree = "<group>"; };
 		0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrackTests.swift; sourceTree = "<group>"; };
 		A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionReflowParityTests.swift; sourceTree = "<group>"; };
+		A11KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KeepAwakeTests.swift; sourceTree = "<group>"; };
 		C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportCaptionWiringTests.swift; sourceTree = "<group>"; };
 		C4P71005CAP71005CAP71005 /* WhisperKitTranscriberTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WhisperKitTranscriberTests.swift; sourceTree = "<group>"; };
 		C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionPreviewTrackTests.swift; sourceTree = "<group>"; };
@@ -397,6 +400,7 @@
 		5B5427142F21985F00B06BA6 /* ro */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ro; path = Localizable.strings; sourceTree = "<group>"; };
 		5B5427172F21985F00B06BA6 /* PreferencesStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreferencesStore.swift; sourceTree = "<group>"; };
 		5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SaveFolderStore.swift; sourceTree = "<group>"; };
+		CA11AC0E2F30A00100KEEP02 /* KeepAwake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeepAwake.swift; sourceTree = "<group>"; };
 		5B54271A2F21985F00B06BA6 /* NativeLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLogger.swift; sourceTree = "<group>"; };
 		C9C120E099404694B2032107 /* TrailingDebouncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrailingDebouncer.swift; sourceTree = "<group>"; };
 		5B54271C2F21985F00B06BA6 /* CursorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorView.swift; sourceTree = "<group>"; };
@@ -696,6 +700,7 @@
 				C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */,
 				0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */,
 				A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */,
+				A11KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift */,
 				C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */,
 				C4P71005CAP71005CAP71005 /* WhisperKitTranscriberTests.swift */,
 				C4P71003CAP71003CAP71003 /* CaptionPreviewTrackTests.swift */,
@@ -1078,6 +1083,7 @@
 				D4A1B2C3D4E5F60718293A4B /* StorageInfoProvider.swift */,
 				5B5427172F21985F00B06BA6 /* PreferencesStore.swift */,
 				5B5427182F21985F00B06BA6 /* SaveFolderStore.swift */,
+				CA11AC0E2F30A00100KEEP02 /* KeepAwake.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -1590,6 +1596,7 @@
 				9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */,
 				12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */,
 				B22CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift in Sources */,
+				B22KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift in Sources */,
 				C4P71008CAP71008CAP71008 /* ExportCaptionWiringTests.swift in Sources */,
 				C4P71006CAP71006CAP71006 /* WhisperKitTranscriberTests.swift in Sources */,
 				C4P71004CAP71004CAP71004 /* CaptionPreviewTrackTests.swift in Sources */,
@@ -1616,6 +1623,7 @@
 				5B54272E2F21985F00B06BA6 /* NativeUIStringKey.swift in Sources */,
 				5B54272F2F21985F00B06BA6 /* CaptureBackendFactory.swift in Sources */,
 				5B5427302F21985F00B06BA6 /* SaveFolderStore.swift in Sources */,
+				CA11AC0E2F30A00100KEEP01 /* KeepAwake.swift in Sources */,
 				5B5427312F21985F00B06BA6 /* NativeLogger.swift in Sources */,
 				193E0C2FDA9743A29C651BEA /* TrailingDebouncer.swift in Sources */,
 				B8E100012F90000100A0B001 /* ExportMemory.swift in Sources */,

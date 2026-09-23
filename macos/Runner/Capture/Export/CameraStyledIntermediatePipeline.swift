@@ -668,7 +668,29 @@ final class CameraStyledIntermediatePipeline {
     writer.startSession(atSourceTime: .zero)
 
     writerInput.requestMediaDataWhenReady(on: renderQueue) { [weak self] in
-      guard let self else { return }
+      // Replying rather than returning silently. A bare `return` here left the
+      // export with no completion at all: no output file, no error, and — now
+      // that an export holds a sleep assertion released in that completion —
+      // a Mac that stays awake until the app quits. Unreachable today because
+      // LetterboxExporter owns this pipeline and self-retains in flight, but
+      // it was the one exit in the chain written to drop the reply. `finish`
+      // is once-guarded by `completed`, so this cannot double-report. See #565
+      // for the backpressure exits that have the same never-replies shape.
+      guard let self else {
+        finish(
+          .failure(
+            NSError(
+              domain: "Clingfy.Export",
+              code: -26,
+              userInfo: [
+                NSLocalizedDescriptionKey:
+                  "The styled camera intermediate render was released mid-flight."
+              ]
+            )
+          )
+        )
+        return
+      }
 
       while writerInput.isReadyForMoreMediaData {
         let shouldContinue = autoreleasepool { () -> Bool in
