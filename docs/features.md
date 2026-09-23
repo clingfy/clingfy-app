@@ -147,6 +147,7 @@ there, so there is nothing to ship).
 
 | Version | Headline features |
 |---|---|
+| 1.2.0 (2026-09-23) | A server error no longer revokes Pro (and a revocation now sticks); exports and recordings hold a sleep assertion so neither is killed by idle sleep; caption edits ~10x cheaper and project files ~8x smaller; subtitle destination is per-recording; an export can no longer stop silently under memory pressure |
 | 1.1.0 (2026-09-20) | Auto-subtitles on macOS, Apple silicon only (transcription, cue editor with undo/redo, burn-in, `.srt`/`.vtt`); Windows editable zoom lane, WYSIWYG inline preview, real cursor shapes, HEVC export; colour-graded exports no longer deleted |
 | 1.0.7 (2026-08-01) | GIF export with size presets, colour accuracy fixed capture-to-export, colour-grade undo/redo, pre-recording audio warnings |
 | 1.0.6 (2026-07-22) | Voice Cleanup (mic noise reduction), separated mic/system audio + WYSIWYG preview, opt-in echo removal, clip/color edit persistence |
