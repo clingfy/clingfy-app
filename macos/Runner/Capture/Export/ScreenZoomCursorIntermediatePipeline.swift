@@ -475,10 +475,21 @@ final class ScreenZoomCursorIntermediatePipeline {
             return false
           }
 
-          let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+          // Waits rather than abandoning the frame. Exceeding the pool's
+          // allocation threshold is ordinary backpressure — the writer is
+          // behind and buffers come back as it drains — but this used to
+          // `return false`, leaving the requestMediaDataWhenReady block with
+          // no sample appended, no markAsFinished() and no failure. The block
+          // is only re-invoked on a NO -> YES transition of
+          // isReadyForMoreMediaData and it was still YES on the way out, so
+          // the render simply stopped: no output file, no error, and a
+          // completion that never fired.
+          let allocation = awaitPooledPixelBuffer(
+            from: pixelBufferPool, isCancelled: isCancelled)
           if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+            // Waited the full timeout and the pool never recovered. Falls
+            // through to the guard below, which fails the export properly.
             logExportBackpressure(stage: "screen_prepass", frameIndex: frameIndex)
-            return false
           }
 
           guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
