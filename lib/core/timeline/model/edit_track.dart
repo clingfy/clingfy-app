@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/models/app_models.dart';
 
 /// The kind of an [EditTrack], used as the serialization discriminator.
@@ -326,6 +327,7 @@ final class CaptionTrack extends EditTrack {
     this.sourceLanguage,
     this.style = const CaptionStyle(),
     this.captions = const <Caption>[],
+    this.destination,
   });
 
   /// Whisper language code ('en', 'ar', 'ro'), or null when nothing has
@@ -334,6 +336,21 @@ final class CaptionTrack extends EditTrack {
   final String? sourceLanguage;
   final CaptionStyle style;
   final List<Caption> captions;
+
+  /// Where THIS project's subtitles go, or null to follow the app preference.
+  ///
+  /// The destination is deliberately a sticky global: someone who always burns
+  /// in for social should not re-pick it every recording, which is why
+  /// `postSubtitleMode` exists and why this field is null by default. What was
+  /// missing was any memory of a DEVIATION. Switching recording B to sidecar
+  /// silently changed recording A's next export too, because A had no opinion
+  /// of its own to consult -- the control showed the new value, so it was
+  /// discoverable, but nothing about A had changed.
+  ///
+  /// Null therefore means "this project never expressed a preference, use the
+  /// global", and a value means "the user set this here". Untouched projects
+  /// keep following the preference exactly as before.
+  final SubtitleMode? destination;
 
   @override
   TrackKind get kind => TrackKind.caption;
@@ -348,6 +365,10 @@ final class CaptionTrack extends EditTrack {
     if (language != null) 'language': language,
     if (sourceLanguage != null) 'sourceLanguage': sourceLanguage,
     'style': style.toMap(),
+    // Absent means "follow the app preference"; see [destination]. Writing a
+    // resolved value here instead would silently freeze every existing project
+    // to whatever the global happened to be on the day it was next saved.
+    if (destination != null) 'destination': destination!.wireValue,
     'captions': [for (final c in captions) c.toMap()],
   };
 
@@ -384,6 +405,9 @@ final class CaptionTrack extends EditTrack {
     style: m['style'] is Map
         ? CaptionStyle.fromMap(m['style'] as Map)
         : const CaptionStyle(),
+    destination: m['destination'] == null
+        ? null
+        : SubtitleMode.fromWire(m['destination'] as String?),
     captions: _decodeCues(m['captions']),
   );
 
@@ -426,6 +450,7 @@ final class CaptionTrack extends EditTrack {
     String? sourceLanguage,
     CaptionStyle? style,
     List<Caption>? captions,
+    SubtitleMode? destination,
   }) => CaptionTrack(
     id: id ?? this.id,
     enabled: enabled ?? this.enabled,
@@ -433,6 +458,9 @@ final class CaptionTrack extends EditTrack {
     sourceLanguage: sourceLanguage ?? this.sourceLanguage,
     style: style ?? this.style,
     captions: captions ?? this.captions,
+    // Set-only, like every other field here: nothing clears an override back
+    // to "follow the global", because no UI offers that.
+    destination: destination ?? this.destination,
   );
 }
 

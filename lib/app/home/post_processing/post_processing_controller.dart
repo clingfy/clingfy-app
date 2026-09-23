@@ -220,6 +220,11 @@ class PostProcessingController extends ChangeNotifier {
   CaptionsCapabilityInfo? _captionsCapability;
 
   List<Caption> _captions = const [];
+
+  /// This project's subtitle destination, or null to follow the app
+  /// preference. Mirrors `CaptionTrack.destination`; see that field for why a
+  /// null here is a real state and not a missing value.
+  SubtitleMode? _captionDestination;
   bool _captionsUseMic = true;
 
   /// The language the user asked for, or null for Auto (let the engine detect).
@@ -624,8 +629,15 @@ class PostProcessingController extends ChangeNotifier {
   /// The stored preference is overridden to [SubtitleMode.none] when there is
   /// no transcript, so a stored "burn in" never puts native into a caption
   /// path with an empty track.
-  SubtitleMode get exportSubtitleMode =>
-      _captions.isEmpty ? SubtitleMode.none : _settings.post.postSubtitleMode;
+  /// Where this export's subtitles go.
+  ///
+  /// The project's own choice wins when it has one; otherwise the app
+  /// preference does. Without the first half, switching recording B to sidecar
+  /// also changed what recording A exported the next time it was opened --
+  /// nothing about A had changed, but A had no opinion to consult.
+  SubtitleMode get exportSubtitleMode => _captions.isEmpty
+      ? SubtitleMode.none
+      : (_captionDestination ?? _settings.post.postSubtitleMode);
 
   /// Asks native whether captions are possible here, and seeds the source
   /// selection from what the recording actually contains.
@@ -830,8 +842,29 @@ class PostProcessingController extends ChangeNotifier {
   /// burned-in captions from the preview. Written directly, the preview would
   /// keep showing a burn-in the export is not going to produce.
   void setSubtitleMode(SubtitleMode value) {
-    if (value == _settings.post.postSubtitleMode) return;
+    // Against the EFFECTIVE mode, not the preference. Comparing against the
+    // global would refuse to record an override that happens to equal it --
+    // so a project pinned to sidecar could never be put back to burn-in while
+    // burn-in was the default, and the UI would show a value the export did
+    // not honour.
+    if (value == exportSubtitleMode && _captionDestination != null) return;
+
+    // Both: the preference stays the sticky default that seeds the next
+    // recording, and the project remembers that the user chose here.
     unawaited(_settings.post.updatePostSubtitleMode(value));
+    _captionDestination = value;
+    final projectPath = _projectPath;
+    if (projectPath != null) {
+      unawaited(
+        PostStateStore.update(projectPath, (state) {
+          final stored = state.trackOfType<CaptionTrack>();
+          // Nothing to pin a destination onto until a transcript exists; the
+          // preference governs until then, and generating one seeds from it.
+          if (stored == null) return state;
+          return state.withTrack(stored.copyWith(destination: value));
+        }),
+      );
+    }
     notifyListeners();
     unawaited(pushPreviewCaptions());
   }
@@ -939,6 +972,11 @@ class PostProcessingController extends ChangeNotifier {
     /// first place.
     String? detectedLanguage,
   }) {
+    // Mirrors the seed the store write below applies, so this session's
+    // exportSubtitleMode matches what was just persisted without waiting for a
+    // reload. Only fires when null, and when it is null the effective mode is
+    // this same preference — so it changes nothing until the global moves.
+    _captionDestination ??= _settings.post.postSubtitleMode;
     unawaited(
       PostStateStore.update(projectPath, (state) {
         final stored = state.trackOfType<CaptionTrack>();
@@ -952,16 +990,29 @@ class PostProcessingController extends ChangeNotifier {
         // text correction. Nothing in the app writes those fields yet, so this
         // is reachable today only through a bundle written by another build or
         // edited by hand; it stops being latent the moment anything does.
+        // Seeded, not resolved on read. A project that never picked a
+        // destination is pinned to whatever the preference is the first time
+        // it has a transcript, and from then on it owns that value.
+        //
+        // Without this the fix for #455 would not fix #455's own scenario: the
+        // user who leaves recording A on the default never records a deviation
+        // for A, so switching recording B to sidecar would still change what A
+        // exports. Seeding gives A an opinion at the one moment it is
+        // unambiguous -- the transcript it governs has just been made.
+        final destination =
+            stored?.destination ?? _settings.post.postSubtitleMode;
         return state.withTrack(
           stored?.copyWith(
                 captions: captions,
                 language: detectedLanguage ?? stored.language,
+                destination: destination,
               ) ??
               CaptionTrack(
                 captions: captions,
                 // Null when the engine could not say, and that is written as
                 // absent rather than guessed.
                 language: detectedLanguage,
+                destination: destination,
               ),
         );
       }),
@@ -1745,6 +1796,9 @@ class PostProcessingController extends ChangeNotifier {
       projectPath,
     ).trackOfType<CaptionTrack>();
     _captions = storedCaptions?.captions ?? const [];
+    // Null when this project never deviated, which is the common case and
+    // means the app preference still governs.
+    _captionDestination = storedCaptions?.destination;
     _hasEverGeneratedCaptions = _captions.isNotEmpty;
     // Another recording's manifest may still be installed natively.
     _pushedCaptionSignature = null;
