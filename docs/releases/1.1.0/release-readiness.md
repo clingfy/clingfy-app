@@ -46,13 +46,19 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze test`
-* [ ] `flutter analyze lib`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `dart format --output=none --set-exit-if-changed .`
+* [x] `flutter analyze test`
+* [x] `flutter analyze lib`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
-Notes:
+Notes: all five run on 532ee85, the merge that brought `develop` onto this branch.
+Clean: 387 files formatted with no changes, no analyzer issues in `lib` or
+`test`, and both flavours archived (Release-dev 122.7 MB, Release-prod
+108.2 MB). The only build output is RNNoise's SSE2 `#warning`, which is
+expected on this toolchain and predates the release. Re-run these if anything
+lands on the branch after this commit — they are cheap, and they are the only
+items on this page a machine can answer.
 
 *
 
