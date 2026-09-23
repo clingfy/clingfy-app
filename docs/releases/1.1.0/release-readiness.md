@@ -171,14 +171,22 @@ Notes:
 
 Ensure repository documentation and release tooling are in place.
 
-* [ ] release tooling documented in `ops/release/README.md`
-* [ ] `README.md` updated
-* [ ] `LICENSE` added
-* [ ] `LICENSING.md` added
-* [ ] `CONTRIBUTING.md` added
-* [ ] `SECURITY.md` added
+* [x] release tooling documented in `ops/release/README.md`
+* [x] `README.md` updated
+* [x] `LICENSE` added
+* [x] `LICENSING.md` added
+* [x] `CONTRIBUTING.md` added
+* [x] `SECURITY.md` added
 
-Notes:
+Notes: all six present. `ops/release/README.md` (176 lines) documents the
+current tooling including the per-provider credential categories, and was
+last updated 2026-09-22.
+
+`README.md` was NOT actually updated for this release and is ticked only
+because it has been now. Its feature list omitted auto-subtitles — the
+headline feature of 1.1.0 — and it said nothing about the release raising the
+macOS floor from 10.15 to 13, which is a hard gate a reader needs before they
+download. Both added.
 
 *
 
@@ -189,22 +197,68 @@ Notes:
 Verify the generated release artifacts before publishing.
 
 * [ ] DMG launches correctly
-* [ ] app icon and metadata appear correctly
-* [ ] auto-updater configuration verified
-* [ ] update channel configuration verified
-* [ ] application launches without console errors
+* [x] app icon and metadata appear correctly
+* [x] auto-updater configuration verified
+* [x] update channel configuration verified
+* [x] application launches without console errors
 
-Notes:
+Notes: verified on 2026-09-23 against the PUBLISHED artifact — downloaded
+`https://clingfy.com/updates/downloads/Clingfy_1.1.0.dmg` (51 MB, served
+2026-09-20T16:21:59Z) and mounted it, rather than inspecting a local build.
 
-*
+Metadata, all internally consistent and matching the appcast:
+`CFBundleShortVersionString` 1.1.0, `CFBundleVersion` 1001,
+`CFBundleIdentifier` com.clingfy.clingfy (the prod id, not `.dev`),
+`LSMinimumSystemVersion` 13.0 — which matches both the changelog's macOS 13
+claim and the appcast's `minimumSystemVersion`, while 1.0.7 and 1.0.6 stay at
+10.15 so users on older macOS are correctly held back. `AppIcon.icns` present
+and referenced by `CFBundleIconFile`.
+
+Gatekeeper: `spctl -a -t install` → **accepted**, `source=Notarized Developer
+ID`, `Developer ID Application: TIIN S.R.L. (46LWU2HLR5)`, hardened runtime on
+(`flags=0x10000(runtime)`), signed with a secure timestamp. The notarization
+ticket is stapled to the DMG (`stapler validate` passes), not to the inner
+`.app` — which is the normal shape.
+
+Updater chain verified end to end rather than by inspection: the shipped
+binary carries `SUFeedURL=https://clingfy.com/updates/appcast.xml`,
+`SUEnableAutomaticChecks=true`, and an `SUPublicEDKey` that MATCHES the repo's
+— so the EdDSA signatures on the live appcast entries are ones this build can
+actually verify. Both feeds return HTTP 200 (prod `clingfy.com/updates`, dev
+`dev.clingfy.com/updates`), and the prod feed lists 1.1.0, 1.0.7 and 1.0.6, so
+history is intact.
+
+"Launches without console errors" was checked on a `--flavor dev` debug run,
+not on this DMG (launching the signed prod build here would have muddied the
+dev install's state). It starts clean apart from two known dev-only lines: the
+Sentry release-tag warning, which only appears because `flutter run` passes no
+`FLUTTER_BUILD_NAME`/`NUMBER` — the release lanes do — and a 503 from
+`aws.dev.clingfy.ai`, which is the dev API deliberately parked at zero tasks
+(`clingfy-labs infra/aws/dev-park.sh`). Neither exists in a release build
+against the prod API.
+
+* Everything else on this page still needs a human. The driver cannot reach the
+  native overlay windows where **Stop** lives, so no recording flow, permission
+  prompt or overlay item above can be automated from here — and the export
+  items need a save dialog (`NSSavePanel`), which is equally out of reach.
 
 ---
 
 # First production run of the GitHub Actions lanes
 
-**`release-macos-prod.yml` and `release-windows-prod.yml` have never executed — 0 runs
-ever.** 1.1.0 is their first run, so it doubles as their first test. Everything below was
-established by a pre-flight audit on 2026-09-19, before any dispatch.
+**Both lanes have since run, successfully.** `release-macos-prod.yml` completed at
+2026-09-20T16:11:15Z and `release-windows-prod.yml` at 2026-09-20T16:24:24Z; tag `v1.1.0`
+exists and the appcast entry is dated 16:21:32 the same day. 1.1.0 is SHIPPED.
+
+The paragraph that stood here said they "have never executed — 0 runs ever" and that 1.1.0
+would be their first run. That was written by the pre-flight audit on 2026-09-19, *before*
+any dispatch, and stayed on the page afterwards — where it reads as current and says the
+opposite of the truth. Everything below is still the pre-flight record and is accurate as
+history.
+
+Note for the next release: `pubspec.yaml` is still `1.1.0+9`, unchanged since the tag,
+while 35 commits sit on `main` beyond it. See #572 — nothing can ship until the version
+moves, and the prod lane's Step 0.5 overwrite guard will refuse rather than clobber.
 
 ## Fixed before the cut
 
