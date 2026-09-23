@@ -28,10 +28,12 @@ final class KeepAwakeTests: XCTestCase {
     /// holds would then share an identifier and a leak could hide behind the
     /// arithmetic. Holding them keeps every identifier distinct.
     private var issued: [Token] = []
+    private(set) var modes: [KeepAwakeMode] = []
 
     final class Token {}
 
-    func begin(reason: String) -> Any {
+    func begin(reason: String, mode: KeepAwakeMode) -> Any {
+      modes.append(mode)
       let token = Token()
       lock.lock()
       beginsByReason.append(reason)
@@ -75,7 +77,7 @@ final class KeepAwakeTests: XCTestCase {
     let fake = FakeKeepAwake()
     let slot = KeepAwakeSlot(service: fake)
 
-    slot.acquire(reason: "export")
+    slot.acquire(reason: "export", mode: .system)
     XCTAssertTrue(slot.isHeld)
     XCTAssertEqual(fake.liveCount, 1)
 
@@ -102,7 +104,7 @@ final class KeepAwakeTests: XCTestCase {
     let fake = FakeKeepAwake()
     let slot = KeepAwakeSlot(service: fake)
 
-    slot.acquire(reason: "export")
+    slot.acquire(reason: "export", mode: .system)
     slot.release()
     slot.release()
 
@@ -121,8 +123,8 @@ final class KeepAwakeTests: XCTestCase {
     let fake = FakeKeepAwake()
     let slot = KeepAwakeSlot(service: fake)
 
-    slot.acquire(reason: "export A")
-    slot.acquire(reason: "export B")
+    slot.acquire(reason: "export A", mode: .system)
+    slot.acquire(reason: "export B", mode: .system)
 
     XCTAssertEqual(fake.begun, ["export A", "export B"])
     XCTAssertEqual(
@@ -142,7 +144,7 @@ final class KeepAwakeTests: XCTestCase {
     let slot = KeepAwakeSlot(service: fake)
 
     for index in 0..<25 {
-      slot.acquire(reason: "export \(index)")
+      slot.acquire(reason: "export \(index)", mode: .system)
       slot.release()
     }
 
@@ -163,7 +165,7 @@ final class KeepAwakeTests: XCTestCase {
     for index in 0..<200 {
       queue.async(group: group) {
         if index.isMultiple(of: 2) {
-          slot.acquire(reason: "export \(index)")
+          slot.acquire(reason: "export \(index)", mode: .system)
         } else {
           slot.release()
         }
@@ -184,9 +186,87 @@ final class KeepAwakeTests: XCTestCase {
   /// without shelling out to pmset.
   func testProcessInfoServiceRoundTripsAToken() {
     let service = ProcessInfoKeepAwake()
-    let token = service.begin(reason: "RunnerTests keep-awake probe")
+    let token = service.begin(
+      reason: "RunnerTests keep-awake probe", mode: .system)
     XCTAssertTrue(token is NSObjectProtocol)
     service.end(token)
+  }
+
+  // --- The mode split, and the owner's lifetime (#568) ----------------------
+
+  /// Recording needs the display; export must not have it.
+  ///
+  /// A display hold during export is a bug the user feels as a screen that
+  /// never dims while a file renders. A MISSING display hold during recording
+  /// is worse: the display sleeps and the recording captures black frames.
+  func testTheModeReachesTheService() {
+    let fake = FakeKeepAwake()
+    let slot = KeepAwakeSlot(service: fake)
+
+    slot.acquire(reason: "recording", mode: .systemAndDisplay)
+    slot.release()
+    slot.acquire(reason: "export", mode: .system)
+    slot.release()
+
+    XCTAssertEqual(fake.modes, [.systemAndDisplay, .system])
+  }
+
+  /// The real service must build DIFFERENT option sets, not collapse them.
+  func testOnlyRecordingModeHoldsTheDisplayAwake() {
+    let recording = ProcessInfoKeepAwake.activityOptions(for: .systemAndDisplay)
+    let exporting = ProcessInfoKeepAwake.activityOptions(for: .system)
+
+    XCTAssertTrue(
+      recording.contains(.idleDisplaySleepDisabled),
+      "a display that turns off records black frames")
+    XCTAssertFalse(
+      exporting.contains(.idleDisplaySleepDisabled),
+      "an export reads no pixels off the screen; holding the display awake "
+        + "for it is a screen that never dims while a file renders")
+
+    for options in [recording, exporting] {
+      XCTAssertTrue(
+        options.contains(.idleSystemSleepDisabled),
+        "both modes must stop the machine suspending")
+    }
+  }
+
+  /// And the real service still round-trips a token it can end.
+  func testProcessInfoRoundTripsBothModes() {
+    let service = ProcessInfoKeepAwake()
+    for mode in [KeepAwakeMode.system, .systemAndDisplay] {
+      let token = service.begin(reason: "RunnerTests probe", mode: mode)
+      XCTAssertTrue(token is NSObjectProtocol)
+      service.end(token)
+    }
+  }
+
+  /// A hold must not outlive its owner.
+  ///
+  /// The exporter gets away without this — one app-lifetime instance — but a
+  /// capture backend is built per recording and dropped wholesale when the
+  /// next one starts. A slot still holding when its owner is released would
+  /// leave the Mac awake with nothing alive to call release(), because
+  /// ProcessInfo's contract is endActivity, not token deallocation.
+  func testDeallocatingASlotReleasesItsHold() {
+    let fake = FakeKeepAwake()
+    do {
+      let slot = KeepAwakeSlot(service: fake)
+      slot.acquire(reason: "recording", mode: .systemAndDisplay)
+      XCTAssertEqual(fake.liveCount, 1)
+    }
+    XCTAssertEqual(
+      fake.liveCount, 0,
+      "a backend dropped mid-recording must not leave the Mac awake")
+  }
+
+  func testDeallocatingAnIdleSlotIsHarmless() {
+    let fake = FakeKeepAwake()
+    do {
+      _ = KeepAwakeSlot(service: fake)
+    }
+    XCTAssertEqual(fake.begun.count, 0)
+    XCTAssertEqual(fake.ended.count, 0)
   }
 
   /// The exporter exposes its slot so an export's acquire/release can be
