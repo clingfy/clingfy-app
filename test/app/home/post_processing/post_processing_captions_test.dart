@@ -754,7 +754,11 @@ void main() {
       post.captions.first.words,
       hasLength(2),
       reason:
-          'cut-reflow needs the timings; dropping them on an edit breaks it',
+          'word timings are kept in memory for future word-level editing. '
+          'Cut-reflow does NOT use them - caption_reflow rebuilds cues from '
+          'full text and never from a word subset - and since #442 they are '
+          'no longer persisted either. An edit must still carry them through '
+          'the session.',
     );
     expect(post.captions.first.words.first.endMs, 400);
   });
