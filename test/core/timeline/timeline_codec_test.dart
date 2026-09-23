@@ -124,7 +124,14 @@ void main() {
       final caption = decoded.trackOfType<CaptionTrack>()!;
       expect(caption.sourceLanguage, 'es');
       expect(caption.captions.single.translatedText, 'hola');
-      expect(caption.captions.single.words.single.text, 'hello');
+      expect(
+        caption.captions.single.words,
+        isEmpty,
+        reason:
+            'word timings are carried in memory but never written (#442) '
+            '- nothing in lib/ reads them, and persisting them made every '
+            'caption edit pay for ~590 KB of dead weight',
+      );
     });
   });
 
