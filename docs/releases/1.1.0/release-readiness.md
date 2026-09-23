@@ -46,13 +46,30 @@ flutter build macos --flavor prod
 
 Checklist:
 
-* [ ] `dart format --output=none --set-exit-if-changed .`
-* [ ] `flutter analyze test`
-* [ ] `flutter analyze lib`
-* [ ] `flutter build macos --flavor dev`
-* [ ] `flutter build macos --flavor prod`
+* [x] `dart format --output=none --set-exit-if-changed .`
+* [x] `flutter analyze test`
+* [x] `flutter analyze lib`
+* [x] `flutter build macos --flavor dev`
+* [x] `flutter build macos --flavor prod`
 
-Notes:
+Notes: all five re-run on 323a267, after `develop` was merged in again for
+#566 (export sleep assertion), #567 (export backpressure), #569 (recording
+sleep hold), #563 (word timings dropped from `post/state.json`) and #564
+(per-project subtitle destination). Clean: 388 files formatted with no
+changes, no analyzer issues in `lib` or `test`, both flavours archived
+(Release-dev 122.6 MB, Release-prod 108.1 MB), and the Dart suite at 1556.
+The only build output is RNNoise's SSE2 `#warning`, expected on this
+toolchain. Re-run these if anything lands on the branch after this commit —
+they are cheap, and they are the only items on this page a machine can
+answer.
+
+Everything below this section still needs a human at a Mac. The driver
+cannot reach the native overlay windows where Stop lives, so a
+start-then-stop recording loop breaks at the one button that matters.
+Worth weighting toward EXPORT this time: five of the six changes merged
+since the branch was cut touch the export or recording path, including
+four render hot paths and the export completion itself. A colour-graded
+export with captions on a long recording is where a regression would hide.
 
 *
 
