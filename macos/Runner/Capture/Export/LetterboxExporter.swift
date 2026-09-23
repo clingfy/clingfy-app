@@ -3125,7 +3125,8 @@ final class LetterboxExporter {
     // this is the point past which real work is guaranteed to start, and
     // released in the wrapped completion below — the single exit every one of
     // this function's ~20 paths funnels through.
-    exportKeepAwake.acquire(reason: "Clingfy is exporting a recording")
+    exportKeepAwake.acquire(
+      reason: "Clingfy is exporting a recording", mode: .system)
 
     NativeLogger.d(
       "Export", "Export lifetime: retention engaged",
