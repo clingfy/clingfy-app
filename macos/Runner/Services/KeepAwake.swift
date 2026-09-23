@@ -21,12 +21,29 @@ import Foundation
 /// entire render unprotected, while looking exactly like a working fix. The
 /// hold has to outlive the call, so it is an explicit token with the same
 /// lifetime as the export's own self-retention.
+/// What a hold keeps awake.
+enum KeepAwakeMode {
+  /// The machine keeps working; the display may still turn off. For work that
+  /// reads no pixels off the screen — an export renders from files.
+  case system
+
+  /// The machine AND the display stay on. For recording: a display that turns
+  /// off records black frames. Windows asks for the same split and says so in
+  /// `windows/runner/Services/keep_awake.h`.
+  case systemAndDisplay
+}
+
 protocol KeepAwake {
   /// Begins a hold. The returned token must be passed to [end].
   ///
   /// `reason` is user-visible: it appears in `pmset -g assertions`, which is
   /// what a support conversation reads to find out why a Mac would not sleep.
-  func begin(reason: String) -> Any
+  ///
+  /// `mode` is explicit at every call rather than defaulted. A default would
+  /// let a later edit widen what export holds without anyone noticing, and
+  /// export holding the display awake is a bug the user feels as a screen that
+  /// never dims.
+  func begin(reason: String, mode: KeepAwakeMode) -> Any
 
   /// Releases a hold taken by [begin]. Ending the same token twice is a
   /// programming error; call sites take-and-nil under a lock so it cannot
@@ -47,14 +64,33 @@ protocol KeepAwake {
 /// already implies it in the `NSActivityOptions` bitmask, so that a later edit
 /// to the options cannot silently drop sleep protection.
 ///
-/// No `.idleDisplaySleepDisabled`: an export reads no pixels off the screen,
-/// and the display turning off must not stop it. That mirrors the Windows
-/// split, where export uses `Mode::kSystem` and only recording asks for
-/// `kSystemAndDisplay` — there, a dark display records black frames.
+/// `.idleDisplaySleepDisabled` is added only for [KeepAwakeMode.systemAndDisplay].
+/// An export reads no pixels off the screen and must not stop the display
+/// turning off; a recording must, because a dark display records black frames.
 struct ProcessInfoKeepAwake: KeepAwake {
-  func begin(reason: String) -> Any {
+  /// The option set a mode maps to.
+  ///
+  /// Pulled out as a pure function so the decision can be asserted directly.
+  /// `ProcessInfo` offers no way to read back what an activity is holding, so
+  /// a test that only checked `beginActivity` returned something would pass
+  /// just as happily with the mode ignored — which is exactly the regression
+  /// worth catching, since it silently drops the display hold that keeps a
+  /// recording from capturing black frames.
+  static func activityOptions(for mode: KeepAwakeMode)
+    -> ProcessInfo.ActivityOptions
+  {
+    var options: ProcessInfo.ActivityOptions = [
+      .userInitiated, .idleSystemSleepDisabled,
+    ]
+    if mode == .systemAndDisplay {
+      options.insert(.idleDisplaySleepDisabled)
+    }
+    return options
+  }
+
+  func begin(reason: String, mode: KeepAwakeMode) -> Any {
     ProcessInfo.processInfo.beginActivity(
-      options: [.userInitiated, .idleSystemSleepDisabled],
+      options: Self.activityOptions(for: mode),
       reason: reason
     )
   }
@@ -89,8 +125,8 @@ final class KeepAwakeSlot {
   }
 
   /// Begins a hold, ending whatever this slot held before.
-  func acquire(reason: String) {
-    let fresh = service.begin(reason: reason)
+  func acquire(reason: String, mode: KeepAwakeMode) {
+    let fresh = service.begin(reason: reason, mode: mode)
     lock.lock()
     let previous = token
     token = fresh
@@ -119,5 +155,17 @@ final class KeepAwakeSlot {
     lock.lock()
     defer { lock.unlock() }
     return token != nil
+  }
+
+  /// Releases on deallocation, so the hold cannot outlive its owner.
+  ///
+  /// The exporter gets away without this — it is one app-lifetime instance —
+  /// but a capture backend is built per recording and dropped wholesale when
+  /// the next one starts (`ScreenRecorderFacade.setCaptureBackend`). A slot
+  /// that still held an activity when its owner was released would leave the
+  /// Mac awake with nothing left alive to call `release()`, because
+  /// `ProcessInfo`'s contract is `endActivity`, not token deallocation.
+  deinit {
+    release()
   }
 }
