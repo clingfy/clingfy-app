@@ -86,7 +86,14 @@ final class CursorRecorder {
   private var cursorRasterScale: Double = 1.0
   private var didLogRasterShape = false
   private let lock = NSLock()
-  private var activity: NSObjectProtocol?
+  // The sleep-prevention activity that used to live here moved to the two
+  // capture backends, which hold it for the length of a RECORDING SESSION.
+  // Keeping it here made sleep protection a side effect of cursor capture
+  // being on, and leaked it two ways: start() assigned unconditionally with
+  // no already-active guard (a second start orphaned the first token with
+  // nothing able to end it), and stop()'s `guard wasActive` returned before
+  // the release block, so a stop arriving in the window between taking the
+  // activity and setting isActive never released it. See #568.
 
   func start(displayID: CGDirectDisplayID, captureRect: CGRect?) {
     start(displayID: displayID, captureRect: captureRect, cursorRasterScale: 1.0)
@@ -118,11 +125,6 @@ final class CursorRecorder {
     let trusted = AXIsProcessTrustedWithOptions(options)
 
     NativeLogger.d("CursorRecorder", "AXIsProcessTrusted check", context: ["trusted": trusted])
-
-    self.activity = ProcessInfo.processInfo.beginActivity(
-      options: .userInitiated,
-      reason: "Cursor Recording"
-    )
 
     lock.lock()
     self.frames = []
@@ -187,11 +189,6 @@ final class CursorRecorder {
 
     stopSamplingTimer()
 
-    if let act = activity {
-      ProcessInfo.processInfo.endActivity(act)
-      activity = nil
-    }
-
     let localFrames: [CursorFrame]
     let localSprites: [CursorSprite]
     lock.lock()
@@ -222,11 +219,6 @@ final class CursorRecorder {
     isActive = false
     timer?.cancel()
     timer = nil
-
-    if let act = activity {
-      ProcessInfo.processInfo.endActivity(act)
-      activity = nil
-    }
 
     lock.lock()
     frames = []

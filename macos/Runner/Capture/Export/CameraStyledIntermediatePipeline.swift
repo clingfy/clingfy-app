@@ -668,7 +668,29 @@ final class CameraStyledIntermediatePipeline {
     writer.startSession(atSourceTime: .zero)
 
     writerInput.requestMediaDataWhenReady(on: renderQueue) { [weak self] in
-      guard let self else { return }
+      // Replying rather than returning silently. A bare `return` here left the
+      // export with no completion at all: no output file, no error, and — now
+      // that an export holds a sleep assertion released in that completion —
+      // a Mac that stays awake until the app quits. Unreachable today because
+      // LetterboxExporter owns this pipeline and self-retains in flight, but
+      // it was the one exit in the chain written to drop the reply. `finish`
+      // is once-guarded by `completed`, so this cannot double-report. See #565
+      // for the backpressure exits that have the same never-replies shape.
+      guard let self else {
+        finish(
+          .failure(
+            NSError(
+              domain: "Clingfy.Export",
+              code: -26,
+              userInfo: [
+                NSLocalizedDescriptionKey:
+                  "The styled camera intermediate render was released mid-flight."
+              ]
+            )
+          )
+        )
+        return
+      }
 
       while writerInput.isReadyForMoreMediaData {
         let shouldContinue = autoreleasepool { () -> Bool in
@@ -693,10 +715,21 @@ final class CameraStyledIntermediatePipeline {
             return false
           }
 
-          let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+          // Waits rather than abandoning the frame. Exceeding the pool's
+          // allocation threshold is ordinary backpressure — the writer is
+          // behind and buffers come back as it drains — but this used to
+          // `return false`, leaving the requestMediaDataWhenReady block with
+          // no sample appended, no markAsFinished() and no failure. The block
+          // is only re-invoked on a NO -> YES transition of
+          // isReadyForMoreMediaData and it was still YES on the way out, so
+          // the render simply stopped: no output file, no error, and a
+          // completion that never fired.
+          let allocation = awaitPooledPixelBuffer(
+            from: pixelBufferPool, isCancelled: isCancelled)
           if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+            // Waited the full timeout and the pool never recovered. Falls
+            // through to the guard below, which fails the export properly.
             logExportBackpressure(stage: "camera_styled_prepass", frameIndex: frameIndex)
-            return false
           }
 
           guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {

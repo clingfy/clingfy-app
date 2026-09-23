@@ -525,6 +525,23 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   private var recordingURL: URL?
   private var didStart: Bool = false
+
+  /// Keeps the machine and the DISPLAY awake for the length of a recording.
+  ///
+  /// The invariant is literal: this hold is held exactly when `didStart` is
+  /// true. `didStart` becomes true in one place and false in three, and each
+  /// of those four sites moves the hold with it — so "is the Mac awake?" has
+  /// the same answer as "are we recording?" and cannot drift.
+  ///
+  /// Before this, the only hold during a recording belonged to
+  /// `CursorRecorder`, which meant sleep protection was a side effect of
+  /// cursor capture being switched on. Two consequences, both real:
+  /// `startCursorSegmentIfNeeded` bails on `isRecorderExcluded`, so excluding
+  /// the recorder app from capture recorded with no protection at all; and
+  /// because SCK is SEGMENTED, pausing ran `stopCursorSegmentIfNeeded` ->
+  /// `cursorRecorder.stop` -> `endActivity`, dropping protection for the
+  /// length of the pause. A session-scoped hold has neither problem.
+  let recordingKeepAwake = KeepAwakeSlot()
   private var paused: Bool = false
   private var stopRequested: Bool = false
   private var runPhase: RunPhase = .idle
@@ -944,6 +961,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   private func initializeStartAttemptState(config: CaptureStartConfig, outputURL: URL) {
     didStart = false
+    recordingKeepAwake.release()
     paused = false
     stopRequested = false
     runPhase = .starting
@@ -1540,6 +1558,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
   private func resetState() {
     didStart = false
+    recordingKeepAwake.release()
     paused = false
     stopRequested = false
     runPhase = .idle
@@ -1578,7 +1597,15 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       cursorRecorder.cancel()
     }
     sourceAudioRecorder.cancelAndCleanup()
+    // Here as well as in resetState, not instead of it. This is a PARTIAL
+    // reset that always runs just before a terminal completion, and it clears
+    // didStart synchronously while that completion may defer resetState into
+    // a Task. Releasing only there would leave a window where didStart is
+    // false and the hold is still live -- and the one-shot terminal guard
+    // means a completion that has already fired never reaches resetState at
+    // all, which would strand the hold for good.
     didStart = false
+    recordingKeepAwake.release()
     paused = false
     stopRequested = false
     runPhase = .idle
@@ -1598,6 +1625,8 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     guard !didStart else { return }
 
     didStart = true
+    recordingKeepAwake.acquire(
+      reason: "Clingfy is recording your screen", mode: .systemAndDisplay)
     paused = false
     runPhase = .running
 

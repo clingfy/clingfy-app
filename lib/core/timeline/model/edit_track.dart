@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/models/app_models.dart';
 
 /// The kind of an [EditTrack], used as the serialization discriminator.
@@ -253,12 +254,29 @@ class Caption {
   final List<CaptionWord> words;
   final String? translatedText;
 
+  /// Word timings are deliberately NOT written.
+  ///
+  /// They are still carried in memory — native sends them with every segment
+  /// and [PostProcessingController] passes them through an edit — but nothing
+  /// in `lib/` reads their contents, so persisting them bought a project
+  /// bundle ~590 KB of dead weight and made every caption edit pay for it.
+  ///
+  /// Measured on a 400-cue transcript at 11 words per cue: 677,564 bytes with
+  /// them against 86,512 without, and a decode-plus-encode of 9.8 ms against
+  /// 1.0 ms. `PostStateStore.update` does that round trip synchronously on the
+  /// main isolate, debounced at 350 ms, so the cost landed as dropped frames
+  /// in the very panel the user was typing in.
+  ///
+  /// The one component that would plausibly want them refuses to use them —
+  /// see `caption_reflow.dart`, which rebuilds cues from full text and never
+  /// from a word subset. Restore this key when word-level editing actually
+  /// ships; [fromMap] still reads it, so projects written before this change
+  /// load without complaint and simply drop the timings on their next save.
   Map<String, dynamic> toMap() => {
     'id': id,
     'startMs': startMs,
     'endMs': endMs,
     'text': text,
-    'words': [for (final w in words) w.toMap()],
     if (translatedText != null) 'translatedText': translatedText,
   };
 
@@ -326,6 +344,7 @@ final class CaptionTrack extends EditTrack {
     this.sourceLanguage,
     this.style = const CaptionStyle(),
     this.captions = const <Caption>[],
+    this.destination,
   });
 
   /// Whisper language code ('en', 'ar', 'ro'), or null when nothing has
@@ -334,6 +353,21 @@ final class CaptionTrack extends EditTrack {
   final String? sourceLanguage;
   final CaptionStyle style;
   final List<Caption> captions;
+
+  /// Where THIS project's subtitles go, or null to follow the app preference.
+  ///
+  /// The destination is deliberately a sticky global: someone who always burns
+  /// in for social should not re-pick it every recording, which is why
+  /// `postSubtitleMode` exists and why this field is null by default. What was
+  /// missing was any memory of a DEVIATION. Switching recording B to sidecar
+  /// silently changed recording A's next export too, because A had no opinion
+  /// of its own to consult -- the control showed the new value, so it was
+  /// discoverable, but nothing about A had changed.
+  ///
+  /// Null therefore means "this project never expressed a preference, use the
+  /// global", and a value means "the user set this here". Untouched projects
+  /// keep following the preference exactly as before.
+  final SubtitleMode? destination;
 
   @override
   TrackKind get kind => TrackKind.caption;
@@ -348,6 +382,10 @@ final class CaptionTrack extends EditTrack {
     if (language != null) 'language': language,
     if (sourceLanguage != null) 'sourceLanguage': sourceLanguage,
     'style': style.toMap(),
+    // Absent means "follow the app preference"; see [destination]. Writing a
+    // resolved value here instead would silently freeze every existing project
+    // to whatever the global happened to be on the day it was next saved.
+    if (destination != null) 'destination': destination!.wireValue,
     'captions': [for (final c in captions) c.toMap()],
   };
 
@@ -384,6 +422,9 @@ final class CaptionTrack extends EditTrack {
     style: m['style'] is Map
         ? CaptionStyle.fromMap(m['style'] as Map)
         : const CaptionStyle(),
+    destination: m['destination'] == null
+        ? null
+        : SubtitleMode.fromWire(m['destination'] as String?),
     captions: _decodeCues(m['captions']),
   );
 
@@ -426,6 +467,7 @@ final class CaptionTrack extends EditTrack {
     String? sourceLanguage,
     CaptionStyle? style,
     List<Caption>? captions,
+    SubtitleMode? destination,
   }) => CaptionTrack(
     id: id ?? this.id,
     enabled: enabled ?? this.enabled,
@@ -433,6 +475,9 @@ final class CaptionTrack extends EditTrack {
     sourceLanguage: sourceLanguage ?? this.sourceLanguage,
     style: style ?? this.style,
     captions: captions ?? this.captions,
+    // Set-only, like every other field here: nothing clears an override back
+    // to "follow the global", because no UI offers that.
+    destination: destination ?? this.destination,
   );
 }
 

@@ -39,6 +39,12 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
   var onMicrophoneLevel: ((MicrophoneLevelSample) -> Void)?
 
   private let cursorRecorder = CursorRecorder()
+
+  /// Session-scoped sleep hold; see the SCK backend for why it is not
+
+  /// CursorRecorder's job any more.
+
+  let recordingKeepAwake = KeepAwakeSlot()
   private var smoothedMicLevelLinear: Double = 0.0
   private var lastMicLevelEmitAt: CFTimeInterval = 0.0
   private let micLevelEmitInterval: Double = 1.0 / 15.0
@@ -248,6 +254,12 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     didStartRecordingTo fileURL: URL,
     from connections: [AVCaptureConnection]
   ) {
+    // The recording's own hold, no longer a side effect of cursor capture
+    // being on. Display as well as system: a display that turns off records
+    // black frames. Pause and resume below are pass-throughs on this backend,
+    // so the hold survives them without extra work.
+    recordingKeepAwake.acquire(
+      reason: "Clingfy is recording your screen", mode: .systemAndDisplay)
     cursorRecorder.start(
       displayID: currentDisplayID,
       captureRect: currentCaptureRect,
@@ -286,6 +298,12 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     from connections: [AVCaptureConnection],
     error: Error?
   ) {
+    // Released unconditionally and FIRST, not inside the cursor stop
+    // completion below. Hanging it off that completion would make the hold's
+    // lifetime a property of CursorRecorder again -- the coupling this change
+    // exists to remove -- and that closure captures self weakly, so a released
+    // pipeline would skip it entirely.
+    recordingKeepAwake.release()
     microphoneLevelOutput?.setSampleBufferDelegate(nil, queue: nil)
     microphoneLevelOutput = nil
     resetMicrophoneLevelSmoothing()

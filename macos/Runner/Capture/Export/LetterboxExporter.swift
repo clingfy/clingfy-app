@@ -88,6 +88,13 @@ final class LetterboxExporter {
   private let inFlightRetentionLock = NSLock()
   private var inFlightSelfRetain: LetterboxExporter?
   private var inFlightExportGeneration = 0
+  /// Keeps the Mac awake for the life of an export. Same lifetime problem as
+  /// the self-retention above and therefore the same mechanism: the hold has
+  /// to outlive `export()`, which returns as soon as the pipeline is armed.
+  /// The slot ends a previous hold rather than orphaning it, which matters
+  /// because a re-entrant export overwrites these fields before the previous
+  /// export is told to stop.
+  var exportKeepAwake = KeepAwakeSlot()
   private let validationSampleDimension = 64
   private let validationAlphaThreshold: UInt8 = 8
   private let validationNonBlackThreshold: UInt8 = 12
@@ -2701,10 +2708,21 @@ final class LetterboxExporter {
             return false
           }
 
-          let allocation = makePooledPixelBuffer(from: pixelBufferPool)
+          // Waits rather than abandoning the frame. Exceeding the pool's
+          // allocation threshold is ordinary backpressure — the writer is
+          // behind and buffers come back as it drains — but this used to
+          // `return false`, leaving the requestMediaDataWhenReady block with
+          // no sample appended, no markAsFinished() and no failure. The block
+          // is only re-invoked on a NO -> YES transition of
+          // isReadyForMoreMediaData and it was still YES on the way out, so
+          // the render simply stopped: no output file, no error, and a
+          // completion that never fired.
+          let allocation = awaitPooledPixelBuffer(
+            from: pixelBufferPool, isCancelled: { self.isCancelled })
           if allocation.status == kCVReturnWouldExceedAllocationThreshold {
+            // Waited the full timeout and the pool never recovered. Falls
+            // through to the guard below, which fails the export properly.
             logExportBackpressure(stage: "final_export", frameIndex: videoFrameIndex)
-            return false
           }
 
           guard allocation.status == kCVReturnSuccess, let renderedPixelBuffer = allocation.pixelBuffer else {
@@ -3101,6 +3119,15 @@ final class LetterboxExporter {
     inFlightSelfRetain = self
     inFlightRetentionLock.unlock()
 
+    // Idle sleep would kill the render outright: the machine suspends, the
+    // media stack is invalidated, and the user comes back to no output file
+    // and no error. Acquired here rather than at the channel boundary because
+    // this is the point past which real work is guaranteed to start, and
+    // released in the wrapped completion below — the single exit every one of
+    // this function's ~20 paths funnels through.
+    exportKeepAwake.acquire(
+      reason: "Clingfy is exporting a recording", mode: .system)
+
     NativeLogger.d(
       "Export", "Export lifetime: retention engaged",
       context: ["generation": exportGeneration])
@@ -3113,6 +3140,14 @@ final class LetterboxExporter {
         inFlightSelfRetain = nil
       }
       inFlightRetentionLock.unlock()
+      if matched {
+        // Only the current export's completion releases. A previous export's
+        // completion arriving late must not end the hold the export now
+        // running depends on — the same reason the retention above is
+        // generation-guarded. The previous export's own hold was already
+        // ended by `acquire`, which replaces rather than orphans.
+        exportKeepAwake.release()
+      }
       NativeLogger.d(
         "Export", "Export lifetime: retention released",
         context: ["generation": exportGeneration, "matched": matched])
