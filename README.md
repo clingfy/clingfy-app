@@ -63,6 +63,7 @@ Key goals:
 - Use **zoom-follow effects** and fixed-target zoom segments
 - Preview recordings before exporting
 - **Split, cut, trim, and reorder clips** on the timeline — with undo/redo, smooth playback through cuts, and edits baked into the export
+- Generate **auto-subtitles** on-device — transcription runs on your Mac, nothing is uploaded — with an editable cue list, captions in the live preview, and a choice of where they go on export: off, burned in, `.srt`/`.vtt` beside the video, or both (Apple silicon only)
 - Apply **color correction**: one-click auto enhance or manual exposure, contrast, saturation, temperature, and tint
 - Adjust **audio gain** and **normalize loudness** on export
 - Export with aspect ratio presets such as **16:9**, **9:16**, and more
@@ -103,6 +104,10 @@ Privacy & analytics — what the app measures, and how to turn it off:
 ---
 
 # Installation
+
+**Requires macOS 13 or later.** The on-device speech engine behind subtitles
+sets a build-level platform minimum, so 1.1.0 raised the floor from macOS
+10.15. If you are on 10.15, 11 or 12, 1.0.7 is the last build for you.
 
 Download the latest official build from:
 
