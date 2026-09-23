@@ -1,9 +1,9 @@
 #!/usr/bin/env pwsh
 #Requires -Version 7
-# 04_publish_azure.ps1
+# 04_publish.ps1
 #
 # Phase 10.5 (Windows installer + release pipeline): publishes the Windows
-# installer to the same Azure release storage the macOS lane uses, under a
+# installer to the same release storage the macOS lane uses, under a
 # windows/ prefix so the artifacts can never collide with the DMGs and
 # Sparkle deltas:
 #
@@ -16,13 +16,17 @@
 # a client-only change.
 #
 # Mechanics mirror commands/publish_release.sh: one cloud CLI, federated identity
-# (`--auth-mode login` — run `az login` first; no account keys or SAS), blob
-# overwrite, then — only when a Front Door endpoint is configured — an Azure
-# Front Door purge of exactly the touched paths. dev and prod are blob-direct
-# (no CDN) as of 2026-07, so the purge is skipped. The AZ_* settings come from
+# (GitHub OIDC in CI, `aws sso login` locally; no stored keys), object overwrite,
+# then a CloudFront invalidation of exactly the touched paths. The settings come from
 # the environment first with the channel's .env file as fallback (environment
-# variables always win); only AZ_STORAGE_ACCOUNT and AZ_CDN_ENDPOINT are
-# required, the purge settings are optional.
+# variables always win); on the aws provider AWS_RELEASES_BUCKET,
+# AWS_CLOUDFRONT_DISTRIBUTION_ID and the public endpoint (AWS_PUBLIC_ENDPOINT, or
+# RELEASE_PUBLIC_ENDPOINT to override it) are ALL required and validated before any
+# bytes move. Nothing here is optional any more: the old Front Door purge settings
+# went with the azure arm, and the invalidation is required rather than
+# nice-to-have because latest-windows.json is republished on every run, so without
+# it the edge keeps serving the previous release while S3 already holds the new
+# bytes.
 
 [CmdletBinding()]
 param(
@@ -49,7 +53,7 @@ param(
 
 . (Join-Path $PSScriptRoot '_config.ps1')
 
-Write-Step "Publishing to Azure ($Channel)"
+Write-Step "Publishing ($Channel)"
 $initArgs = @{ Channel = $Channel }
 if ($EnvFile) { $initArgs.EnvFile = $EnvFile }
 $Ctx = Initialize-WindowsReleaseContext @initArgs
@@ -70,9 +74,9 @@ $downloadBaseUrl = Get-WindowsDownloadBaseUrl $Ctx
 # one unverified. It only stayed dormant because windows-latest ships az.
 #
 # It has to run HERE rather than earlier: Initialize-WindowsReleaseContext leaves
-# StorageProvider as $null (_config.ps1:289) and Import-AzurePublishSettings is what
-# sets it (_config.ps1:323), so dispatching any earlier reads $null and always takes
-# the Azure branch. Mirrors require_release_storage_cli() in ops/release/lib/env.sh.
+# StorageProvider as $null and Import-AzurePublishSettings is what sets it, so
+# dispatching any earlier reads $null and always takes the fallback arm.
+# Mirrors require_release_storage_cli() in ops/release/lib/env.sh.
 switch ($Ctx.StorageProvider) {
   'aws' {
     $cli = Get-Command aws -ErrorAction SilentlyContinue
@@ -83,14 +87,13 @@ switch ($Ctx.StorageProvider) {
     }
     Write-Info "aws: $($cli.Source)"
   }
+  'none' {
+    # No storage target, so no CLI to require. The publish steps below refuse
+    # before they move anything.
+    Write-Info "provider none: this channel does not publish"
+  }
   default {
-    $cli = Get-Command az -ErrorAction SilentlyContinue
-    if (-not $cli) {
-      Fail ("Azure CLI (az) not found on PATH, and this channel publishes to Azure blob storage. Install it first:`n" +
-        "  winget install Microsoft.AzureCLI`n" +
-        "  # then: az login")
-    }
-    Write-Info "az: $($cli.Source)"
+    Fail "RELEASE_STORAGE_PROVIDER must be 'aws' or 'none', got '$($Ctx.StorageProvider)'."
   }
 }
 
@@ -146,18 +149,8 @@ function Test-BlobExists([string]$BlobName) {
     return $true
   }
 
-  $exists = & az storage blob exists `
-    --account-name $Ctx.AzStorageAccount `
-    --container-name $Ctx.AzContainer `
-    --name $BlobName `
-    --auth-mode login `
-    --query exists -o tsv 2>$null
-  if ($LASTEXITCODE -ne 0) {
-    # Can't tell -- treat as "not there" and let the upload surface the real
-    # auth/network error, rather than blocking a release on a failed probe.
-    return $false
-  }
-  return ($exists -eq 'true')
+  Fail ("Test-BlobExists: StorageProvider '$($Ctx.StorageProvider)' has no storage to " +
+    "probe. Only 'aws' publishes; the '$($Ctx.Channel)' channel does not.")
 }
 
 # Content-Type must be explicit on S3: `aws s3 cp` guesses from the extension and would upload the
@@ -197,17 +190,10 @@ function Publish-Blob([string]$File, [string]$BlobName, [switch]$IsPointer) {
     return
   }
 
-  & az storage blob upload `
-    --account-name $Ctx.AzStorageAccount `
-    --container-name $Ctx.AzContainer `
-    --file $File `
-    --name $BlobName `
-    --auth-mode login `
-    --overwrite `
-    --only-show-errors | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Fail "az storage blob upload failed for $BlobName with exit code $LASTEXITCODE."
-  }
+  # No silent alternate path. Falling through here used to upload to Azure blob storage;
+  # both release accounts were deleted 2026-09-15, so it was an upload into nothing.
+  Fail ("Cannot upload ${BlobName}: StorageProvider '$($Ctx.StorageProvider)' has no " +
+    "storage target. Only 'aws' publishes; the '$($Ctx.Channel)' channel does not.")
 }
 
 $uploadTarget = if ($Ctx.StorageProvider -eq 'aws') {
@@ -255,26 +241,8 @@ if ($Ctx.StorageProvider -eq 'aws') {
       "edge keeps serving the previous release and no installed app sees this one. " +
       "The bytes are already in S3 - re-run the invalidation, then re-verify the feed.")
   }
-} elseif ($Ctx.AzFrontDoorEndpointName) {
-  Write-Step 'Purging Azure Front Door cache'
-  $purgePaths = @(
-    "/$prefix/$($Ctx.InstallerName)",
-    "/$prefix/$($Ctx.InstallerName).sha256",
-    "/$prefix/latest-windows.json"
-  )
-  & az afd endpoint purge `
-    --resource-group $Ctx.AzResourceGroup `
-    --profile-name $Ctx.AzCdnProfile `
-    --endpoint-name $Ctx.AzFrontDoorEndpointName `
-    --domains $Ctx.AzCdnEndpoint `
-    --content-paths @($purgePaths) `
-    --only-show-errors | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    Fail "az afd endpoint purge failed with exit code $LASTEXITCODE."
-  }
-  Write-Info "purged: $($purgePaths -join ', ')"
 } else {
-  Write-Step 'No Front Door configured (blob-direct); skipping cache purge'
+  Write-Step "No CDN invalidation for provider '$($Ctx.StorageProvider)'"
 }
 
 # --- Smoke test --------------------------------------------------------------------

@@ -397,6 +397,19 @@ class HomeActions {
       if (!context.mounted) return;
     }
 
+    // Pressing Export is the moment the user actually feels a licence check
+    // that never reached the server, so ask once more before blocking them.
+    // Bounded on purpose: the service waits up to 15s for a reply, and a
+    // dead backend must not freeze the button for that long. On timeout we
+    // fall through with the state we already had — the same answer, just
+    // sooner. The check itself no-ops unless the state is unverified.
+    if (licenseController.isUnverified) {
+      await licenseController
+          .revalidateIfUnverified(force: true)
+          .timeout(const Duration(seconds: 4), onTimeout: () {});
+      if (!context.mounted) return;
+    }
+
     if (!licenseController.canExport) {
       unawaited(
         ClingfyTelemetry.addUiBreadcrumb(

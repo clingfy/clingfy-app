@@ -30,13 +30,14 @@ protocol CaptionTranscriber {
   ///     labelled everything "Preparing", so a first run looked frozen.
   ///   - isCancelled: polled during decoding. Returning `true` must abandon the
   ///     run promptly and throw `TranscriptionError.cancelled`.
-  /// - Returns: segments in SOURCE time, ordered, non-overlapping.
+  /// - Returns: segments in SOURCE time, ordered, non-overlapping, plus the
+  ///   language the engine decoded (nil when it cannot say).
   func transcribe(
     url: URL,
     options: TranscriptionOptions,
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
-  ) throws -> [TranscribedSegment]
+  ) throws -> TranscriptionOutcome
 
   /// Whether the engine is touching its model files right now.
   ///
@@ -45,6 +46,17 @@ protocol CaptionTranscriber {
   /// directory after the user has moved on, and deleting the model underneath
   /// that leaves a half-written tree the next run will happily load.
   var isEngineBusy: Bool { get }
+
+  /// Whether the model's weights are in memory right now.
+  ///
+  /// Narrower than `isEngineBusy` and not derivable from it. Busyness is
+  /// deliberately wide -- it covers a cancelled download still writing into the
+  /// model directory -- while residency is the single fact a Delete-model
+  /// prompt needs in order to say "this also unloads it". Between jobs a loaded
+  /// model is resident and nothing is busy, so reading one for the other is
+  /// wrong in exactly the state the user is most likely to be in when they
+  /// reach for Delete.
+  var isModelResident: Bool { get }
 
   /// Drops the loaded model so its files can be removed.
   ///
@@ -66,6 +78,8 @@ extension CaptionTranscriber {
   // Defaulted so the existing test doubles keep compiling: only the real engine
   // owns a model on disk. A double holding nothing has, trivially, released it.
   var isEngineBusy: Bool { false }
+  /// A double holds no weights, so it is trivially not resident.
+  var isModelResident: Bool { false }
   func releaseModel() async -> Bool { true }
 }
 
@@ -110,6 +124,27 @@ enum TranscriberAvailability: Equatable {
 /// Source time because the composition and every baked effect are in source
 /// time; converting to edited time happens later, at the point cues are mapped
 /// for the sidecar. See `CaptionCueTrack`.
+/// What one transcription run produced.
+///
+/// A struct rather than `[TranscribedSegment]` because the detected language is
+/// a fact about the RUN, not about any one segment, and there was nowhere to
+/// put it. Returning it here rather than exposing it as a property on the
+/// transcriber is deliberate: a property would be read after the fact, from
+/// another thread, with nothing tying it to the run it describes -- and a
+/// side-channel that callers can forget to read is the shape that let the
+/// inline-camera captions go missing (#449).
+struct TranscriptionOutcome: Equatable {
+  let segments: [TranscribedSegment]
+
+  /// The language the engine actually decoded, as a Whisper code ("en", "ar").
+  ///
+  /// nil when the implementation cannot say. It is NOT defaulted to "en":
+  /// every persisted caption track claimed English regardless of what was
+  /// spoken, which is wrong metadata that a later translation or tagged-sidecar
+  /// pass would trust. Absent and English must stay distinguishable.
+  let detectedLanguage: String?
+}
+
 struct TranscribedSegment: Equatable {
   let startMs: Int
   let endMs: Int

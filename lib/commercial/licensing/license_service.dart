@@ -24,19 +24,60 @@ class LicenseService {
   static const String _firstActivatedAtStorageKey = 'first_activated_at';
   static const String _fallbackHardwareIdStorageKey = 'fallback_hardware_id';
 
+  /// How long to wait for `/v1/validate-license` before treating the call as
+  /// unanswered. package:http has no default timeout, so without this a
+  /// half-open connection — an ALB that accepted the socket but has nothing
+  /// behind it — leaves entitlement pending forever and the offline grace
+  /// never runs at all. A timeout throws, which is already the path that
+  /// reaches [_checkOfflineLicense].
+  static const Duration defaultValidateTimeout = Duration(seconds: 15);
+
+  /// Whether [statusCode] means "ask again later" rather than "this licence is
+  /// not valid".
+  ///
+  /// The distinction decides whether a paying customer keeps Pro. A 4xx is the
+  /// server ANSWERING about this licence (expired, revoked, unknown key), so it
+  /// is a verdict and [validateLicense] returns a hard error. A 5xx, a 408, or
+  /// a 429 is the server FAILING TO ANSWER — we learned nothing about the
+  /// licence, so the 7-day offline grace applies exactly as it does when the
+  /// network is down.
+  ///
+  /// Before this existed, an outage was punished HARDER than being offline: a
+  /// dead socket throws and lands in the `catch` that grants the grace, while a
+  /// 503 returns normally and fell through to `LICENSE_VALIDATION_FAILED`,
+  /// revoking Pro instantly. Clingfy's own dev API is parked at zero tasks to
+  /// save Fargate cost (clingfy-labs `infra/aws/dev-park.sh`), so its ALB
+  /// answers 503 as a matter of routine — this path is walked daily, not only
+  /// during a production incident.
+  ///
+  /// This grants nothing a determined user cannot already take: blackholing the
+  /// API with a hosts entry or a firewall reject throws, and has always been
+  /// given the same 7 days. Nor can it extend the window — `last_check` is
+  /// written only on a 200, so the grace still expires 7 days after the last
+  /// genuine success no matter how many 503s arrive in between.
+  static bool isTransientStatus(int statusCode) {
+    if (statusCode >= 500) {
+      return true;
+    }
+    return statusCode == 408 || statusCode == 429;
+  }
+
   final FlutterSecureStorage _storage;
   final DateTime _appBuildDate = BuildConfig.buildDate;
 
   final http.Client _httpClient;
   final Future<String> Function()? _hardwareIdProvider;
+  final Duration _validateTimeout;
 
   LicenseService({
     FlutterSecureStorage? storage,
     http.Client? httpClient, // Allow injecting a client for testing
     Future<String> Function()? hardwareIdProvider,
+    Duration? validateTimeout, // Shortened in tests; see defaultValidateTimeout
   }) : _storage = storage ?? const FlutterSecureStorage(),
        _httpClient = httpClient ?? HttpLoggerClient(http.Client()),
-       _hardwareIdProvider = hardwareIdProvider;
+       _hardwareIdProvider = hardwareIdProvider,
+       _validateTimeout = validateTimeout ?? defaultValidateTimeout;
 
   Future<String?> readStoredLicenseKey() {
     return _storage.read(key: _licenseKeyStorageKey);
@@ -60,24 +101,51 @@ class LicenseService {
         body['license_key'] = trimmedKey;
       }
 
-      final response = await _httpClient.post(
-        Uri.parse(_validateUrl),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
+      final response = await _httpClient
+          .post(
+            Uri.parse(_validateUrl),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(_validateTimeout);
 
       final data = _decodeMap(response.body);
 
       if (response.statusCode == 200) {
         var state = LicenseState.fromJson(data);
-        await _saveLicenseLocally(trimmedKey, data);
-        if (trimmedKey != null && trimmedKey.isNotEmpty && state.entitledPro) {
-          await _persistFirstActivatedAtIfMissing(
-            candidate: state.memberSince ?? state.activatedAt,
-          );
+        if (await _verdictConcernsOurLicence(
+          requestedKey: trimmedKey,
+          accepted: state.isValid,
+        )) {
+          await _saveLicenseLocally(trimmedKey, data);
+          if (trimmedKey != null &&
+              trimmedKey.isNotEmpty &&
+              state.entitledPro) {
+            await _persistFirstActivatedAtIfMissing(
+              candidate: state.memberSince ?? state.activatedAt,
+            );
+          }
         }
         state = await _applyFirstActivatedFallback(state);
         return state;
+      }
+
+      if (isTransientStatus(response.statusCode)) {
+        return _checkOfflineLicense();
+      }
+
+      // A 4xx is the server answering. When it is answering about the licence
+      // this install holds, that answer has to reach the cache, or the grace
+      // path will keep handing back the entitlement it just denied. Measured
+      // before this existed: 401 LICENSE_REVOKED left `license_data` saying
+      // "valid lifetime", and the very next 503 -- or any offline launch --
+      // returned entitledPro true for up to 7 more days. Revocation was
+      // session-scoped when it needed to be durable.
+      if (await _verdictConcernsOurLicence(
+        requestedKey: trimmedKey,
+        accepted: false,
+      )) {
+        await _saveLicenseLocally(trimmedKey, data);
       }
 
       return LicenseState.error(
@@ -260,6 +328,67 @@ class LicenseService {
         .trim()
         .toLowerCase();
     return cleaned.isEmpty ? null : cleaned;
+  }
+
+  /// Whether a server verdict may be written to local storage.
+  ///
+  /// `license_key`, `license_data` and `last_check` are one record — "the
+  /// licence this install holds, and when the server last spoke about it" —
+  /// and [_checkOfflineLicense] reads all three back together. So the question
+  /// is never "may we write the key" but "is this answer about OUR licence".
+  ///
+  /// Three cases may persist:
+  ///
+  /// 1. No key was asked about. The server answered about this DEVICE (trial
+  ///    exports are keyed on `hardware_id`), which is the only answer there
+  ///    is. Guarded on nothing being stored, so a device-level reply can never
+  ///    overwrite a real licence.
+  /// 2. The server ACCEPTED the key. Either it is the one we hold, or a
+  ///    deliberate swap — a second licence, an upgrade, a renewal. Gated on
+  ///    `valid` rather than `entitled_pro` on purpose: a genuine lifetime key
+  ///    whose update window lapsed answers valid-but-not-entitled, and it
+  ///    still has to be storable or the owner can never reach the "Extend
+  ///    updates" action without retyping the key every launch.
+  /// 3. The server REJECTED the key, and it is the key we hold. That is a
+  ///    verdict on our own licence — a refund, a chargeback, a revoked seat —
+  ///    and it must land, or the cache outlives it.
+  ///
+  /// What this refuses is the fourth case: a verdict about a key that is not
+  /// ours. A customer with a good licence mistypes one in the paywall, the
+  /// server says `{"valid":false,"reason":"LICENSE_NOT_FOUND"}` about the
+  /// TYPO, and before this we wrote that over their licence — key, data and
+  /// the grace clock. [LicenseController.activateKey] re-validates the
+  /// previous key immediately after, so a healthy backend repaired it on the
+  /// next round trip; a 5xx on that second call did not, and the user landed
+  /// on the grace path reading the cache the first call had just destroyed.
+  ///
+  /// Keeping `last_check` out of that case matters on its own: it means "the
+  /// last time the server confirmed the licence we cached". Letting a question
+  /// about someone else's key advance it would let anyone extend their own
+  /// offline window by typing nonsense into the paywall.
+  Future<bool> _verdictConcernsOurLicence({
+    required String? requestedKey,
+    required bool accepted,
+  }) async {
+    final requested = _canonicalKey(requestedKey);
+    if (requested == null) {
+      return _canonicalKey(await _storage.read(key: _licenseKeyStorageKey)) ==
+          null;
+    }
+    if (accepted) {
+      return true;
+    }
+    return requested ==
+        _canonicalKey(await _storage.read(key: _licenseKeyStorageKey));
+  }
+
+  /// Licence keys are compared case- and whitespace-insensitively: the value
+  /// a user retypes into the paywall is the same licence even when the casing
+  /// differs, and treating it as a different one would send a revocation down
+  /// the "not our key" path.
+  static String? _canonicalKey(String? raw) {
+    final trimmed = raw?.trim().toUpperCase();
+    return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
   }
 
   Future<void> _saveLicenseLocally(
@@ -491,6 +620,20 @@ class LicenseState {
   });
 
   LicensePlan get planType => licensePlanFromWire(plan);
+
+  /// Whether this state came back WITHOUT the server having answered.
+  ///
+  /// The two grace-path outcomes: we served a cached licence, or we had no
+  /// usable cache and asked for internet. Both mean "we never reached the
+  /// backend", which is the only situation worth asking again about.
+  ///
+  /// Everything else is a verdict — expired, revoked, not found, not entitled
+  /// — and re-asking would hammer the API on behalf of users who genuinely are
+  /// not licensed. Derived from our own error codes rather than a wire field
+  /// so a response body can never talk the client into retrying.
+  bool get isUnverified =>
+      message == LicenseErrorCodes.offlineCached ||
+      message == LicenseErrorCodes.internetRequired;
 
   factory LicenseState.fromJson(Map<String, dynamic> json) {
     final valid = LicenseService._asBool(json['valid']) ?? false;

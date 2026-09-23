@@ -9,10 +9,15 @@ enum CaptionsUnavailableReason {
   /// Below the transcription engine's minimum macOS.
   unsupportedOs('unsupportedOS'),
 
-  /// Intel Mac. The engine builds there but has no Neural Engine, so it falls
-  /// back to CPU and is slow. Deliberately distinct from a hard block — the
-  /// honest message is "this will take a while", not "you cannot".
-  intelSlowPath('intelSlowPath'),
+  /// Intel Mac. The engine needs the Neural Engine, so subtitles are not
+  /// available at all here.
+  ///
+  /// This comment used to say the opposite — that Intel fell back to a slow
+  /// CPU path and the honest message was "this will take a while". It never
+  /// did: the resolver returns `.unavailable`, and an Intel Mac gets no
+  /// Generate button. That misreading reached users twice, as UI copy and as
+  /// release notes, before the name was fixed.
+  requiresAppleSilicon('requiresAppleSilicon'),
 
   /// The recording has no decodable audio at all. Nothing to transcribe.
   noAudio('noAudio'),
@@ -58,6 +63,7 @@ class CaptionsCapabilityInfo {
     required this.available,
     this.reason,
     this.hasMicAudio = false,
+    this.languages = const [],
     this.hasSystemAudio = false,
     this.usesEmbeddedAudioOnly = false,
   });
@@ -67,6 +73,13 @@ class CaptionsCapabilityInfo {
 
   /// Whether this recording has a decodable `capture/mic.m4a`.
   final bool hasMicAudio;
+
+  /// Every language the engine can decode, `(code, name)` sorted by name.
+  ///
+  /// Comes from the engine rather than a list held here, so it cannot drift
+  /// from what the engine actually supports. Empty when the feature is
+  /// unavailable, or on a build whose native half predates this.
+  final List<CaptionLanguage> languages;
 
   /// Whether this recording has a decodable `capture/system.m4a`.
   final bool hasSystemAudio;
@@ -108,6 +121,16 @@ class CaptionsCapabilityInfo {
           ? null
           : CaptionsUnavailableReason.fromWire(map['reason'] as String?),
       hasMicAudio: map['hasMicAudio'] as bool? ?? false,
+      languages: [
+        for (final raw in (map['languages'] as List<dynamic>? ?? const []))
+          if (raw is Map &&
+              raw['code'] is String &&
+              (raw['code'] as String).isNotEmpty)
+            CaptionLanguage(
+              code: raw['code'] as String,
+              name: raw['name'] as String? ?? raw['code'] as String,
+            ),
+      ],
       hasSystemAudio: map['hasSystemAudio'] as bool? ?? false,
       usesEmbeddedAudioOnly: map['usesEmbeddedAudioOnly'] as bool? ?? false,
     );
@@ -144,4 +167,16 @@ class CaptionsCapabilityInfo {
       'CaptionsCapabilityInfo(available: $available, reason: $reason, '
       'mic: $hasMicAudio, system: $hasSystemAudio, '
       'embeddedOnly: $usesEmbeddedAudioOnly)';
+}
+
+/// One language the engine can decode.
+class CaptionLanguage {
+  const CaptionLanguage({required this.code, required this.name});
+
+  /// Whisper code, e.g. `en`, `ar`, `ro`.
+  final String code;
+
+  /// The engine's own lowercase English name, e.g. `english`. Display casing
+  /// is the UI's business.
+  final String name;
 }

@@ -510,8 +510,17 @@ extension ScreenRecorderFacade {
       completion: { outcome in
         DispatchQueue.main.async {
           switch outcome {
-          case .success(let cues):
-            result(cues.map { $0.toFlutter() })
+          case .success(let jobOutcome):
+            // A map, not the bare cue list this used to return. The detected
+            // language is one fact about the run and there was nowhere to put
+            // it in a list; every persisted track claimed English as a result.
+            // `NativeToFlutter`'s Dart half reads the same two keys.
+            result([
+              "cues": jobOutcome.captions.map { $0.toFlutter() },
+              // Omitted rather than defaulted when the engine cannot say:
+              // unknown and English must stay distinguishable.
+              "language": jobOutcome.detectedLanguage as Any?,
+            ])
           case .failure(let error):
             // Cancellation is a normal outcome, not a failure to report as one.
             if let transcriptionError = error as? TranscriptionError,
@@ -668,7 +677,18 @@ extension ScreenRecorderFacade {
         "embeddedOnly": capability.usesEmbeddedAudioOnly,
       ])
 
-    result(capability.toFlutter())
+    // The engine's language inventory rides the capability reply rather than a
+    // second method: the panel needs it exactly when it learns it can caption
+    // at all, so this is one round trip instead of two. Only sent when the
+    // feature is actually available -- offering a language list for a machine
+    // that cannot transcribe is an invitation to a button that does nothing.
+    var payload = capability.toFlutter()
+    if capability.isAvailable {
+      payload["languages"] = WhisperKitTranscriber.supportedLanguages.map {
+        ["code": $0.code, "name": $0.name]
+      }
+    }
+    result(payload)
   }
 
   func getRecordingSceneInfo(projectPath: String, result: @escaping FlutterResult) {

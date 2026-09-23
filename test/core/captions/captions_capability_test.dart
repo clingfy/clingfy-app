@@ -25,7 +25,7 @@ void main() {
     test('maps every reason native can send', () {
       for (final wire in [
         'unsupportedOS',
-        'intelSlowPath',
+        'requiresAppleSilicon',
         'noAudio',
         'platformNotSupported',
       ]) {
@@ -126,8 +126,8 @@ void main() {
         'unsupportedOS',
       );
       expect(
-        CaptionsUnavailableReason.intelSlowPath.wireValue,
-        'intelSlowPath',
+        CaptionsUnavailableReason.requiresAppleSilicon.wireValue,
+        'requiresAppleSilicon',
       );
       expect(CaptionsUnavailableReason.noAudio.wireValue, 'noAudio');
       expect(

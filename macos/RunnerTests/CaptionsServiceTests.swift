@@ -31,6 +31,11 @@ final class CaptionsServiceTests: XCTestCase {
     /// test in this file.
     private let engineLock = NSLock()
     private var engineBusy = false
+    /// Tracked separately from `engineBusy` on purpose. The real engine holds
+    /// its weights across jobs, so between runs it is resident and NOT busy --
+    /// the state the old `isModelLoaded` could not express, because it read
+    /// busyness.
+    private var modelResident = false
     private var releases = 0
 
     /// How many times the engine actually handed the weights back.
@@ -109,6 +114,18 @@ final class CaptionsServiceTests: XCTestCase {
       return isCancelledProbes
     }
 
+    var isModelResident: Bool {
+      engineLock.lock()
+      defer { engineLock.unlock() }
+      return modelResident
+    }
+
+    func setModelResident(_ value: Bool) {
+      engineLock.lock()
+      modelResident = value
+      engineLock.unlock()
+    }
+
     var isEngineBusy: Bool {
       engineLock.lock()
       defer { engineLock.unlock() }
@@ -128,6 +145,7 @@ final class CaptionsServiceTests: XCTestCase {
       if succeeds {
         releases += 1
         engineBusy = false
+        modelResident = false
       }
       engineLock.unlock()
       return succeeds
@@ -138,7 +156,7 @@ final class CaptionsServiceTests: XCTestCase {
       options: TranscriptionOptions,
       progress: @escaping (TranscriptionProgress) -> Void,
       isCancelled: @escaping () -> Bool
-    ) throws -> [TranscribedSegment] {
+    ) throws -> TranscriptionOutcome {
       callCount += 1
       engineLock.lock()
       isCancelledProbes.append(isCancelled)
@@ -151,8 +169,12 @@ final class CaptionsServiceTests: XCTestCase {
       if let errorToThrow { throw errorToThrow }
       if isCancelled() { throw TranscriptionError.cancelled }
       progress(.transcribing(1.0))
-      return segments
+      return TranscriptionOutcome(segments: segments, detectedLanguage: detectedLanguage)
     }
+
+    /// What the engine reports it decoded. nil = "cannot say", which must stay
+    /// distinguishable from "English".
+    var detectedLanguage: String?
   }
 
   /// Polls until `condition` holds, or gives up.
@@ -246,7 +268,7 @@ final class CaptionsServiceTests: XCTestCase {
     wait(for: [started], timeout: 5)
 
     let secondDone = expectation(description: "second job refused")
-    var secondOutcome: Result<[Caption], Error>?
+    var secondOutcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: sources, language: nil,
       onProgress: { _ in },
@@ -293,7 +315,7 @@ final class CaptionsServiceTests: XCTestCase {
       micURL: URL(fileURLWithPath: "/tmp/mic.m4a"), systemURL: nil, embeddedURL: nil)
 
     let secondDone = expectation(description: "second run, chained from the first")
-    var secondResult: Result<[Caption], Error>?
+    var secondResult: Result<TranscriptionJob.Outcome, Error>?
 
     service.generateCaptions(
       sources: sources, language: nil, onProgress: { _ in },
@@ -455,7 +477,7 @@ final class CaptionsServiceTests: XCTestCase {
     let started = expectation(description: "running")
     started.assertForOverFulfill = false
     let done = expectation(description: "finished")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
 
     service.generateCaptions(
       sources: TranscriptionJob.Sources(
@@ -491,7 +513,7 @@ final class CaptionsServiceTests: XCTestCase {
     service.cancel()  // before anything is running
 
     let done = expectation(description: "runs anyway")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: sources, language: nil, onProgress: { _ in },
       completion: { result in
@@ -529,7 +551,7 @@ final class CaptionsServiceTests: XCTestCase {
     let service = CaptionsService(transcriber: fake)
 
     let done = expectation(description: "finished")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: micOnly(), language: nil, onProgress: { _ in },
       completion: { result in
@@ -558,7 +580,7 @@ final class CaptionsServiceTests: XCTestCase {
     let service = CaptionsService(transcriber: fake)
 
     let done = expectation(description: "finished")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: micOnly(), language: nil, onProgress: { _ in },
       completion: { result in
@@ -647,7 +669,7 @@ final class CaptionsServiceTests: XCTestCase {
     // The second job must not block on a gate the first one consumed.
     fake.gate = nil
     let second = expectation(description: "second")
-    var outcome: Result<[Caption], Error>?
+    var outcome: Result<TranscriptionJob.Outcome, Error>?
     service.generateCaptions(
       sources: micOnly(), language: nil, onProgress: { _ in },
       completion: { result in
@@ -675,12 +697,51 @@ final class CaptionsServiceTests: XCTestCase {
   /// `isBusy` is what Settings › Storage asks before allowing a delete, and the
   /// dangerous window is wider than a job: a cancelled first-run download keeps
   /// writing into the model directory after the user has moved on.
+  /// `isModelLoaded` reports whether the weights are in memory, not whether
+  /// anything is running.
+  ///
+  /// It used to return `transcriber.isEngineBusy`, which is a strict
+  /// sub-expression of `isBusy` -- so the two could never disagree and the
+  /// "loaded" flag was never an independent fact. This is the state that broke
+  /// it: a model sitting in memory between jobs, with nothing running. That is
+  /// exactly when a user reaches for Settings > Storage > Delete, and the
+  /// prompt's whole job is to say "this also unloads it".
+  ///
+  /// Asserting both directions, because a flag hard-wired to `false` would pass
+  /// the first assertion on its own.
+  func testModelLoadedIsResidencyNotBusyness() {
+    let fake = FakeTranscriber()
+    let service = CaptionsService(transcriber: fake)
+
+    // Weights in memory, nothing running -- the between-jobs state.
+    fake.setModelResident(true)
+    fake.setEngineBusy(false)
+    XCTAssertTrue(
+      service.isModelLoaded,
+      "a model resident between jobs must report as loaded; keyed off busyness "
+        + "this was false exactly when the user reaches for Delete")
+    XCTAssertFalse(service.isBusy, "nothing is running, so nothing is busy")
+
+    // And the converse: busy does not imply resident. A cancelled download's
+    // drain is busy while holding no loaded pipeline.
+    fake.setModelResident(false)
+    fake.setEngineBusy(true)
+    XCTAssertFalse(
+      service.isModelLoaded,
+      "busy is not the same fact as loaded, and must not stand in for it")
+    XCTAssertTrue(service.isBusy)
+  }
+
   func testBusyFollowsTheEngineAndNotOnlyTheJob() {
     let fake = FakeTranscriber()
     let service = CaptionsService(transcriber: fake)
     XCTAssertFalse(service.isBusy)
 
+    // Holding the weights AND touching the files. Those are two separate facts
+    // now, so the fixture states both rather than relying on `isModelLoaded`
+    // having been an alias for `isBusy`.
     fake.setEngineBusy(true)
+    fake.setModelResident(true)
     XCTAssertTrue(
       service.isBusy,
       "an engine still holding the model must block a delete even with no job running")
@@ -722,6 +783,9 @@ final class CaptionsServiceTests: XCTestCase {
   func testARefusedReleaseIsReportedAsRefusedNotAsDone() {
     let fake = FakeTranscriber()
     fake.setEngineBusy(true)
+    // Resident as well as busy: a refused release means the weights are still
+    // in memory, which is the whole reason the caller must not delete them.
+    fake.setModelResident(true)
     fake.releaseSucceeds = false
     let service = CaptionsService(transcriber: fake)
 
@@ -777,6 +841,9 @@ final class CaptionsServiceTests: XCTestCase {
   func testARefusedReleaseIsRetriedUntilTheDrainLetsGo() {
     let fake = FakeTranscriber()
     fake.setEngineBusy(true)
+    // Resident as well as busy: a refused release means the weights are still
+    // in memory, which is the whole reason the caller must not delete them.
+    fake.setModelResident(true)
     fake.releaseSucceeds = false
     let service = CaptionsService(transcriber: fake)
 

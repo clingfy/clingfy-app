@@ -47,7 +47,7 @@ void main() {
   /// Held open to keep a transcription in flight. Null lets `generateCaptions`
   /// answer immediately, which is what every test but the export-interlock one
   /// wants.
-  Completer<List<Map<String, Object?>>>? generateGate;
+  Completer<Map<String, Object?>>? generateGate;
 
   setUp(() async {
     await installCommonNativeMocks();
@@ -136,11 +136,16 @@ void main() {
             'hasSystemAudio': true,
           };
         case 'generateCaptions':
+          // Native replies with a map now: the detected language joined the
+          // cues and a bare list had nowhere to put a run-level fact.
           final gate = generateGate;
           if (gate != null) return gate.future;
-          return [
-            {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': 'hello there'},
-          ];
+          return {
+            'language': null,
+            'cues': [
+              {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': 'hello there'},
+            ],
+          };
         case 'resolveExportSize':
           return exportSizeReturns;
         case 'exportVideo':
@@ -348,7 +353,7 @@ void main() {
       exportSizeReturns: const {'width': 1920, 'height': 1080},
     );
 
-    generateGate = Completer<List<Map<String, Object?>>>();
+    generateGate = Completer<Map<String, Object?>>();
     final regenerating = actions.postProcessingController.generateCaptions();
     await settle(tester, steps: 3);
     expect(actions.postProcessingController.isGeneratingCaptions, isTrue);
@@ -368,9 +373,12 @@ void main() {
       reason: 'and nothing may reach native',
     );
 
-    generateGate!.complete(const [
-      {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': 'hello there'},
-    ]);
+    generateGate!.complete(const {
+      'language': null,
+      'cues': [
+        {'id': 'c1', 'startMs': 0, 'endMs': 1500, 'text': 'hello there'},
+      ],
+    });
     await regenerating;
     await settle(tester, steps: 3);
   });

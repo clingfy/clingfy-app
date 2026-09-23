@@ -121,7 +121,8 @@ void main() {
             'hasSystemAudio': true,
           };
         case 'generateCaptions':
-          return transcriptReply;
+          // Native replies with a map now; see the captions controller tests.
+          return {'cues': transcriptReply, 'language': null};
         case 'resolveExportSize':
           return exportSizeReturns;
         case 'exportVideo':

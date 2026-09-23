@@ -13,9 +13,10 @@
 > served from `dev.clingfy.com/updates`. The S3 key is `<container>/<blob name>`, identical to the old Azure layout,
 > because the CloudFront `/updates/*` behaviour has no path rewrite.
 >
-> Script names still say `azure` (`05_publish_azure.sh`, `04_publish_azure.ps1`) — renaming them
-> would break the workflows and `local_run_all.sh` that call them. Mentions of Azure below describe
-> the `azure` branch, which is now reachable only from the `local` channel and has no storage account left behind it.
+> The publish scripts were named `05_publish_azure.sh` / `04_publish_azure.ps1` until
+> 2026-09-21, then renamed to `05_publish.sh` / `04_publish.ps1` once every caller was
+> found. Mentions of Azure below describe the `azure` branch, which is now reachable only
+> from the `local` channel and has no storage account left behind it.
 >
 > **Three vars are required for `aws`**: `AWS_RELEASES_BUCKET` (where bytes go),
 > `AWS_PUBLIC_ENDPOINT` (where they are SERVED from, e.g. `clingfy.com/updates`), and
@@ -51,7 +52,7 @@ For the complete operator walkthrough — machine requirements, every secret and
 - `01_build.ps1` - `flutter build windows --release` and stage a clean app folder into `dist/windows/app` (excludes PDBs/`runner_bridge.lib`/`native_assets.json`, bundles the VC++ CRT app-locally, verifies required runtime files)
 - `02_package_inno.ps1` - compile the per-user Inno Setup installer into `dist/windows/installer`
 - `03_sign.ps1` - Authenticode-sign the staged app binaries (`-Target app`, before packaging) or the installer (`-Target installer`, after); skips with a loud warning when no signing material is configured (decision D3 allows an unsigned private beta)
-- `04_publish_azure.ps1` - upload installer + `.sha256` + `latest-windows.json` under `updates/downloads/windows/`, then invalidate exactly those CloudFront paths (the filename still says `azure`; it dispatches on `$Ctx.StorageProvider`, and the Azure blob + Front Door purge branch now runs only for the `local` channel — do not rename the file, the workflows invoke it by path)
+- `04_publish.ps1` - upload installer + `.sha256` + `latest-windows.json` under `updates/downloads/windows/`, then invalidate exactly those CloudFront paths (dispatches on `$Ctx.StorageProvider`; the Azure blob + Front Door purge branch now runs only for the `local` channel. The workflows invoke this file by path, so a rename has to move with them)
 - `05_smoke.ps1` - verify the published feed and installer through the public endpoint, including a download + SHA-256 comparison
 - `upload_symbols.ps1` - Sentry symbol upload (PDBs + Dart AOT snapshot); written in Phase 10.4, invoked by the workflows as a non-blocking publish step
 - `installer/Clingfy.iss` - Inno Setup source; channel identity arrives via `ISCC /D` defines from `02_package_inno.ps1`
@@ -105,28 +106,37 @@ updates/
 - Inno Setup 6.3+ (`winget install JRSoftware.InnoSetup`)
 - Windows 10/11 SDK `signtool.exe` (only when signing material is configured)
 - AWS CLI v2 with credentials for the releases bucket (publish/smoke steps only; CI assumes the release role via GitHub OIDC, no stored keys)
-- Azure CLI (`az`) on PATH — `04_publish_azure.ps1` still hard-fails when the binary is missing, before it dispatches on the provider; no `az login` is needed on the aws path
+- Azure CLI (`az`) — **not required**. `04_publish.ps1` requires the CLI its resolved provider needs: `aws` on the only provider that publishes, nothing on `none`. The check runs after `Import-AzurePublishSettings` sets the provider, not before it — see the comment at the dispatch in `04_publish.ps1`
 - `sentry-cli` (symbol upload step only; non-blocking when absent)
 
 ## Environment and credential categories
 
-Values are read from the process environment first; the channel's `.env` file is a fallback for the publishing settings (`AWS_*` on the aws provider, `AZ_*` only on the legacy azure one) and (via `upload_symbols.ps1 -EnvFile`) the Sentry settings. Environment variables always win. Signing material is environment-only — never read from `.env` files.
+Values are read from the process environment first; the channel's `.env` file is a fallback for the publishing settings (`RELEASE_STORAGE_PROVIDER` / `AWS_*`, plus four dead legacy keys — `AZ_STORAGE_ACCOUNT`, `AZ_RESOURCE_GROUP`, `AZ_CDN_PROFILE`, `AZ_FRONTDOOR_ENDPOINT_NAME` — that the publish and smoke steps still load on every channel although no provider arm reads them back) and (via `upload_symbols.ps1 -EnvFile`) the Sentry settings. Environment variables always win. Signing material is environment-only — never read from `.env` files.
+
+### App configuration compiled into the installer (from `.env.<channel>`)
+
+`01_build.ps1` hands the channel's `.env` straight to `flutter build windows --dart-define-from-file`, so its keys reach the app as compile-time defines — and only from the file: unlike the publishing settings below, a process environment variable of the same name is never turned into a define and does not win. Most of these keys are ordinary app config (`API_BASE_URL`, `CLINGFY_SITE_URL`, `SENTRY_DSN`, …), but one belongs to this lane:
+
+- `CLINGFY_UPDATE_FEED_HOST` — the public host + path prefix the in-app updater fetches `latest-windows.json` from (`clingfy.com/updates` on prod, `dev.clingfy.com/updates` on dev). `lib/core/updater/windows_update_feed.dart` reads that define and has no fallback, so a build without it ships an installer whose update check can never succeed — and the lane still reports success, because `05_smoke.ps1` verifies the endpoint the scripts published to (`AWS_PUBLIC_ENDPOINT`) rather than the value baked into the binary. It normally matches `AWS_PUBLIC_ENDPOINT`, but they are separate keys read by separate halves of the lane and must be moved together. Both `.env` files and both `ENV_*_B64` CI secrets must define it. Renamed from `AZ_CDN_ENDPOINT` on 2026-09-21; the fallback to the old name is gone.
 
 ### Publishing and CDN (from `.env.<channel>` or environment)
 
-`RELEASE_STORAGE_PROVIDER` picks the backend (defaults: `aws` for prod and dev, `azure` for `local`). On `aws` all three of these are required and validated at startup, before any bytes move:
+`RELEASE_STORAGE_PROVIDER` picks the backend (defaults: `aws` for prod and dev, `none` for `local`; any other value is a hard failure). On `none` nothing is required and nothing is validated — a local BUILD runs end to end and a local PUBLISH stops with a reason. On `aws` all three of these are required and validated at startup, before any bytes move:
 
 - `AWS_RELEASES_BUCKET` — where the bytes go
 - `AWS_PUBLIC_ENDPOINT` — where they are served from (e.g. `clingfy.com/updates`), baked into every `latest-windows.json` URL
 - `AWS_CLOUDFRONT_DISTRIBUTION_ID` — the invalidation target, without which the republished feed stays stale at the edge
 
-Legacy `azure` provider (`local` channel only — the storage accounts behind these keys were deleted 2026-09-15, so the values still sitting in `.env.dev` / `.env.prod` are dead):
+Legacy `azure` keys — dead, and not only on `local`. The `azure` provider arm was deleted on 2026-09-21 (`_config.ps1` accepts `aws` and `none` only, and `local` now defaults to `none`), and the storage accounts behind these keys were deleted on 2026-09-15. `_config.ps1` still LOADS four of them from `.env` (`$script:AzureLegacyKeys`) so a stale file does not trip the unknown-key handling and an operator reading one sees them accounted for; nothing validates or uses the values:
 
 - `AZ_STORAGE_ACCOUNT`
 - `AZ_RESOURCE_GROUP`
 - `AZ_CDN_PROFILE`
-- `AZ_CDN_ENDPOINT`
 - `AZ_FRONTDOOR_ENDPOINT_NAME`
+
+The vault's `.env.dev` / `.env.prod` keep all five only as commented-out tombstones, so nothing loads from them.
+
+`AZ_CDN_ENDPOINT` is not on that load list. It was renamed `CLINGFY_UPDATE_FEED_HOST` — the host + path prefix (`clingfy.com/updates` on prod, `dev.clingfy.com/updates` on dev) compiled into the Windows installer via `--dart-define-from-file`, and the only source for the in-app update feed URL. `lib/core/updater/windows_update_feed.dart` reads that name alone; its fallback to the old one was deleted on 2026-09-21. Nothing answers to `AZ_CDN_ENDPOINT` any more — but the `ENV_DEV_B64` / `ENV_PROD_B64` GitHub environment secrets still carry it, so a CI-staged `.env` will still show it. Delete it there rather than update it.
 
 ### Code signing (environment only — never in `.env` files, per decision D3)
 

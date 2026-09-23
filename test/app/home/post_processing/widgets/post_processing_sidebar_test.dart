@@ -161,6 +161,8 @@ void main() {
       captionsCapability: null,
       captions: const [],
       captionsUseMic: true,
+      captionsLanguage: null,
+      onCaptionsLanguageChanged: (_) {},
       captionsUseSystem: true,
       isGeneratingCaptions: false,
       isCancellingCaptions: false,

@@ -26,7 +26,15 @@ struct CaptionsCapability: Equatable {
     /// Intel. WhisperKit builds on x86_64 but there is no Neural Engine, so
     /// compute falls back to CPU+GPU. Distinct from a hard block on purpose —
     /// the honest message is "this will be slow", not "you cannot".
-    case intelSlowPath = "intelSlowPath"
+    /// Intel Mac. The engine needs the Neural Engine, so there is no path at
+    /// all here -- not a slower one.
+    ///
+    /// Named for what happens. It was `intelSlowPath`, and that name produced
+    /// two wrong user-facing strings by two different authors: UI copy
+    /// promising a wait for something that never starts, and 1.1.0 release
+    /// notes saying "slower, not blocked". Both were corrected; the name that
+    /// caused them was not, so it was free to cause a third.
+    case requiresAppleSilicon = "requiresAppleSilicon"
     /// The recording contains no decodable audio at all: no sidecars, and
     /// nothing usable embedded in screen.mov. There is nothing to transcribe.
     case noAudio = "noAudio"
@@ -71,7 +79,7 @@ struct CaptionsCapability: Equatable {
     hasDecodableEmbedded: Bool
   ) -> CaptionsCapability {
     guard meetsMinimumOS else { return .unavailable(.unsupportedOS) }
-    guard isAppleSilicon else { return .unavailable(.intelSlowPath) }
+    guard isAppleSilicon else { return .unavailable(.requiresAppleSilicon) }
 
     let hasAnything = hasDecodableMic || hasDecodableSystem || hasDecodableEmbedded
     guard hasAnything else { return .unavailable(.noAudio) }

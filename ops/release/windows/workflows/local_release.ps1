@@ -9,7 +9,7 @@
 #
 #   ./local_release.ps1                          # dev build -> dist/windows/installer
 #   ./local_release.ps1 -Clean -RunTests         # full gate before packaging
-#   ./local_release.ps1 -Channel prod -Publish   # publish to Azure + smoke test
+#   ./local_release.ps1 -Channel prod -Publish   # publish + smoke test
 #
 # Steps: version guard -> [tests] -> build+stage -> sign app -> package ->
 # sign installer -> [publish -> Sentry symbols (non-blocking) -> smoke].
@@ -35,7 +35,7 @@ param(
   # Run the test gate (flutter analyze lib + native ctest) before building.
   [switch]$RunTests,
 
-  # Publish to Azure and smoke-test the published URLs.
+  # Publish and smoke-test the published URLs.
   [switch]$Publish,
 
   # Fail (instead of warn) when no signing material is configured.
@@ -163,7 +163,7 @@ Invoke-Step '03_sign.ps1' $signInstallerArgs
 
 # --- Optional publish + symbols + smoke -------------------------------------------
 if ($Publish) {
-  Invoke-Step '04_publish_azure.ps1' $channelArgs
+  Invoke-Step '04_publish.ps1' $channelArgs
 
   # Sentry symbol upload is non-blocking, like the macOS publish step: a
   # missing sentry-cli or missing SENTRY_* settings must not abort a release.
@@ -178,7 +178,7 @@ if ($Publish) {
 
   Invoke-Step '05_smoke.ps1' $channelArgs
 } else {
-  Write-Info 'Publish skipped (pass -Publish to upload to Azure).'
+  Write-Info 'Publish skipped (pass -Publish to upload).'
 }
 
 Write-Host ''

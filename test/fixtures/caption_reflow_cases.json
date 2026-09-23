@@ -1,0 +1,133 @@
+{
+  "_comment": [
+    "Shared parity fixture: the ONE place the source-to-output mapping is written down.",
+    "",
+    "Dart (CaptionReflow) and Swift (ClipKeptRange.fromFlutter + ClipPlaybackPlanner)",
+    "each implement this mapping separately. Before this file they were each checked",
+    "against their own author's belief, so a change to one side moved burned-in caption",
+    "timings in the exported video while the .srt/.vtt beside it stayed correct -- and",
+    "every test on both sides stayed green.",
+    "",
+    "Read by test/core/captions/caption_reflow_parity_test.dart and by",
+    "macos/RunnerTests/CaptionReflowParityTests.swift. If you change the expected",
+    "numbers here, you are changing a cross-language contract: both suites must still",
+    "pass, and if only one does, the implementations have diverged.",
+    "",
+    "probes: outputMs null means the source moment was cut away and has no place on",
+    "the edited timeline. timelineStartMs is deliberately garbage in several cases --",
+    "both sides must ignore it and use list order.",
+    "",
+    "Each probe is read as a 500ms cue starting at sourceMs, and every probe has at",
+    "least that much room inside one kept range (or inside one gap, for a null).",
+    "That is deliberate: CaptionReflow drops any cue with less than 400ms surviving",
+    "(minimumOutputDurationMs), which is a Dart-side rule the Swift mapper has no",
+    "equivalent for. Probing inside that regime would compare the minimum, not the",
+    "mapping. Add probes with the same clearance."
+  ],
+  "cases": [
+    {
+      "name": "no clips is passthrough, not everything-was-cut",
+      "clips": [],
+      "probes": [
+        { "sourceMs": 0, "outputMs": 0 },
+        { "sourceMs": 1500, "outputMs": 1500 }
+      ]
+    },
+    {
+      "name": "one clip covering the whole recording changes nothing",
+      "clips": [
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 3000, "timelineStartMs": 0 }
+      ],
+      "probes": [
+        { "sourceMs": 0, "outputMs": 0 },
+        { "sourceMs": 1500, "outputMs": 1500 },
+        { "sourceMs": 3000, "outputMs": null }
+      ]
+    },
+    {
+      "name": "a cut pulls later footage earlier by the removed amount",
+      "clips": [
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 0 },
+        { "enabled": true, "sourceInMs": 2000, "sourceOutMs": 3000, "timelineStartMs": 1000 }
+      ],
+      "probes": [
+        { "sourceMs": 500, "outputMs": 500 },
+        { "sourceMs": 1500, "outputMs": null },
+        { "sourceMs": 2000, "outputMs": 1000 },
+        { "sourceMs": 2500, "outputMs": 1500 }
+      ]
+    },
+    {
+      "name": "a bare split is not a cut - adjacent ranges stay continuous",
+      "clips": [
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 0 },
+        { "enabled": true, "sourceInMs": 1000, "sourceOutMs": 2000, "timelineStartMs": 1000 }
+      ],
+      "probes": [
+        { "sourceMs": 999, "outputMs": 999 },
+        { "sourceMs": 1000, "outputMs": 1000 },
+        { "sourceMs": 1500, "outputMs": 1500 }
+      ]
+    },
+    {
+      "name": "a disabled clip occupies no room on the output timeline",
+      "clips": [
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 0 },
+        { "enabled": false, "sourceInMs": 1000, "sourceOutMs": 2000, "timelineStartMs": 1000 },
+        { "enabled": true, "sourceInMs": 2000, "sourceOutMs": 3000, "timelineStartMs": 2000 }
+      ],
+      "probes": [
+        { "sourceMs": 500, "outputMs": 500 },
+        { "sourceMs": 1500, "outputMs": null },
+        { "sourceMs": 2500, "outputMs": 1500 }
+      ]
+    },
+    {
+      "name": "every clip disabled is passthrough, like no clips at all",
+      "clips": [
+        { "enabled": false, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 0 },
+        { "enabled": false, "sourceInMs": 1000, "sourceOutMs": 2000, "timelineStartMs": 1000 }
+      ],
+      "probes": [
+        { "sourceMs": 500, "outputMs": 500 },
+        { "sourceMs": 1500, "outputMs": 1500 }
+      ]
+    },
+    {
+      "name": "a zero-length or inverted clip is dropped, not kept as a point",
+      "clips": [
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 0 },
+        { "enabled": true, "sourceInMs": 1500, "sourceOutMs": 1500, "timelineStartMs": 1000 },
+        { "enabled": true, "sourceInMs": 2600, "sourceOutMs": 2000, "timelineStartMs": 1000 },
+        { "enabled": true, "sourceInMs": 2000, "sourceOutMs": 3000, "timelineStartMs": 1000 }
+      ],
+      "probes": [
+        { "sourceMs": 500, "outputMs": 500 },
+        { "sourceMs": 2500, "outputMs": 1500 }
+      ]
+    },
+    {
+      "name": "reorder - a later source range placed first",
+      "clips": [
+        { "enabled": true, "sourceInMs": 2000, "sourceOutMs": 3000, "timelineStartMs": 0 },
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 1000 }
+      ],
+      "probes": [
+        { "sourceMs": 2500, "outputMs": 500 },
+        { "sourceMs": 500, "outputMs": 1500 },
+        { "sourceMs": 1500, "outputMs": null }
+      ]
+    },
+    {
+      "name": "timelineStartMs is ignored entirely - list order decides",
+      "clips": [
+        { "enabled": true, "sourceInMs": 0, "sourceOutMs": 1000, "timelineStartMs": 999999 },
+        { "enabled": true, "sourceInMs": 2000, "sourceOutMs": 3000, "timelineStartMs": -4242 }
+      ],
+      "probes": [
+        { "sourceMs": 500, "outputMs": 500 },
+        { "sourceMs": 2500, "outputMs": 1500 }
+      ]
+    }
+  ]
+}

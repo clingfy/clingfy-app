@@ -32,6 +32,21 @@ void main() {
   late Map<String, Object?> capabilityReply;
   late List<Map<String, Object?>> transcriptReply;
 
+  /// What native reports it decoded. Null by default: a fixture that says
+  /// nothing about language must not assert English. Declared before
+  /// `captionsReply` reads it -- a local must precede its use.
+  String? languageReply;
+
+  /// Shapes a cue list the way native now replies: `{cues, language}`.
+  ///
+  /// `language` is deliberately absent rather than `'en'` by default -- a track
+  /// whose language nothing detected must not claim English, which is the
+  /// defect the map exists to close.
+  Map<String, Object?> captionsReply(
+    List<Map<String, Object?>> cues, {
+    String? language,
+  }) => {'cues': cues, 'language': language ?? languageReply};
+
   /// Set to throw from `generateCaptions` instead of returning cues.
   PlatformException? generateThrows;
 
@@ -59,9 +74,14 @@ void main() {
         case 'captionsCapability':
           return capabilityReply;
         case 'generateCaptions':
-          if (generateGate != null) return await generateGate!.future;
+          // The native reply is a map since the detected language joined it;
+          // the cue list alone had nowhere to put a run-level fact. Wrapped
+          // here so every fixture below still builds a plain cue list.
+          if (generateGate != null) {
+            return captionsReply(await generateGate!.future);
+          }
           if (generateThrows != null) throw generateThrows!;
-          return transcriptReply;
+          return captionsReply(transcriptReply);
         case 'processVideo':
           return '/tmp/preview.mov';
         default:
@@ -116,12 +136,43 @@ void main() {
     ];
     generateThrows = null;
     generateGate = null;
+    // Reset between tests: a leaked language from one case would make the next
+    // one pass or fail for a reason it never set.
+    languageReply = null;
   });
 
   List<MethodCall> callsNamed(String name) =>
       calls.where((c) => c.method == name).toList();
 
   // ---- Capability probe -------------------------------------------------
+
+  test('the track records the language native decoded, not a guess', () async {
+    // Every saved track used to claim English regardless of what was spoken,
+    // because nothing passed a real value and `CaptionTrack.language`
+    // defaulted to 'en'. The engine knew all along -- WhisperKit reports the
+    // language it decoded and the payload threw it away.
+    transcriptReply = [
+      {'id': 'c1', 'startMs': 0, 'endMs': 1200, 'text': 'مرحبا'},
+    ];
+    languageReply = 'ar';
+
+    final post = await createController();
+    await post.generateCaptions();
+    // The persist is fire-and-forget; drain it before reading, like the
+    // sibling cases do.
+    await PostStateStore.settled();
+
+    final track = PostStateStore.load(
+      attachedProjectPath,
+    ).trackOfType<CaptionTrack>();
+    expect(
+      track?.language,
+      'ar',
+      reason:
+          'the track must record what was decoded; "en" here is the defect, '
+          'and it is what a later translation or tagged-sidecar pass would trust',
+    );
+  });
 
   test('attaching a recording probes native for what it can caption', () async {
     final post = await createController();

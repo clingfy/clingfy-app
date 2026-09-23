@@ -136,10 +136,12 @@ configure_azure_defaults() {
 # Which cloud this channel publishes to.
 #
 # Azure was decommissioned on 2026-09-10 and clingfy.com/updates/* has served from the AWS releases
-# bucket since the 2026-08-17 cutover. Publishing prod to Azure therefore writes to a location
-# NOTHING READS: the upload succeeds, the smoke test below passes (it fetches FEED_URL, which is
-# built from AZ_CDN_ENDPOINT, so it verifies the copy it just wrote), and no installed app ever sees
-# the release. That silent-success shape is why this switch exists rather than a hard swap.
+# bucket since the 2026-08-17 cutover. While the `azure` arm still existed, publishing prod to it
+# wrote to a location NOTHING READ: the upload succeeded, the smoke test passed as long as FEED_URL
+# was still composed from AZ_CDN_ENDPOINT (it then verified the copy it had just written), and no
+# installed app ever saw the release. That silent-success shape is why this switch exists rather
+# than a hard swap — and it is why FEED_URL is now composed in configure_public_endpoint() below,
+# off the endpoint the artifacts are actually SERVED from.
 #
 # dev used to stay on Azure because there was no dev releases bucket. There is one now
 # (`clingfy-labs-dev-releases-<account>`, clingfy-labs PR #209, applied 2026-09-15), it has been
@@ -148,12 +150,14 @@ configure_azure_defaults() {
 # `clingfyreleases` (prod) was deleted on 2026-09-15 and `clingfyreleasesdev` follows once this
 # lands — at which point publishing ANY channel to Azure writes to an account that no longer exists.
 #
-# `local` is left on azure only so the case arm still has a meaning; a local publish has no
-# credentials for either cloud and fails at require_release_storage_cli long before it matters.
+# `local` gets `none`, not a cloud. It used to default to `azure`, which stopped being a
+# harmless placeholder the day both Azure release accounts were deleted (2026-09-15): the arm
+# still existed, so a local publish aimed at storage that no longer answers. `none` keeps local
+# BUILDS working and makes a local PUBLISH say why it cannot proceed.
 configure_storage_provider() {
   case "${RELEASE_CHANNEL:-$APP_ENV}" in
     prod|dev) export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-aws}" ;;
-    *)        export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-azure}" ;;
+    *)        export RELEASE_STORAGE_PROVIDER="${RELEASE_STORAGE_PROVIDER:-none}" ;;
   esac
 
   case "$RELEASE_STORAGE_PROVIDER" in
@@ -172,11 +176,12 @@ configure_storage_provider() {
       # after the fact.
       [[ -n "${AWS_CLOUDFRONT_DISTRIBUTION_ID:-}" ]] || die "RELEASE_STORAGE_PROVIDER=aws requires AWS_CLOUDFRONT_DISTRIBUTION_ID: /updates/* is cached by CloudFront and a republished feed stays stale at the edge without an invalidation (set it in .env.$APP_ENV)."
       ;;
-    azure)
-      [[ -n "${AZ_STORAGE_ACCOUNT:-}" ]]         || die "RELEASE_STORAGE_PROVIDER=azure requires AZ_STORAGE_ACCOUNT (set it in .env.$APP_ENV)."
+    none)
+      # Nothing to validate: this channel does not publish. The seams below refuse the
+      # actual transfer, so a local build runs and a local publish stops with a reason.
       ;;
     *)
-      die "RELEASE_STORAGE_PROVIDER must be \"aws\" or \"azure\", got \"$RELEASE_STORAGE_PROVIDER\"."
+      die "RELEASE_STORAGE_PROVIDER must be \"aws\" or \"none\", got \"$RELEASE_STORAGE_PROVIDER\"."
       ;;
   esac
 }
@@ -190,7 +195,10 @@ publish_upload() {
 
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)   s3_upload_object "$AWS_RELEASES_BUCKET" "$container" "$local_file" "$blob_name" ;;
-    azure) az_upload_blob "$AZ_STORAGE_ACCOUNT" "$container" "$local_file" "$blob_name" ;;
+    # No silent fall-through. An unmatched `case` returns 0, which would make this seam
+    # report success without moving a byte -- the exact silent-success shape the provider
+    # switch exists to prevent.
+    *)     die "publish_upload: RELEASE_STORAGE_PROVIDER=$RELEASE_STORAGE_PROVIDER cannot publish. Only \"aws\" has a storage target; the \"$APP_ENV\" channel does not publish." ;;
   esac
 }
 
@@ -212,7 +220,10 @@ publish_download_if_exists() {
 
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)   s3_download_if_exists "$AWS_RELEASES_BUCKET" "$container" "$blob_name" "$output_file" ;;
-    azure) az_blob_download_if_exists "$AZ_STORAGE_ACCOUNT" "$container" "$blob_name" "$output_file" ;;
+    # No silent fall-through. An unmatched `case` returns 0, which would make this seam
+    # report success without moving a byte -- the exact silent-success shape the provider
+    # switch exists to prevent.
+    *)     die "publish_download_if_exists: RELEASE_STORAGE_PROVIDER=$RELEASE_STORAGE_PROVIDER cannot publish. Only \"aws\" has a storage target; the \"$APP_ENV\" channel does not publish." ;;
   esac
 }
 
@@ -227,7 +238,10 @@ publish_object_exists() {
 
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)   s3_object_exists "$AWS_RELEASES_BUCKET" "$container" "$blob_name" ;;
-    azure) az_blob_exists "$AZ_STORAGE_ACCOUNT" "$container" "$blob_name" ;;
+    # No silent fall-through. An unmatched `case` returns 0, which would make this seam
+    # report success without moving a byte -- the exact silent-success shape the provider
+    # switch exists to prevent.
+    *)     die "publish_object_exists: RELEASE_STORAGE_PROVIDER=$RELEASE_STORAGE_PROVIDER cannot publish. Only \"aws\" has a storage target; the \"$APP_ENV\" channel does not publish." ;;
   esac
 }
 
@@ -245,10 +259,11 @@ configure_public_endpoint() {
       export RELEASE_PUBLIC_ENDPOINT="${RELEASE_PUBLIC_ENDPOINT:-${AWS_PUBLIC_ENDPOINT:-}}"
       [[ -n "$RELEASE_PUBLIC_ENDPOINT" ]]         || die "RELEASE_STORAGE_PROVIDER=aws requires AWS_PUBLIC_ENDPOINT (host + path prefix the releases are served from, e.g. clingfy.com/updates). Set it in .env.$APP_ENV."
       ;;
-    azure)
-      # Back-compat: the Azure lane has always composed URLs from AZ_CDN_ENDPOINT.
-      export RELEASE_PUBLIC_ENDPOINT="${RELEASE_PUBLIC_ENDPOINT:-${AZ_CDN_ENDPOINT:-}}"
-      [[ -n "$RELEASE_PUBLIC_ENDPOINT" ]]         || die "RELEASE_STORAGE_PROVIDER=azure requires AZ_CDN_ENDPOINT. Set it in .env.$APP_ENV."
+    none)
+      # Must still be exported, even empty: the two compositions below are unconditional and
+      # lib/common.sh sets `set -u`, so leaving it unset aborts a local build on an unbound
+      # variable instead of letting it finish.
+      export RELEASE_PUBLIC_ENDPOINT="${RELEASE_PUBLIC_ENDPOINT:-}"
       ;;
   esac
 
@@ -259,7 +274,7 @@ configure_public_endpoint() {
 require_release_storage_cli() {
   case "$RELEASE_STORAGE_PROVIDER" in
     aws)   require_aws_cli ;;
-    azure) require_azure_cli ;;
+    none)  ;;  # nothing to publish with, and nothing to install
   esac
 }
 

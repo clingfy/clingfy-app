@@ -99,7 +99,17 @@ final class CaptionsService {
 
   /// Whether a model is currently held in memory. Reported to the UI so
   /// "Delete" can explain that it also unloads.
-  var isModelLoaded: Bool { transcriber.isEngineBusy }
+  ///
+  /// Reads residency, not busyness. It used to return `transcriber.isEngineBusy`
+  /// -- a strict sub-expression of `isBusy` two lines up, so it was never an
+  /// independent fact. Busyness is wider on purpose (it spans a cancelled
+  /// download's drain) and is false whenever nothing is running, including while
+  /// a loaded model sits in memory between jobs. Keyed off that, the
+  /// Delete-model prompt would have claimed the model was loaded only while a
+  /// transcription was in flight, which is the one moment the delete is refused
+  /// anyway -- and said nothing in the state the user is actually in when they
+  /// reach for Delete.
+  var isModelLoaded: Bool { transcriber.isModelResident }
 
   /// Drops the in-memory model, then hands back to the caller.
   ///
@@ -240,7 +250,7 @@ final class CaptionsService {
     sources: TranscriptionJob.Sources,
     language: String?,
     onProgress: @escaping (JobProgress) -> Void,
-    completion: @escaping (Result<[Caption], Error>) -> Void
+    completion: @escaping (Result<TranscriptionJob.Outcome, Error>) -> Void
   ) {
     guard let token = beginRun() else {
       completion(.failure(TranscriptionError.engine("A transcription is already running")))
@@ -284,7 +294,7 @@ final class CaptionsService {
 
       let job = TranscriptionJob(transcriber: transcriber)
       do {
-        let cues = try job.run(
+        let jobOutcome = try job.run(
           sources: sources,
           micOptions: micOptions,
           systemOptions: systemOptions,
@@ -312,9 +322,12 @@ final class CaptionsService {
         )
         NativeLogger.i(
           "Captions", "Transcription finished",
-          context: ["cues": cues.count])
+          context: [
+            "cues": jobOutcome.captions.count,
+            "language": jobOutcome.detectedLanguage ?? "unknown",
+          ])
         finish()
-        completion(.success(cues))
+        completion(.success(jobOutcome))
       } catch {
         if let transcriptionError = error as? TranscriptionError,
           transcriptionError == .cancelled

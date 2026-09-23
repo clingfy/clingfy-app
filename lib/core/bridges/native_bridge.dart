@@ -975,21 +975,34 @@ class NativeBridge {
   /// Throws [PlatformException] with code `CAPTIONS_CANCELLED` when the user
   /// cancelled, which callers should treat as a normal outcome rather than an
   /// error worth reporting.
-  Future<List<Map<dynamic, dynamic>>> generateCaptions({
+  Future<TranscriptionResult> generateCaptions({
     required String projectPath,
     bool useMic = true,
     bool useSystem = true,
     String? language,
   }) async {
     final raw = await _nativeBridge
-        .invokeMethod<List<dynamic>>('generateCaptions', {
+        .invokeMethod<Map<dynamic, dynamic>>('generateCaptions', {
           'projectPath': projectPath,
           'useMic': useMic,
           'useSystem': useSystem,
           if (language != null) 'language': language,
         });
-    if (raw == null) return const [];
-    return raw.whereType<Map<dynamic, dynamic>>().toList();
+    if (raw == null) return const TranscriptionResult(cues: [], language: null);
+
+    // A map since the language landed here; it used to be the bare cue list.
+    // Keep this in sync with `PreviewSceneResolver`'s success branch on the
+    // Swift side, which writes exactly these two keys.
+    final cues = (raw['cues'] as List<dynamic>? ?? const [])
+        .whereType<Map<dynamic, dynamic>>()
+        .toList();
+    // Absent stays absent. Defaulting to 'en' here is the defect this closes:
+    // every saved track claimed English regardless of what was spoken.
+    final detected = raw['language'] as String?;
+    return TranscriptionResult(
+      cues: cues,
+      language: (detected == null || detected.isEmpty) ? null : detected,
+    );
   }
 
   /// Abandons an in-flight transcription. Safe to call when none is running.
@@ -1279,9 +1292,9 @@ class NativeBridge {
   /// D2's Dart handoff); both default from the build's dart-defines so
   /// every call site — the About button, the pre-recording bar's update
   /// tap — gets the same behavior. macOS sends no arguments and Sparkle
-  /// owns the feed. A Windows build without AZ_CDN_ENDPOINT sends no
-  /// arguments either, and native replies false + an `updateError` event
-  /// instead of a silent no-op.
+  /// owns the feed. A Windows build without CLINGFY_UPDATE_FEED_HOST sends
+  /// no arguments either, and native replies false + an `updateError` event
+  /// (UPDATE_FEED_NOT_CONFIGURED) instead of a silent no-op.
   Future<bool> checkForUpdates({String? feedUrl, String? channel}) async {
     try {
       Map<String, dynamic>? args;
@@ -1344,4 +1357,20 @@ class NativeBridge {
       Log.w('NativeBridge', 'debugForceNativeCrash refused/failed: $e');
     }
   }
+}
+
+/// What one transcription returned: the cues, and the language they were
+/// decoded in.
+///
+/// The language rides the result rather than each cue because it is one fact
+/// about the run. It stays null when the engine could not say -- absent and
+/// English must remain distinguishable, which is the defect that made every
+/// saved caption track claim English regardless of what was spoken.
+class TranscriptionResult {
+  const TranscriptionResult({required this.cues, required this.language});
+
+  final List<Map<dynamic, dynamic>> cues;
+
+  /// Whisper language code ('en', 'ar', 'ro'), or null when unknown.
+  final String? language;
 }

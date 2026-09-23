@@ -58,7 +58,9 @@ final class StorageDiagnosticsServiceTests: XCTestCase {
       options: TranscriptionOptions,
       progress: @escaping (TranscriptionProgress) -> Void,
       isCancelled: @escaping () -> Bool
-    ) throws -> [TranscribedSegment] { [] }
+    ) throws -> TranscriptionOutcome {
+      TranscriptionOutcome(segments: [], detectedLanguage: nil)
+    }
   }
 
   /// Counts the deletes the production code would have performed.

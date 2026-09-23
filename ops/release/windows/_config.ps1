@@ -154,19 +154,13 @@ function Find-SignTool {
 }
 
 # --- Context ----------------------------------------------------------------------
-# The Azure settings that exist in the real .env files. Container/folder names
-# are defaults below (same values as lib/env.sh), not env-file keys.
-#
-# Split into two groups: the settings every publish needs (blob upload target +
-# public URL composition), and the settings used ONLY by the Front Door cache
-# purge. The purge group is optional — dev and prod are blob-direct (no Front
-# Door) as of 2026-07, so those keys are empty and the purge is skipped. This
-# mirrors the macOS lane's publish_release.sh Front Door guard.
-$script:AzureRequiredKeys = @(
+# Legacy Azure keys. Nothing validates or reads these any more -- the azure
+# provider arm was deleted 2026-09-21 -- but they are still LOADED from the .env
+# file so that a file carrying them does not trip the unknown-key handling, and
+# so an operator reading a stale .env sees them accounted for. Drop the list once
+# the keys are gone from every .env on every machine.
+$script:AzureLegacyKeys = @(
   'AZ_STORAGE_ACCOUNT',
-  'AZ_CDN_ENDPOINT'
-)
-$script:AzurePurgeKeys = @(
   'AZ_RESOURCE_GROUP',
   'AZ_CDN_PROFILE',
   'AZ_FRONTDOOR_ENDPOINT_NAME'
@@ -307,18 +301,20 @@ function Initialize-WindowsReleaseContext {
 #
 # The purge-only keys (AZ_RESOURCE_GROUP / AZ_CDN_PROFILE /
 # AZ_FRONTDOOR_ENDPOINT_NAME) are optional: when no Front Door is configured
-# (blob-direct), they stay empty and 04_publish_azure.ps1 skips the purge.
+# (blob-direct), they stay empty and 04_publish.ps1 skips the purge.
 function Import-AzurePublishSettings([pscustomobject]$Context) {
   Import-DotenvFallback $Context.EnvFile `
-    ($script:AzureRequiredKeys + $script:AzurePurgeKeys + $script:StorageProviderKeys)
+    ($script:AzureLegacyKeys + $script:StorageProviderKeys)
 
-  # Provider first: it decides WHICH settings are required. Default mirrors the macOS pipeline —
-  # prod and dev publish to AWS; only a local publish falls through to Azure, and it has no
-  # credentials for either cloud anyway. Both Azure release accounts are being deleted (prod's on
-  # 2026-09-15, dev's right after this lands), so an Azure default here would write to nothing.
+  # Provider first: it decides WHICH settings are required. Mirrors configure_storage_provider()
+  # in ops/release/lib/env.sh — prod and dev publish to AWS, and `local` gets 'none' rather than a
+  # cloud. It used to fall through to 'azure', which stopped being a harmless placeholder once
+  # both Azure release accounts were deleted on 2026-09-15: the arm still existed, so a local
+  # publish aimed at storage that no longer answers. 'none' lets a local BUILD run and makes a
+  # local PUBLISH say why it cannot proceed.
   $provider = $env:RELEASE_STORAGE_PROVIDER
   if (-not $provider) {
-    $provider = if ($Context.Channel -eq 'prod' -or $Context.Channel -eq 'dev') { 'aws' } else { 'azure' }
+    $provider = if ($Context.Channel -eq 'prod' -or $Context.Channel -eq 'dev') { 'aws' } else { 'none' }
   }
   $Context.StorageProvider = $provider
 
@@ -355,27 +351,14 @@ function Import-AzurePublishSettings([pscustomobject]$Context) {
       Write-Info "Key prefix:      $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
       Write-Info "CloudFront:      $($Context.AwsCloudFrontDistributionId)"
     }
-    'azure' {
-      $missing = $script:AzureRequiredKeys | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
-      if ($missing) {
-        Fail ("Missing Azure publish settings: $($missing -join ', '). " +
-          "Set them in the environment or provide them in $($Context.EnvFile).")
-      }
-      $Context.AzStorageAccount = $env:AZ_STORAGE_ACCOUNT
-      $Context.AzResourceGroup = $env:AZ_RESOURCE_GROUP
-      $Context.AzCdnProfile = $env:AZ_CDN_PROFILE
-      $Context.AzCdnEndpoint = $env:AZ_CDN_ENDPOINT
-      $Context.AzFrontDoorEndpointName = $env:AZ_FRONTDOOR_ENDPOINT_NAME
-      $Context.PublicEndpoint = if ($env:RELEASE_PUBLIC_ENDPOINT) { $env:RELEASE_PUBLIC_ENDPOINT } else { $env:AZ_CDN_ENDPOINT }
-      Write-Info "Provider:        azure"
-      Write-Info "Storage account: $($Context.AzStorageAccount)"
-      Write-Info "Blob path:       $($Context.AzContainer)/$($Context.WindowsBlobPrefix)/"
-      if (-not $Context.AzFrontDoorEndpointName) {
-        Write-Info 'Front Door:      none (blob-direct; cache purge will be skipped)'
-      }
+    'none' {
+      # This channel does not publish. Nothing is required and nothing is validated; the publish
+      # step itself refuses, so a local build still runs end to end.
+      $Context.PublicEndpoint = $env:RELEASE_PUBLIC_ENDPOINT
+      Write-Info "Provider:        none (this channel does not publish)"
     }
     default {
-      Fail "RELEASE_STORAGE_PROVIDER must be 'aws' or 'azure', got '$provider'."
+      Fail "RELEASE_STORAGE_PROVIDER must be 'aws' or 'none', got '$provider'."
     }
   }
 }

@@ -13,9 +13,12 @@
 #      lane) — its service principal needs **Storage Blob Data Contributor on
 #      the `clingfyreleasesdev` storage account** (the macOS dev account may
 #      differ, so verify/grant this role).
-#   3. Secure file `.env.dev` in the Library — the SAME blob-direct config used
-#      locally (AZ_STORAGE_ACCOUNT=clingfyreleasesdev, AZ_CDN_ENDPOINT=the blob
-#      endpoint, AZ_FRONTDOOR_ENDPOINT_NAME empty).
+#   3. Secure file `.env.dev` in the Library — at the time, the same
+#      blob-direct config used locally (AZ_STORAGE_ACCOUNT=clingfyreleasesdev,
+#      AZ_CDN_ENDPOINT=the blob endpoint, AZ_FRONTDOOR_ENDPOINT_NAME empty).
+#      None of that is live now: the account was deleted 2026-09-15 and
+#      AZ_CDN_ENDPOINT is now CLINGFY_UPDATE_FEED_HOST. Do not rename the key
+#      here — there is no feed-host setup for a secure file nobody will create.
 #   4. Variable group `Clingfy-Secrets` linked (shared with the macOS lane).
 #   5. The `Flutter` Marketplace task (FlutterInstall@0) installed in the org
 #      (the macOS lane already uses it).
@@ -142,7 +145,7 @@ steps:
       scriptType: pscore
       scriptLocation: inlineScript
       inlineScript: |
-        pwsh -NoProfile -File ops/release/windows/04_publish_azure.ps1 -Channel dev
+        pwsh -NoProfile -File ops/release/windows/04_publish.ps1 -Channel dev
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         pwsh -NoProfile -File ops/release/windows/05_smoke.ps1 -Channel dev
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

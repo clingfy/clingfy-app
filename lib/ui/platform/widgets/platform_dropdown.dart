@@ -110,7 +110,21 @@ class _PlatformDropdownState<T> extends State<PlatformDropdown<T>> {
           height: height,
           child: Theme(
             data: popupTheme,
-            child: PopupMenuButton<T>(
+            // Keyed on the item's INDEX, not its value, and that is the
+            // whole point rather than a style choice.
+            //
+            // `PopupMenuButton` routes a null result to `onCanceled`, because
+            // a dismissed menu also completes with null -- it cannot tell the
+            // two apart. So with `PopupMenuItem<T>(value: item.value)` any row
+            // whose value is null was silently unclickable: it highlighted, it
+            // closed the menu, and `onChanged` never fired. That is not
+            // hypothetical, it shipped: the window picker's "Select an app
+            // window" row did nothing, and the captions language picker had to
+            // invent a sentinel to dodge it.
+            //
+            // An index is never null, so the menu always reports a real
+            // selection and a null-valued item behaves like any other.
+            child: PopupMenuButton<int>(
               enabled: _enabled,
               tooltip: '',
               padding: EdgeInsets.zero,
@@ -136,18 +150,22 @@ class _PlatformDropdownState<T> extends State<PlatformDropdown<T>> {
                 borderRadius: BorderRadius.circular(12),
                 side: BorderSide(color: palette.border),
               ),
-              onSelected: (selected) {
+              onSelected: (index) {
                 if (mounted) {
                   setState(() {
                     _isMenuOpen = false;
                   });
                 }
-                widget.onChanged?.call(selected);
+                // The menu is built from `widget.items`, so this index is in
+                // range for the list that built it. Guarded anyway rather than
+                // trusting a rebuild between open and tap.
+                if (index < 0 || index >= widget.items.length) return;
+                widget.onChanged?.call(widget.items[index].value);
               },
               itemBuilder: (context) => [
                 for (final entry in widget.items.indexed)
-                  PopupMenuItem<T>(
-                    value: entry.$2.value,
+                  PopupMenuItem<int>(
+                    value: entry.$1,
                     padding: EdgeInsets.zero,
                     height: 42,
                     child: SizedBox(

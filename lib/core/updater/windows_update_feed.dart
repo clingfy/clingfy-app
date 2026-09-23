@@ -3,18 +3,32 @@
 /// CMake define, because the per-channel Front Door domain is already a
 /// dart-define via `--dart-define-from-file`).
 ///
-/// The release pipeline (ops/release/windows/04_publish_azure.ps1) publishes
-/// `latest-windows.json` under `downloads/windows/` on the channel's
-/// AZ_CDN_ENDPOINT domain. Dev and prod builds carry different domains in
-/// their .env files, which is what keeps a dev build from ever seeing the
-/// prod feed.
+/// The release pipeline (ops/release/windows/04_publish.ps1) publishes
+/// `latest-windows.json` under `downloads/windows/` on the channel's public
+/// host. Dev and prod builds carry different hosts in their .env files, which
+/// is what keeps a dev build from ever seeing the prod feed.
 library;
 
-/// The channel's Front Door domain, e.g.
-/// `clingfy-downloads-dev-xxxx.z02.azurefd.net`. Empty when the build ran
-/// without the .env defines (bare `flutter test`, fresh clones).
+/// The channel's public host + path prefix, e.g. `clingfy.com/updates` on prod
+/// and `dev.clingfy.com/updates` on dev. Empty when the build ran without the
+/// .env defines (bare `flutter test`, fresh clones).
+///
+/// COMPILED INTO THE INSTALLER, and the only source for it. A build that does
+/// not carry this define produces an empty host, which windowsUpdateFeedUrl()
+/// turns into a null feed URL -- an installer whose update check can never
+/// succeed, shipped by a lane that still reports success, because 05_smoke.ps1
+/// verifies AWS_PUBLIC_ENDPOINT rather than the value inside the binary. Both
+/// .env files and both ENV_*_B64 secrets must define it.
+///
+/// Until 2026-09-21 this fell back to AZ_CDN_ENDPOINT, the Azure-era name this
+/// key was renamed from (8a4e3ca); #556 deleted the fallback. Nothing reads
+/// AZ_CDN_ENDPOINT any more -- not this define, not the release scripts, where
+/// the `azure` storage-provider arm is gone and _config.ps1's AzureLegacyKeys
+/// load-only allowlist does not even name it. It is still IN both secrets
+/// though: run 35609712749 (2026-09-21) printed it from both ENV_DEV_B64 and
+/// ENV_PROD_B64. Gone from the vault .env files, not yet from the secrets.
 const String windowsUpdateCdnEndpointDefine = String.fromEnvironment(
-  'AZ_CDN_ENDPOINT',
+  'CLINGFY_UPDATE_FEED_HOST',
   defaultValue: '',
 );
 
@@ -45,7 +59,7 @@ String? windowsUpdateFeedUrl({required String cdnEndpoint}) {
   return 'https://$endpoint/downloads/windows/latest-windows.json';
 }
 
-/// The feed URL for this build, or null when AZ_CDN_ENDPOINT was not
+/// The feed URL for this build, or null when no feed host was
 /// provided at build time.
 String? defaultWindowsUpdateFeedUrl() =>
     windowsUpdateFeedUrl(cdnEndpoint: windowsUpdateCdnEndpointDefine);

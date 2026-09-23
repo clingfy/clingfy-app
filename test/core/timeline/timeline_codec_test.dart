@@ -170,7 +170,13 @@ void main() {
       expect(audio.limiter, isTrue);
 
       final caption = decoded.trackOfType<CaptionTrack>()!;
-      expect(caption.language, 'en');
+      expect(
+        caption.language,
+        isNull,
+        reason:
+            'a missing language is unknown, not English -- defaulting it here '
+            'is what put a false claim on every saved track',
+      );
       expect(caption.captions, isEmpty);
     });
 
@@ -235,6 +241,86 @@ void main() {
         codec.encode(codec.decode(codec.encode(empty))),
         codec.encode(empty),
       );
+    });
+  });
+
+  group('caption language across the schema bump', () {
+    const codec = TimelineCodec();
+
+    Map<String, dynamic> bundleAtVersion(int version, Object? language) => {
+      'schemaVersion': version,
+      'timeline': {
+        'durationMs': 1000,
+        'tracks': [
+          {
+            'kind': 'caption',
+            'id': 'caption',
+            'enabled': true,
+            if (language != null) 'language': language,
+            'captions': const <Map<String, dynamic>>[],
+          },
+        ],
+      },
+    };
+
+    String? languageOf(Map<String, dynamic> bundle) =>
+        codec.decode(bundle).trackOfType<CaptionTrack>()?.language;
+
+    test("a v3 'en' is a default, not a detection, and reads as unknown", () {
+      // Before the bump every track carried 'en' whether or not anything had
+      // detected a language. By value it is indistinguishable from real
+      // English; by provenance it is not, and the version is the only witness.
+      expect(
+        languageOf(bundleAtVersion(3, 'en')),
+        isNull,
+        reason:
+            'trusting this would launder a constructor default into evidence, '
+            'which is the defect the bump exists to end',
+      );
+    });
+
+    test("a v4 'en' is a real detection and is kept", () {
+      expect(
+        languageOf(bundleAtVersion(4, 'en')),
+        'en',
+        reason: 'at this version nothing writes a language it did not detect',
+      );
+    });
+
+    test('a non-English language is trusted at any version', () {
+      // Nothing ever wrote a non-'en' default, so a v3 bundle carrying one was
+      // hand-edited or written by another tool -- and it means what it says.
+      expect(languageOf(bundleAtVersion(3, 'ar')), 'ar');
+      expect(languageOf(bundleAtVersion(4, 'ar')), 'ar');
+    });
+
+    test('an absent language stays absent', () {
+      expect(languageOf(bundleAtVersion(4, null)), isNull);
+      expect(languageOf(bundleAtVersion(3, null)), isNull);
+    });
+
+    test('an unknown language is written as absent, not as a guess', () {
+      final encoded = codec.encode(
+        const Timeline(tracks: [CaptionTrack(captions: [])]),
+      );
+      final track =
+          ((encoded['timeline'] as Map)['tracks'] as List).single as Map;
+      expect(
+        track.containsKey('language'),
+        isFalse,
+        reason:
+            'writing a placeholder is how the false English got onto disk in '
+            'the first place',
+      );
+    });
+
+    test('a round trip through the current schema keeps a real language', () {
+      final encoded = codec.encode(
+        const Timeline(
+          tracks: [CaptionTrack(captions: [], language: 'ro')],
+        ),
+      );
+      expect(codec.decode(encoded).trackOfType<CaptionTrack>()?.language, 'ro');
     });
   });
 }

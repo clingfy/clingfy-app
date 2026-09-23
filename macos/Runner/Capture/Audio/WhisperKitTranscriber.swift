@@ -65,6 +65,16 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   private let busyLock = NSLock()
   private var engineBusy = false
 
+  /// Mirrors `pipe != nil`, which is the actual fact about whether weights are
+  /// in memory.
+  ///
+  /// A separate flag rather than reading `pipe` directly, because `pipe` is
+  /// owned by `queue` and the caller is the UI: `queue.sync` from the main
+  /// thread would block for the whole of a transcription, which is exactly why
+  /// `engineBusy` above is lock-guarded rather than queue-hopped. Written only
+  /// where `pipe` is written, so the two cannot drift.
+  private var modelResident = false
+
   var isEngineBusy: Bool {
     busyLock.lock()
     let running = engineBusy
@@ -72,9 +82,30 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     return running || drain.isDraining
   }
 
+  /// Whether the weights are in memory right now.
+  ///
+  /// Deliberately NOT `isEngineBusy`. That answers "is something touching the
+  /// model files", which is wider on purpose -- it stays true through a
+  /// cancelled download's drain -- and it is false whenever nothing is running,
+  /// including while a loaded model is sitting in memory between jobs. A
+  /// Delete-model prompt keyed off busyness would tell the user "deleting also
+  /// unloads it" only while a transcription was in flight, which is the one
+  /// moment the delete is refused anyway.
+  var isModelResident: Bool {
+    busyLock.lock()
+    defer { busyLock.unlock() }
+    return modelResident
+  }
+
   private func setEngineBusy(_ value: Bool) {
     busyLock.lock()
     engineBusy = value
+    busyLock.unlock()
+  }
+
+  private func setModelResident(_ value: Bool) {
+    busyLock.lock()
+    modelResident = value
     busyLock.unlock()
   }
 
@@ -112,6 +143,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
         }
         let current = pipe
         pipe = nil
+        setModelResident(false)
         continuation.resume(returning: (true, current))
       }
     }
@@ -149,8 +181,32 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       // WhisperKit builds on x86_64 but there is no Neural Engine, so compute
       // falls back to CPU+GPU. That is slow rather than broken — surfaced as a
       // distinct reason so the UI can warn rather than refuse.
-      return .unavailable(reason: "intelSlowPath")
+      // Same wire value as `CaptionsCapability.Reason.requiresAppleSilicon`.
+      // A literal rather than the enum because this type does not import it;
+      // the pair is pinned by `CaptionsCapabilityTests`.
+      return .unavailable(reason: "requiresAppleSilicon")
     #endif
+  }
+
+  // MARK: - Supported languages
+
+  /// Every language the engine can decode, as `(code, englishName)` sorted by
+  /// name.
+  ///
+  /// Read from the WhisperKit module's `Constants.languages` rather than
+  /// curated here -- a top-level enum in that module, not nested under the
+  /// `WhisperKit` class. A
+  /// hand-written list is a second opinion about someone else's capability: it
+  /// goes stale on the next engine bump, and the failure is silent -- a
+  /// language the engine supports simply never appears, or one it dropped is
+  /// offered and fails at decode time. Asking the engine cannot drift.
+  ///
+  /// Names are the engine's own lowercase English keys ("english", "arabic").
+  /// Presenting them is the UI's job; this is the inventory, not the copy.
+  static var supportedLanguages: [(code: String, name: String)] {
+    Constants.languages
+      .map { (code: $0.value, name: $0.key) }
+      .sorted { $0.name < $1.name }
   }
 
   // MARK: - Transcription
@@ -160,7 +216,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     options: TranscriptionOptions,
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
-  ) throws -> [TranscribedSegment] {
+  ) throws -> TranscriptionOutcome {
     // Held across the whole run, including the model load, so a delete cannot
     // land between loading the weights and reading them.
     setEngineBusy(true)
@@ -237,9 +293,9 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     options: TranscriptionOptions,
     progress: @escaping (TranscriptionProgress) -> Void,
     isCancelled: @escaping () -> Bool
-  ) throws -> [TranscribedSegment] {
+  ) throws -> TranscriptionOutcome {
     let semaphore = DispatchSemaphore(value: 0)
-    var result: Result<[TranscribedSegment], Error> = .failure(TranscriptionError.cancelled)
+    var result: Result<TranscriptionOutcome, Error> = .failure(TranscriptionError.cancelled)
 
     let work = Task { [self] in
       do {
@@ -271,7 +327,13 @@ final class WhisperKitTranscriber: CaptionTranscriber {
           decodeOptions: Self.decodingOptions(from: options)
         )
         let merged = TranscriptionUtilities.mergeTranscriptionResults(raw)
-        result = .success(Self.map(merged.segments))
+        // `merged.language` is what the decoder actually used: the forced
+        // language when `options.language` was set, or the one it detected from
+        // the opening window when it was not. Empty rather than absent is how
+        // an unset field arrives, and an empty code is not a language.
+        let decoded = merged.language.isEmpty ? nil : merged.language
+        result = .success(
+          TranscriptionOutcome(segments: Self.map(merged.segments), detectedLanguage: decoded))
       } catch is CancellationError {
         result = .failure(TranscriptionError.cancelled)
       } catch {
@@ -446,6 +508,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     )
     let created = try await WhisperKit(config)
     pipe = created
+    setModelResident(true)
     return created
   }
 

@@ -26,7 +26,7 @@ plus native PDBs + Dart AOT symbols uploaded to Sentry.
 | Inno Setup **6.3+** | installer compiler (`x64compatible` directives need ≥ 6.3) | `winget install JRSoftware.InnoSetup` — discovered via PATH or the default per-user/machine install dirs |
 | Windows 10/11 SDK (`signtool.exe`) | Authenticode signing | ships with VS; the lane finds the newest SDK under `Program Files (x86)\Windows Kits\10\bin\<ver>\x64` |
 | AWS CLI v2 (`aws`) | S3 upload + CloudFront invalidation | `winget install Amazon.AWSCLI`, then `aws sso login --profile clingfy-dev` (CI assumes a role via GitHub OIDC instead) |
-| Azure CLI (`az`) | not used on the `aws` provider, but still **required on PATH**: `04_publish_azure.ps1` probes for `az` before it dispatches on the provider, so a machine without it fails even on an AWS publish | `winget install Microsoft.AzureCLI` — no `az login` needed |
+| Azure CLI (`az`) | not used on the `aws` provider, but still **required on PATH**: `04_publish.ps1` probes for `az` before it dispatches on the provider, so a machine without it fails even on an AWS publish | `winget install Microsoft.AzureCLI` — no `az login` needed |
 | `sentry-cli` | symbol upload (optional — non-blocking step) | `scoop install sentry-cli` or `npm i -g @sentry/cli` |
 
 > ⚠️ Inno Setup 6.5+ prints **"Non-commercial use only"** on unlicensed installs. Verify the Inno Setup license tier before shipping a commercial build.
@@ -39,12 +39,13 @@ Gitignored (`.gitignore` line 66); obtained per `docs/development.md`. The relea
 
 | Key | Used by | Purpose |
 |---|---|---|
-| `RELEASE_STORAGE_PROVIDER` | `_config.ps1` | `aws` or `azure` — **optional**; defaults to `aws` for the `prod` and `dev` channels and `azure` only for `local` |
-| `AWS_RELEASES_BUCKET` | `04_publish_azure.ps1`, `05_smoke.ps1` | **required on `aws`** — target S3 bucket — **dev and prod use different buckets**; that is the channel isolation model |
-| `AWS_PUBLIC_ENDPOINT` | `04_publish_azure.ps1`, `05_smoke.ps1` | **required on `aws`** — public host + path prefix the artifacts are SERVED from (`clingfy.com/updates`; dev `dev.clingfy.com/updates`). Builds the URLs above and is baked into every `latest-windows.json`, so it must move with the bucket |
-| `AWS_CLOUDFRONT_DISTRIBUTION_ID` | `04_publish_azure.ps1` | **required on `aws`** — `/updates/*` is cached with CachingOptimized and `latest-windows.json` is republished on every run; without the invalidation the edge keeps serving the previous release |
+| `RELEASE_STORAGE_PROVIDER` | `_config.ps1` | `aws` or `none` — **optional**; defaults to `aws` for the `prod` and `dev` channels and `none` for `local`, which does not publish at all. Any other value (including the old `azure`) is a hard failure before any bytes move |
+| `AWS_RELEASES_BUCKET` | `04_publish.ps1`, `05_smoke.ps1` | **required on `aws`** — target S3 bucket — **dev and prod use different buckets**; that is the channel isolation model |
+| `AWS_PUBLIC_ENDPOINT` | `04_publish.ps1`, `05_smoke.ps1` | **required on `aws`** — public host + path prefix the artifacts are SERVED from (`clingfy.com/updates`; dev `dev.clingfy.com/updates`). Builds the URLs above and is baked into every `latest-windows.json`, so it must move with the bucket |
+| `AWS_CLOUDFRONT_DISTRIBUTION_ID` | `04_publish.ps1` | **required on `aws`** — `/updates/*` is cached with CachingOptimized and `latest-windows.json` is republished on every run; without the invalidation the edge keeps serving the previous release |
 | `RELEASE_PUBLIC_ENDPOINT` | `_config.ps1` | **optional** — overrides `AWS_PUBLIC_ENDPOINT` when set |
-| `AZ_STORAGE_ACCOUNT`, `AZ_CDN_ENDPOINT`, `AZ_RESOURCE_GROUP`, `AZ_CDN_PROFILE`, `AZ_FRONTDOOR_ENDPOINT_NAME` | `04_publish_azure.ps1`, `05_smoke.ps1` | **dead for prod and dev** — read only by the `azure` provider, i.e. only `-Channel local`. Both Azure release storage accounts were deleted 2026-09-15, so an `azure` publish now writes where nothing reads |
+| `AZ_STORAGE_ACCOUNT`, `AZ_RESOURCE_GROUP`, `AZ_CDN_PROFILE`, `AZ_FRONTDOOR_ENDPOINT_NAME` | `_config.ps1` (loaded, never read) | **dead on every channel** — the `azure` provider arm was deleted 2026-09-21, so no script reads these anywhere, and `RELEASE_STORAGE_PROVIDER=azure` is now a hard failure rather than a fallback. `_config.ps1` keeps them in `$script:AzureLegacyKeys` only so a stale `.env` that still carries them stays accounted for. Both Azure release storage accounts were deleted 2026-09-15. Delete them from any `.env` you have rather than updating them |
+| `AZ_CDN_ENDPOINT` | nothing | **renamed, not merely dead** — it became `CLINGFY_UPDATE_FEED_HOST` on 2026-09-21, same value (the channel's public host + path prefix: `clingfy.com/updates`, dev `dev.clingfy.com/updates`), and the Dart fallback to the old name was removed. It is not even on the legacy load list, so a file that still sets it is setting a name nothing answers to |
 | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, `SENTRY_PROJECT` | `upload_symbols.ps1` | symbol upload (optional; missing → warn + continue) |
 
 The same file also feeds the app itself via `--dart-define-from-file` (`API_BASE_URL`, `CLINGFY_SITE_URL`, `SENTRY_DSN`, …) — the build step passes it through verbatim.
@@ -114,7 +115,7 @@ Rehearsal without touching prod infrastructure: `-Channel dev` (different S3 buc
 | 3 | `pwsh ops/release/windows/03_sign.ps1 -Channel prod -Target app -RequireSignature` | signs + verifies `clingfy.exe`, `crashpad_handler.exe` in the staging folder |
 | 4 | `pwsh ops/release/windows/02_package_inno.ps1 -Channel prod` | compiles `installer/Clingfy.iss` → `dist/windows/installer/Clingfy_Setup_<ver>.exe`; refuses a channel/version-mismatched staging folder |
 | 5 | `pwsh ops/release/windows/03_sign.ps1 -Channel prod -Target installer -RequireSignature` | signs + verifies the installer exe |
-| 6 | `pwsh ops/release/windows/04_publish_azure.ps1 -Channel prod` | generates `.sha256` + `latest-windows.json`, uploads all three objects to `s3://<AWS_RELEASES_BUCKET>/updates/downloads/windows/`, creates a CloudFront invalidation for exactly those paths (hard failure if it fails), then re-reads the feed and HEADs the installer through the public endpoint (9 × 5 s) before printing the download URL |
+| 6 | `pwsh ops/release/windows/04_publish.ps1 -Channel prod` | generates `.sha256` + `latest-windows.json`, uploads all three objects to `s3://<AWS_RELEASES_BUCKET>/updates/downloads/windows/`, creates a CloudFront invalidation for exactly those paths (hard failure if it fails), then re-reads the feed and HEADs the installer through the public endpoint (9 × 5 s) before printing the download URL |
 | 7 | `pwsh ops/release/windows/upload_symbols.ps1 -EnvFile .env.prod` | PDBs (`build/windows/x64/runner/Release`), Flutter engine PDB, `app.so` → Sentry (non-blocking) |
 | 8 | `pwsh ops/release/windows/05_smoke.ps1 -Channel prod` | feed advertises this installer (9×5 s retries for CDN propagation), installer URL = HTTP 200, downloaded bytes hash-match the published sha256 |
 

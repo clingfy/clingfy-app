@@ -53,6 +53,8 @@ void main() {
     bool hasEverGenerated = false,
     bool failed = false,
     ValueChanged<bool>? onUseMicChanged,
+    String? language,
+    ValueChanged<String?>? onLanguageChanged,
     VoidCallback? onGenerate,
     VoidCallback? onCancel,
     void Function(String, String)? onCueTextChanged,
@@ -73,6 +75,8 @@ void main() {
       engineBusyOffScreen: engineBusyOffScreen,
       hasEverGenerated: hasEverGenerated,
       failed: failed,
+      language: language,
+      onLanguageChanged: onLanguageChanged ?? (_) {},
       onUseMicChanged: onUseMicChanged ?? (_) {},
       onUseSystemChanged: (_) {},
       onGenerate: onGenerate ?? () {},
@@ -125,7 +129,8 @@ void main() {
     final l10n = await AppLocalizations.delegate.load(const Locale('en'));
     final expected = {
       CaptionsUnavailableReason.unsupportedOs: l10n.captionsUnavailableOs,
-      CaptionsUnavailableReason.intelSlowPath: l10n.captionsUnavailableIntel,
+      CaptionsUnavailableReason.requiresAppleSilicon:
+          l10n.captionsUnavailableIntel,
       CaptionsUnavailableReason.noAudio: l10n.captionsUnavailableNoAudio,
       CaptionsUnavailableReason.platformNotSupported:
           l10n.captionsUnavailablePlatform,
@@ -182,7 +187,7 @@ void main() {
     final l10n = await AppLocalizations.delegate.load(const Locale('en'));
     for (final reason in [
       CaptionsUnavailableReason.unsupportedOs,
-      CaptionsUnavailableReason.intelSlowPath,
+      CaptionsUnavailableReason.requiresAppleSilicon,
       CaptionsUnavailableReason.noAudio,
       CaptionsUnavailableReason.platformNotSupported,
     ]) {
@@ -953,5 +958,86 @@ void main() {
 
     expect(find.byType(EditableText), findsNWidgets(3));
     expect(find.byKey(const Key('captions_cue_list')), findsNothing);
+  });
+
+  group('language picker', () {
+    const withLanguages = CaptionsCapabilityInfo(
+      available: true,
+      hasMicAudio: true,
+      hasSystemAudio: true,
+      languages: [
+        CaptionLanguage(code: 'ar', name: 'arabic'),
+        CaptionLanguage(code: 'en', name: 'english'),
+      ],
+    );
+
+    testWidgets('choosing Auto reports null, and the row is clickable at all', (
+      tester,
+    ) async {
+      // THE POINT OF THIS TEST. A `PopupMenuItem` whose value is null pops its
+      // route with null, which the menu cannot tell apart from being
+      // dismissed, so `onSelected` never fires and the row is silently dead --
+      // the bug still live in the window picker. Auto therefore carries a
+      // sentinel. If someone "simplifies" that back to a null value, this goes
+      // red instead of the feature going quietly broken.
+      var reported = 'untouched';
+      var called = false;
+      await tester.pumpWidget(
+        host(
+          section(
+            capability: withLanguages,
+            language: 'ar',
+            onLanguageChanged: (code) {
+              called = true;
+              reported = code ?? 'auto';
+            },
+          ),
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('captions_language')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Detect automatically').last);
+      await tester.pumpAndSettle();
+
+      expect(called, isTrue, reason: 'the Auto row never fired its callback');
+      expect(reported, 'auto', reason: 'Auto must report null, not a sentinel');
+    });
+
+    testWidgets('choosing a language reports its code', (tester) async {
+      String? reported = 'untouched';
+      await tester.pumpWidget(
+        host(
+          section(
+            capability: withLanguages,
+            onLanguageChanged: (code) => reported = code,
+          ),
+        ),
+      );
+
+      await tester.tap(find.byKey(const Key('captions_language')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arabic').last);
+      await tester.pumpAndSettle();
+
+      expect(reported, 'ar');
+    });
+
+    testWidgets('no picker when the engine named no languages', (tester) async {
+      // An older native half sends no list. A picker that cannot name a
+      // language is worse than none.
+      await tester.pumpWidget(
+        host(
+          section(
+            capability: const CaptionsCapabilityInfo(
+              available: true,
+              hasMicAudio: true,
+              hasSystemAudio: true,
+            ),
+          ),
+        ),
+      );
+      expect(find.byKey(const Key('captions_language')), findsNothing);
+    });
   });
 }

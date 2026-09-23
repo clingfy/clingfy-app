@@ -39,7 +39,9 @@ class TimelineCodec {
     if (rawTracks is List) {
       for (final raw in rawTracks) {
         if (raw is Map) {
-          final track = EditTrack.fromMap(raw);
+          // The bundle's version, not this build's: the caption track reads a
+          // stored 'en' differently depending on when it was written.
+          final track = EditTrack.fromMap(raw, schemaVersion: version);
           // Unknown track kinds are dropped so a project written by a newer or
           // older build still opens instead of crashing.
           if (track != null) tracks.add(track);

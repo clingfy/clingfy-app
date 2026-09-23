@@ -9,7 +9,10 @@ import 'package:clingfy/ui/platform/widgets/app_segmented.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
-import 'package:flutter/material.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
+// `PlatformMenuItem` collides with Flutter's own; the sibling sections hide
+// it the same way.
+import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 /// Subtitle controls: generate, pick which audio to transcribe, and correct
 /// what came back.
@@ -51,6 +54,8 @@ class PostCaptionsSection extends StatelessWidget {
     this.engineBusyOffScreen = false,
     required this.onUseMicChanged,
     required this.onUseSystemChanged,
+    required this.language,
+    required this.onLanguageChanged,
     required this.onGenerate,
     required this.onCancel,
     this.onRetryProbe,
@@ -99,6 +104,11 @@ class PostCaptionsSection extends StatelessWidget {
   /// list, so without this the two are indistinguishable here and a failure
   /// gets reported as silence.
   final bool failed;
+
+  /// Null = Auto (let the engine detect).
+  final String? language;
+
+  final ValueChanged<String?> onLanguageChanged;
 
   final ValueChanged<bool> onUseMicChanged;
   final ValueChanged<bool> onUseSystemChanged;
@@ -166,6 +176,37 @@ class PostCaptionsSection extends StatelessWidget {
           title: l10n.captions,
           showHeader: false,
           children: [
+            // Only when the engine told us what it supports. An empty list
+            // means an older native half, and a language picker that cannot
+            // name a language is worse than none.
+            if (info.languages.isNotEmpty) ...[
+              PlatformDropdown<String?>(
+                key: const Key('captions_language'),
+                labelText: l10n.captionsLanguage,
+                // Auto carries a plain null. `PlatformDropdown` keys its menu
+                // on the item's index, so a null-valued row is selectable like
+                // any other -- this used to need a sentinel, because keying on
+                // the value made such a row silently unclickable.
+                value: language,
+                items: [
+                  PlatformMenuItem<String?>(
+                    value: null,
+                    label: l10n.captionsLanguageAuto,
+                  ),
+                  for (final option in info.languages)
+                    PlatformMenuItem<String?>(
+                      value: option.code,
+                      // The engine's names are lowercase English; the UI is
+                      // where that becomes presentable.
+                      label: _displayLanguage(option.name),
+                    ),
+                ],
+                onChanged: isGenerating || isProcessing
+                    ? null
+                    : onLanguageChanged,
+              ),
+              const SizedBox(height: AppSidebarTokens.rowGap),
+            ],
             // Only worth showing when there is a choice to make. A picker with
             // one entry is noise.
             if (info.shouldOfferSourcePicker) ...[
@@ -378,7 +419,7 @@ class PostCaptionsSection extends StatelessWidget {
     switch (reason) {
       case CaptionsUnavailableReason.unsupportedOs:
         return l10n.captionsUnavailableOs;
-      case CaptionsUnavailableReason.intelSlowPath:
+      case CaptionsUnavailableReason.requiresAppleSilicon:
         return l10n.captionsUnavailableIntel;
       case CaptionsUnavailableReason.noAudio:
         return l10n.captionsUnavailableNoAudio;
@@ -618,3 +659,7 @@ class _CueRowState extends State<_CueRow> {
     return TextDirection.ltr;
   }
 }
+
+/// The engine hands back lowercase English names ("english", "arabic").
+String _displayLanguage(String name) =>
+    name.isEmpty ? name : '${name[0].toUpperCase()}${name.substring(1)}';

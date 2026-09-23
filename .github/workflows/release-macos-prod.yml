@@ -309,7 +309,7 @@ jobs:
           role-session-name: clingfy-publish-macos-prod-${{ github.run_id }}
 
       - name: "Step 5: Publish release"
-        run: ./ops/release/05_publish_azure.sh
+        run: ./ops/release/05_publish.sh
 
       - name: "Step 6: Create git tag"
         # Immediately after publish, before anything cosmetic. Step 5 is what

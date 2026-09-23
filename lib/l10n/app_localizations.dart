@@ -5026,6 +5026,18 @@ abstract class AppLocalizations {
   /// **'Transcribing…'**
   String get captionsTranscribing;
 
+  /// No description provided for @captionsLanguage.
+  ///
+  /// In en, this message translates to:
+  /// **'Spoken language'**
+  String get captionsLanguage;
+
+  /// No description provided for @captionsLanguageAuto.
+  ///
+  /// In en, this message translates to:
+  /// **'Detect automatically'**
+  String get captionsLanguageAuto;
+
   /// No description provided for @captionsSourceMic.
   ///
   /// In en, this message translates to:
