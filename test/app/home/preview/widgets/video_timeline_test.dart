@@ -529,6 +529,57 @@ void main() {
     expect(layer, findsNothing);
   });
 
+  testWidgets('a stale Alt from Alt+Tab does not re-arm the cut tool', (
+    tester,
+  ) async {
+    // Windows Alt+Tab delivers Alt-DOWN to this app and Alt-UP to whatever the
+    // user switched to, so `HardwareKeyboard.instance.isAltPressed` stays true
+    // here forever. Re-arming from that stale state on focus gain mounts the
+    // opaque ScissorsCutLayer over the whole timeline: the cursor becomes a
+    // scissors and selecting, dragging and scrubbing all stop working, with no
+    // key held and no way back except pressing and releasing Alt once.
+    final editor = await _createEditor(tester);
+    final clipEditor = _makeClipEditor();
+    final player = _FakePlayerController(
+      editor: editor,
+      clipEditor: clipEditor,
+    );
+    addTearDown(player.dispose);
+    addTearDown(clipEditor.dispose);
+    // The stale key must not leak into later tests in this file.
+    addTearDown(() async {
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    });
+
+    await tester.pumpWidget(_buildTimeline(player: player));
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    final layer = find.byKey(const Key('timeline_scissors_cut_layer'));
+
+    // Alt goes down while the timeline has focus: armed, correctly.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.pump();
+    expect(layer, findsOneWidget);
+
+    // Focus leaves for another window. NO Alt-up is sent - that is the whole
+    // point: the OS gave it to the other window.
+    tester.binding.focusManager.primaryFocus?.unfocus();
+    await tester.pump();
+
+    // User comes back and clicks the timeline.
+    await tester.tap(find.byKey(const Key('timeline_shell')));
+    await tester.pump();
+
+    expect(
+      layer,
+      findsNothing,
+      reason:
+          'no key is physically held, so the timeline must be usable - the cut '
+          'tool may only arm from a real Alt-down received while focused',
+    );
+  });
+
   testWidgets('clicking the armed cut layer splits the clip at the pointer', (
     tester,
   ) async {
