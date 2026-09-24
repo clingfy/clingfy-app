@@ -113,6 +113,15 @@ class _VideoTimelineState extends State<VideoTimeline> {
   // timeline holds focus (re-synced on focus gain so holding Option then
   // clicking in works without releasing the key first), and never while blurred.
   bool _timelineHasFocus = false;
+  // Whether Alt has been seen going DOWN in a key event this widget received
+  // while focused. `HardwareKeyboard.instance.isAltPressed` alone is not
+  // trustworthy here: Windows Alt+Tab sends Alt-down to this app and Alt-up to
+  // the window the user switched to, so the global state stays stuck "Alt
+  // held" with nothing physically pressed. Re-arming from that on focus gain
+  // mounted the opaque ScissorsCutLayer over the whole timeline — cursor stuck
+  // as scissors, select/drag/scrub all dead, and no way out but pressing and
+  // releasing Alt once. Cleared on blur so a stale down cannot outlive focus.
+  bool _altDownSeenWhileFocused = false;
   // Tracks whether the clip editor was attached on the previous build, so the
   // attach/detach transition is logged once (not on every rebuild).
   bool _clipEditorAttached = false;
@@ -191,8 +200,14 @@ class _VideoTimelineState extends State<VideoTimeline> {
   /// key events) means a missed key-up can't strand the tool armed, and gating on
   /// focus means a sync while blurred can never (re-)arm it.
   void _syncCutModeFromKeyboard() {
+    // BOTH conditions, deliberately. `isAltPressed` alone strands the tool
+    // armed after Alt+Tab (see [_altDownSeenWhileFocused]); the observed flag
+    // alone would miss a key-up this widget never received. Requiring the live
+    // state AND a real down-while-focused means a missed up still disarms and
+    // a stale down never arms.
     final armed =
         _timelineHasFocus &&
+        _altDownSeenWhileFocused &&
         HardwareKeyboard.instance.isAltPressed &&
         !_panModeEnabled;
     _setCutModeArmed(armed);
@@ -222,6 +237,18 @@ class _VideoTimelineState extends State<VideoTimeline> {
               LogicalKeyboardKey.space,
             ))) {
       _setPanModeEnabled(false);
+    }
+
+    // Record real Alt transitions this widget actually received. A down seen
+    // here is the only thing that may arm the tool; anything else (including a
+    // stale global "Alt is pressed") must not.
+    if (event.logicalKey == LogicalKeyboardKey.altLeft ||
+        event.logicalKey == LogicalKeyboardKey.altRight) {
+      if (event is KeyDownEvent) {
+        _altDownSeenWhileFocused = true;
+      } else if (event is KeyUpEvent) {
+        _altDownSeenWhileFocused = false;
+      }
     }
 
     // Any other key transition (notably Option down/up) may flip the cut tool.
@@ -758,6 +785,9 @@ class _VideoTimelineState extends State<VideoTimeline> {
             _timelineHasFocus = hasFocus;
             if (!hasFocus) {
               _setPanModeEnabled(false);
+              // The next Alt-up may go to another window, so forget the down.
+              // Re-arming needs a fresh press once focus is back.
+              _altDownSeenWhileFocused = false;
             }
             // Re-derive the cut tool from the live keyboard + new focus state:
             // on gain it arms if Option is already held (so hold-then-click works
