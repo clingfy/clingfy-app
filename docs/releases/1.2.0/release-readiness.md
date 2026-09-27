@@ -226,12 +226,40 @@ Against the built DMG, before dispatch.
 * [ ] Gatekeeper accepts it (`spctl -a -t install` → accepted, notarized Developer ID)
 * [ ] notarization ticket stapled to the DMG (`xcrun stapler validate`)
 * [ ] `SUFeedURL` is the prod appcast and `SUPublicEDKey` matches the repo
-* [ ] appcast advertises 1.2.0 and still lists 1.1.0 and earlier
+* [x] appcast advertises 1.2.0 and still lists 1.1.0 and earlier
 * [ ] in-app "check for updates" resolves on a freshly installed 1.2.0
 
-Notes: these were all verifiable by script for 1.1.0 — download the published
-DMG, mount it, read the bundle plist, run `spctl` and `stapler`, and fetch the
-appcast. Worth doing the same way rather than by eye.
+Notes: 1.2.0 SHIPPED on 2026-09-27. `release-macos-prod.yml` run #3 and
+`release-windows-prod.yml` run #2, both success, both dispatched from this
+branch.
+
+Verified against the LIVE release, not a local build:
+
+    macOS appcast    1.2.0 build 1103, EdDSA-signed, DMG serves (HTTP 206)
+                     minimumSystemVersion 13.0; 1.0.7 and 1.0.6 still 10.15,
+                     so older Macs correctly stay on 1.0.7
+    history          1.2.0 / 1.1.0 / 1.0.7 / 1.0.6 all still listed
+    Windows feed     1.2.0+10, channel=prod, platform=windows-x64,
+                     installer downloadable, versionFull matches pubspec
+
+Build 1103 is `GITHUB_RUN_NUMBER + MACOS_PROD_BUILD_SEED` = 3 + 1100, against
+the 1001 that 1.1.0 published. The two platforms carry DIFFERENT build numbers
+by design: Sparkle needs a monotonic number across macOS releases, while
+Windows packages pubspec's `+10` directly because Inno hard-rejects anything
+over 65535.
+
+The remaining unticked items need the DMG on a machine: mounting it, launching
+it, and letting a previously-installed copy find the update. Those cannot be
+answered from here, and ticking them off a script would be pretending.
+
+ONE MISSTEP, recorded so it is not repeated. The first macOS dispatch was
+aimed at `main` and the job SKIPPED — both prod lanes guard on
+`if: startsWith(github.ref, 'refs/heads/release/')`, so a manual run from
+anywhere else can never publish. Nothing shipped; it cost one run number. It
+also surfaced that the build-seed raise had been committed to `main`, which
+the lane never reads — so the seed had to be cherry-picked onto this branch
+before the real dispatch. Dispatch prod from `release/*`, and make sure any
+workflow change the lane depends on is ON that branch.
 
 ---
 
