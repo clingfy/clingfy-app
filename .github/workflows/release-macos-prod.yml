@@ -90,7 +90,16 @@ jobs:
           # lane used the org-wide $(Build.BuildId), which had reached 776 on the
           # live prod appcast by 2026-08-06. A lower number means every installed
           # copy ignores the update. Raise, never lower.
-          MACOS_PROD_BUILD_SEED: "1000"
+          #
+          # Raised 1000 -> 1100 on 2026-09-28. The margin had worn down to one:
+          # this workflow had run exactly once, so 1.2.0 would have computed
+          # 2 + 1000 = 1002 against the 1001 that 1.1.0 published. It would have
+          # passed, but the headroom is the RUN COUNTER, which only advances when
+          # the lane runs -- so a re-run of a failed attempt reuses its number and
+          # buys nothing. One more published build with no seed change and the
+          # guard below stops the release. 100 is cheap and the comparison is
+          # only ever upward, so raising it cannot invalidate anything shipped.
+          MACOS_PROD_BUILD_SEED: "1100"
         run: |
           set -euo pipefail
 
