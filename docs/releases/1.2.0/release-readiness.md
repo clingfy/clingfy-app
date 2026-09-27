@@ -51,6 +51,28 @@ sleep assertions were added in this release. A leaked one is invisible until
 the battery is flat, and it is the exact failure the design was built to
 avoid — so it is worth confirming by hand rather than trusting the reasoning.
 
+**DONE, 2026-09-27, and it passes.** A 2m36s recording followed by a 2m29s
+export of it, on this branch. The log shows the hold taken and given back:
+
+    LetterboxExporter.swift:3131  Export lifetime: retention engaged   16:19:45
+    LetterboxExporter.swift:3151  Export lifetime: retention released  16:22:14
+
+and `pmset -g assertions`, run WITH THE APP STILL RUNNING, lists no
+Clingfy-owned assertion at all:
+
+    PreventUserIdleDisplaySleep    0
+    PreventUserIdleSystemSleep     1   <- caffeinate, not Clingfy
+
+The "still running" part is what makes it conclusive. `ProcessInfo` activities
+are process-scoped, so quitting the app releases them whether or not the code
+does — a clean reading after the process exits proves nothing. Because this
+instance is alive and holds nothing, the release genuinely happened. The
+display assertion taken during recording is likewise back at 0.
+
+An earlier reading on a FRESH instance that had never exported was quoted as
+evidence and was worthless for exactly that reason. Recorded here so the next
+person does not repeat it.
+
 Second: **pause and resume a recording.** #569 fixed the shipping backend
 dropping sleep protection for the length of a pause. Confirm a paused
 recording still resumes cleanly and the display does not sleep meanwhile.
@@ -73,11 +95,23 @@ Verify the full recording workflow.
 * [ ] custom area recording
 * [ ] countdown start
 * [ ] countdown cancel
-* [ ] stop flow
+* [x] stop flow
 * [ ] menu bar control
-* [ ] recording indicator overlay
+* [x] recording indicator overlay
 
-Notes:
+Notes: two real recordings on 2026-09-27 against this branch, driver attached.
+The second ran 2m36s with the camera overlay active (`camera.show
+(whileRecording)`, `Camera segment recording started`).
+
+Stop flow, from the log: `stopRecording` -> `stateAsString: stopping` ->
+`Merging recording segments` -> `idle`, 2 seconds end to end, no error. The
+indicator is ticked because Stop lives in it and Stop is what ended the
+recording — the driver cannot reach that window, so this could only be
+confirmed by a human pressing it.
+
+The capture TARGET is not named in the log, so display / window / area are
+deliberately left unticked rather than guessed at. Countdown never ran (zero
+matches for it), and the menu bar control was not exercised.
 
 ---
 
@@ -118,18 +152,35 @@ Notes:
 Verify preview playback and export pipeline.
 
 * [ ] inline preview playback
-* [ ] 16:9 preview/export
+* [x] 16:9 preview/export
 * [ ] 1080p export
-* [ ] 1440p export
-* [ ] 2160p export
+* [x] 1440p export
+* [x] 2160p export
 * [ ] MP4 export
-* [ ] MOV export
+* [x] MOV export
 * [ ] GIF export
 * [ ] background image export
 * [ ] background color export
 * [ ] save folder selection
 
-Notes:
+Notes: two exports produced and inspected with `ffprobe`, not eyeballed.
+
+    Clingfy Export_2026-09-27_19_06.mov
+      h264 / aac, mov, 3840x2160 @ 60fps, 661 frames, 11.02s, 38.06 MB
+
+    Clingfy Export_2026-09-27_19_19.mov
+      h264 / aac, mov, 2560x1440 @ 60fps, 9365 frames, 156.08s, 298.18 MB
+
+Both are exactly 16:9, both carry a video AND an audio track, and neither is
+truncated — 9365 frames over 156.083s is 60.00 fps with nothing dropped, and
+that 156s matches the recording window (16:16:55 -> 16:19:31) to the second.
+Truncation is the shape a sleep-interrupted or backpressure-abandoned export
+would take, so its absence is the point.
+
+1080p, MP4 and GIF are untouched: nothing was exported at those settings.
+`save folder selection` is left unticked — both files landed in the configured
+`~/Movies/Clingfy`, so the setting is honoured, but the picker UI itself was
+never opened (it is an NSSavePanel, which the driver cannot reach).
 
 ---
 
