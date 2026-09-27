@@ -1,5 +1,7 @@
 #include "Capture/recording_engine.h"
 
+#include "Capture/microphone_monitor_sync.h"
+
 #include <windows.h>
 #include <dwmapi.h>
 #include <shellscalingapi.h>
@@ -375,6 +377,12 @@ std::optional<RecordingError> RecordingEngine::Start(
     return fail_start(clingfy::bridge::error::kInvalidRecordingState,
                       "Engine refused to enter Starting state.");
   }
+
+  // Hand the endpoint back before the recording opens it. The meter is a
+  // pre-recording affordance; leaving it running would keep a second capture
+  // client on the microphone for the whole take and hold the OS in-use
+  // indicator lit after it ended.
+  SyncMicrophoneLevelMonitor(/*recording=*/true);
 
   // From here to the terminal state the machine must not enter Modern
   // Standby (sleep invalidates the GPU/media stack mid-recording) and the
@@ -1996,6 +2004,12 @@ void RecordingEngine::HandleTargetLost(const std::string& session_id) {
 
 void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   TeardownTrace("begin");
+  // Every recording-end path flows through here -- Stop, failure,
+  // target-loss -- which makes it the one place the meter can be brought
+  // back without missing a route. Asynchronous, so it does not open an
+  // endpoint under `mutex_`; by the time it runs the session is Reset and
+  // the reconcile sees "not recording".
+  SyncMicrophoneLevelMonitor(/*recording=*/false);
   // Slice 1 (Windows recording indicator): every recording-end path flows
   // through here (Stop, failure, target-loss), so this is the single hide
   // hook. Non-blocking — Hide() only posts to the overlay thread and never

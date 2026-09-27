@@ -89,6 +89,8 @@ add_executable(runner_tests
   "rnnoise_denoiser_test.cpp"
   "audio_mixer_test.cpp"
   "audio_packet_queue_test.cpp"
+  "microphone_level_test.cpp"
+  "microphone_level_monitor_test.cpp"
   "device_record_test.cpp"
   "devices_router_test.cpp"
   "encoder_output_path_test.cpp"
