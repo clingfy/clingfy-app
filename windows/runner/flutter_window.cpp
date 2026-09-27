@@ -12,6 +12,7 @@
 #include "Capture/Export/export_session.h"
 #include "Capture/Indicator/recording_indicator_controller.h"
 #include "Capture/PreRecordingBar/pre_recording_bar_controller.h"
+#include "Audio/microphone_level_monitor.h"
 #include "Capture/recording_engine.h"
 #include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
@@ -144,6 +145,14 @@ void FlutterWindow::OnDestroy() {
   // Workflow events emitted during this teardown may not reach Dart (the
   // channel is going away) — the on-disk project is the point.
   clingfy::capture::RecordingEngine::Instance().StopActiveSessionForShutdown();
+
+  // The pre-recording level meter holds a WASAPI capture client and its own
+  // consumer thread while a microphone is selected. Release them here rather
+  // than at static destruction, so the OS microphone-in-use indicator goes
+  // out when the window closes instead of lingering into process teardown.
+  // No final reading: the channel is going away.
+  clingfy::audio::MicrophoneLevelMonitor::Instance().Stop(
+      /*emit_silence=*/false);
 
   // Slice 1 (Windows recording indicator): the overlay thread persists idle
   // between recordings, so join it explicitly at app teardown (off any lock).

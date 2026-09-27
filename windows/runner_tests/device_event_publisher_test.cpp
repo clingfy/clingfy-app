@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <thread>
 
@@ -123,6 +124,67 @@ TEST_F(DeviceEventPublisherTest, EmittingWithNoSinkIsHarmless) {
   EXPECT_EQ(DeviceEventPublisher::Instance().EmitCountForTesting(
                 "displaysChanged") > 0,
             true);
+}
+
+TEST_F(DeviceEventPublisherTest, MicrophoneLevelsAreNotDebounced) {
+  // THE trap on this channel. Every other emit here is trailing-debounced,
+  // and a level meter is a continuous 15 Hz stream -- one event every 67 ms,
+  // inside the 250 ms window -- so routing it through the debouncer would
+  // push the deadline out on every sample and deliver exactly one reading,
+  // after the user stopped monitoring. Each call must reach the sink.
+  const int before =
+      DeviceEventPublisher::Instance().LastMicrophoneLevelForTesting().count;
+
+  for (int i = 0; i < 5; ++i) {
+    DeviceEventPublisher::Instance().EmitMicrophoneLevel(0.5, -6.02, false);
+  }
+
+  const auto last =
+      DeviceEventPublisher::Instance().LastMicrophoneLevelForTesting();
+  EXPECT_EQ(last.count - before, 5);  // no sleep: nothing is deferred
+  EXPECT_DOUBLE_EQ(last.linear, 0.5);
+  EXPECT_DOUBLE_EQ(last.dbfs, -6.02);
+  EXPECT_FALSE(last.is_low);
+}
+
+TEST_F(DeviceEventPublisherTest, MicrophoneLevelCarriesTheWarningFlag) {
+  DeviceEventPublisher::Instance().EmitMicrophoneLevel(0.003, -50.0, true);
+
+  const auto last =
+      DeviceEventPublisher::Instance().LastMicrophoneLevelForTesting();
+  EXPECT_TRUE(last.is_low);
+  EXPECT_DOUBLE_EQ(last.dbfs, -50.0);
+}
+
+TEST_F(DeviceEventPublisherTest, MicrophoneLevelsDoNotWakeTheObservers) {
+  // Observers exist so native surfaces can RE-ENUMERATE devices. A level
+  // sample is not a device change; waking every observer fifteen times a
+  // second to tell it nothing happened would make the pre-recording bar's
+  // popover re-query endpoints continuously.
+  std::atomic<int> observer_calls{0};
+  DeviceEventPublisher::Instance().AddObserver(
+      [&](const std::string&) { observer_calls.fetch_add(1); });
+
+  for (int i = 0; i < 5; ++i) {
+    DeviceEventPublisher::Instance().EmitMicrophoneLevel(0.5, -6.0, false);
+  }
+  WaitForFlush();
+  DeviceEventPublisher::Instance().ClearObservers();
+
+  EXPECT_EQ(observer_calls.load(), 0);
+}
+
+TEST_F(DeviceEventPublisherTest, MicrophoneLevelWithNoSinkIsHarmless) {
+  // Levels start flowing the moment a device is picked, which can precede
+  // Dart subscribing and follows it cancelling.
+  DeviceEventPublisher::Instance().ClearSink();
+  EXPECT_FALSE(DeviceEventPublisher::Instance().has_sink());
+
+  DeviceEventPublisher::Instance().EmitMicrophoneLevel(0.5, -6.0, false);
+
+  EXPECT_DOUBLE_EQ(
+      DeviceEventPublisher::Instance().LastMicrophoneLevelForTesting().linear,
+      0.5);
 }
 
 }  // namespace

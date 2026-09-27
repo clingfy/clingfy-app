@@ -62,6 +62,22 @@ class DeviceEventPublisher {
   void EmitAppWindowsChanged();
   void EmitAudioOutputRouteChanged();
 
+  // The pre-recording input meter, and the "your microphone is very quiet"
+  // warning behind it. Payload matches macOS's `fireMicrophoneLevel`
+  // exactly -- `{type, linear, dbfs, isLow}` -- because
+  // `DeviceController._applyMicrophoneLevelEvent` parses one shape for both
+  // platforms.
+  //
+  // NOT DEBOUNCED, unlike every other emit on this channel, and that is not
+  // an oversight. The debouncer above is TRAILING: it fires `debounce_` after
+  // a burst ENDS. A level meter is a continuous stream at 15 Hz -- one event
+  // every 67 ms, well inside the 250 ms window -- so a trailing debounce
+  // would push the deadline out forever and emit exactly once, after the user
+  // stopped monitoring. The rate limit for this stream lives upstream in
+  // `MicrophoneLevelAccumulator`, which is where it can also hold the peak
+  // across the window instead of throwing samples away.
+  void EmitMicrophoneLevel(double linear, double dbfs, bool is_low);
+
   // Fan-out for native surfaces that must refresh themselves rather than wait
   // for Dart — the pre-recording bar's device popover is the case that exists
   // (macOS solves the same problem with a second NSNotification fan-out, since
@@ -73,6 +89,16 @@ class DeviceEventPublisher {
   // Test seam: shorten the debounce so coalescing can be asserted without a
   // quarter-second sleep in every case.
   void SetDebounceForTesting(std::chrono::milliseconds interval);
+
+  // Test seam: the last microphone level that reached the sink, so the
+  // undebounced path can be asserted without a live endpoint.
+  struct LastMicrophoneLevel {
+    double linear = 0.0;
+    double dbfs = -160.0;
+    bool is_low = false;
+    int count = 0;
+  };
+  LastMicrophoneLevel LastMicrophoneLevelForTesting() const;
 
   // Test seam: how many times each type has actually reached the emit stage,
   // which is what "coalesced" means observationally.
@@ -97,6 +123,7 @@ class DeviceEventPublisher {
   // its deadline pushes the deadline out; that is what makes it TRAILING.
   std::map<std::string, std::chrono::steady_clock::time_point> pending_;
   std::map<std::string, int> emit_counts_;
+  LastMicrophoneLevel last_mic_level_;
   std::chrono::milliseconds debounce_{250};
 
   std::condition_variable cv_;

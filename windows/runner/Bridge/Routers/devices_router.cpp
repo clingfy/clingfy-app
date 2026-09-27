@@ -16,6 +16,8 @@
 #include "Bridge/Devices/video_source_enumerator.h"
 #include "Bridge/Devices/window_enumerator.h"
 #include "Bridge/result_helpers.h"
+#include "Capture/microphone_monitor_sync.h"
+#include "Capture/recording_engine.h"
 #include "Capture/windows_selection_state.h"
 #include "Overlay/area_picker_overlay.h"
 #include "Overlay/display_identify_overlay.h"
@@ -264,6 +266,12 @@ void HandleSetAudioSource(
     id = ReadOptionalString(*args, "id");
   }
   clingfy::capture::WindowsSelectionState::Instance().SetMicrophoneId(id);
+  // Picking an input starts the level meter; clearing it stops it. Without
+  // this the meter never moves on Windows -- nothing else emits
+  // `microphoneLevel`, so Dart's level stays at its -160.0 initial value and
+  // the quiet-input warning can never fire.
+  clingfy::capture::SyncMicrophoneLevelMonitor(
+      clingfy::capture::RecordingEngine::Instance().IsSessionActive());
   reply::Null(*result);
 }
 

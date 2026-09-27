@@ -12,6 +12,7 @@ constexpr const char* kVideoSourcesChanged = "videoSourcesChanged";
 constexpr const char* kDisplaysChanged = "displaysChanged";
 constexpr const char* kAppWindowsChanged = "appWindowsChanged";
 constexpr const char* kAudioOutputRouteChanged = "audioOutputRouteChanged";
+constexpr const char* kMicrophoneLevel = "microphoneLevel";
 }  // namespace
 
 DeviceEventPublisher& DeviceEventPublisher::Instance() {
@@ -89,6 +90,47 @@ void DeviceEventPublisher::EmitAppWindowsChanged() {
 }
 void DeviceEventPublisher::EmitAudioOutputRouteChanged() {
   Schedule(kAudioOutputRouteChanged);
+}
+
+void DeviceEventPublisher::EmitMicrophoneLevel(double linear, double dbfs,
+                                              bool is_low) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (stop_) {
+      return;
+    }
+    last_mic_level_ = {linear, dbfs, is_low, last_mic_level_.count + 1};
+  }
+
+  auto deliver = [this, linear, dbfs, is_low] {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (sink_ == nullptr) {
+      return;
+    }
+    sink_->Success(flutter::EncodableValue(flutter::EncodableMap{
+        {flutter::EncodableValue("type"),
+         flutter::EncodableValue(kMicrophoneLevel)},
+        {flutter::EncodableValue("linear"), flutter::EncodableValue(linear)},
+        {flutter::EncodableValue("dbfs"), flutter::EncodableValue(dbfs)},
+        {flutter::EncodableValue("isLow"), flutter::EncodableValue(is_low)},
+    }));
+  };
+
+  // Deliberately does NOT notify the `observers_` fan-out. Those exist so
+  // native surfaces can re-enumerate devices on a change; a level sample is
+  // not a change, and waking every observer 15 times a second to tell it
+  // nothing happened is pure cost.
+  if (PlatformThreadDispatcher::Instance().is_initialized()) {
+    PlatformThreadDispatcher::Instance().Post(std::move(deliver));
+  } else {
+    deliver();
+  }
+}
+
+DeviceEventPublisher::LastMicrophoneLevel
+DeviceEventPublisher::LastMicrophoneLevelForTesting() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  return last_mic_level_;
 }
 
 void DeviceEventPublisher::Schedule(const std::string& type) {
