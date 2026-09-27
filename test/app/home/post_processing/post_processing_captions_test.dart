@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/post_state_diagnosis.dart';
 import '../../../test_helpers/wait_until.dart';
 import 'dart:io';
 import 'package:clingfy/core/captions/caption_state_store.dart';
@@ -783,6 +784,7 @@ void main() {
     final stored = await waitForValue(
       () => PostStateStore.load(project.path).trackOfType<CaptionTrack>(),
       reason: 'the transcript should have been written',
+      diagnose: () => describePostStateOnDisk(project.path),
     );
     expect(stored.captions.map((c) => c.text), ['hello there', 'second line']);
   });
@@ -807,6 +809,7 @@ void main() {
           ).trackOfType<CaptionTrack>()?.captions.first.text ==
           'Clingfy',
       reason: 'the correction should have been written',
+      diagnose: () => describePostStateOnDisk(project.path),
     );
   });
 
@@ -920,6 +923,7 @@ void main() {
     final stored = await waitForValue(
       () => PostStateStore.load(projectA.path).trackOfType<CaptionTrack>(),
       reason: 'the cues belong to the recording they were transcribed from',
+      diagnose: () => describePostStateOnDisk(projectA.path),
     );
     expect(stored.captions.map((c) => c.text), ['hello there', 'second line']);
     expect(
