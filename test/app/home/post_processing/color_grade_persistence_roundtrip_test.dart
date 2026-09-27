@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/post_state_diagnosis.dart';
 import '../../../test_helpers/wait_until.dart';
 
 /// End-to-end color-grade persistence round-trip through the real
@@ -201,6 +202,7 @@ void main() {
     await waitUntil(
       () => PostStateStore.load(projectDir.path).grade.exposure == 0.5,
       reason: 'post/state.json after a color commit',
+      diagnose: () => describePostStateOnDisk(projectDir.path),
     );
 
     final loaded = PostStateStore.load(projectDir.path);
@@ -223,6 +225,7 @@ void main() {
       await waitUntil(
         () => PostStateStore.load(projectDir.path).grade.exposure == 0.35,
         reason: 'session 1 must be on disk before the restart',
+        diagnose: () => describePostStateOnDisk(projectDir.path),
       );
       first.detachRecording();
 

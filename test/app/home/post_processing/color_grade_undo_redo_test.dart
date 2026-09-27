@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../test_helpers/native_test_setup.dart';
+import '../../../test_helpers/post_state_diagnosis.dart';
 import '../../../test_helpers/wait_until.dart';
 
 /// Color-grade undo/redo through the real [PostProcessingController] wiring.
@@ -281,6 +282,7 @@ void main() {
     await _waitUntil(
       () => PostStateStore.load(projectDir.path).grade == post.colorGrade,
       reason: 'the auto grade should have reached post/state.json',
+      diagnose: () => describePostStateOnDisk(projectDir.path),
     );
   });
 
@@ -355,12 +357,14 @@ void main() {
     await _waitUntil(
       () => PostStateStore.load(projectDir.path).grade.exposure == 0.45,
       reason: 'the dragged exposure should have been persisted',
+      diagnose: () => describePostStateOnDisk(projectDir.path),
     );
 
     post.undoColorGrade();
     await _waitUntil(
       () => PostStateStore.load(projectDir.path).grade.isIdentity == true,
       reason: 'undo should have re-persisted the restored grade',
+      diagnose: () => describePostStateOnDisk(projectDir.path),
     );
 
     final loaded = PostStateStore.load(projectDir.path);
@@ -603,6 +607,7 @@ void main() {
     await waitUntil(
       () => PostStateStore.load(projectDir.path).grade.exposure == 0.8,
       reason: "the edit's own write must land before we overwrite it",
+      diagnose: () => describePostStateOnDisk(projectDir.path),
     );
     // Plant through the unified store: the edit above has already written
     // post/state.json, and that file outranks the legacy one this used to use.
@@ -612,6 +617,7 @@ void main() {
     );
     await waitUntil(
       () => PostStateStore.load(projectDir.path).grade.exposure == 0.2,
+      diagnose: () => describePostStateOnDisk(projectDir.path),
     );
 
     // Release the restore.
@@ -678,4 +684,5 @@ Future<void> _waitUntil(
   bool Function() done, {
   Duration timeout = const Duration(seconds: 5),
   String? reason,
-}) => waitUntil(done, timeout: timeout, reason: reason);
+  String Function()? diagnose,
+}) => waitUntil(done, timeout: timeout, reason: reason, diagnose: diagnose);
