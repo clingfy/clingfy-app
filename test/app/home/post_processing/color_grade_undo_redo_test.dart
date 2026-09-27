@@ -280,6 +280,7 @@ void main() {
 
     await _waitUntil(
       () => PostStateStore.load(projectDir.path).grade == post.colorGrade,
+      reason: 'the auto grade should have reached post/state.json',
     );
   });
 
@@ -353,11 +354,13 @@ void main() {
     dragExposureTo(post, 0.45);
     await _waitUntil(
       () => PostStateStore.load(projectDir.path).grade.exposure == 0.45,
+      reason: 'the dragged exposure should have been persisted',
     );
 
     post.undoColorGrade();
     await _waitUntil(
       () => PostStateStore.load(projectDir.path).grade.isIdentity == true,
+      reason: 'undo should have re-persisted the restored grade',
     );
 
     final loaded = PostStateStore.load(projectDir.path);
@@ -389,7 +392,21 @@ void main() {
 
     final other = await Directory.systemTemp.createTemp('clingfy_grade_undo2_');
     addTearDown(() async {
-      if (await other.exists()) await other.delete(recursive: true);
+      // Drain the fire-and-forget writes BEFORE deleting. `addTearDown`
+      // callbacks run ahead of the group `tearDown`, so this cannot rely on
+      // the `PostStateStore.settled()` there — it has not happened yet.
+      // Windows refuses to remove a directory while a handle is open and
+      // fails with errno 32; POSIX allows it, which is why this passed
+      // everywhere except a Windows dev box.
+      await PostStateStore.settled();
+      if (await other.exists()) {
+        try {
+          await other.delete(recursive: true);
+        } on FileSystemException {
+          // Matches the group tearDown: a late write recreated the bundle
+          // mid-delete. Leaking a temp dir beats failing a green test.
+        }
+      }
     });
 
     post.attachToRecording(sessionId: 'rec_other', projectPath: other.path);
@@ -649,18 +666,16 @@ Future<void> _settle() async {
 }
 
 /// Polls until [done] holds, so disk assertions never race the fire-and-forget
-/// `PostStateStore.save` (serialized per project path, so two
-/// queued writes drain one after the other rather than concurrently).
+/// `PostStateStore.save` (serialized per project path, so two queued writes
+/// drain one after the other rather than concurrently).
+///
+/// Delegates to the shared helper rather than reimplementing it. The local
+/// copy defaulted to 2 s and, when it gave up, threw
+/// "condition still false after 2000ms" naming no condition — so a failure in
+/// a 258-test directory run said nothing about which assertion had lost its
+/// race. The shared helper allows 5 s and takes a [reason].
 Future<void> _waitUntil(
   bool Function() done, {
-  Duration timeout = const Duration(seconds: 2),
-}) async {
-  final deadline = timeout.inMilliseconds ~/ 5;
-  for (var i = 0; i < deadline; i++) {
-    if (done()) return;
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-  }
-  if (!done()) {
-    throw StateError('condition still false after ${timeout.inMilliseconds}ms');
-  }
-}
+  Duration timeout = const Duration(seconds: 5),
+  String? reason,
+}) => waitUntil(done, timeout: timeout, reason: reason);
