@@ -68,6 +68,18 @@ and the project file it writes is about a seventh the size.
   pool, four separate render paths gave up without finishing the file and
   without reporting an error — no output, no failure, no progress. They now
   wait for the pressure to pass, and fail properly if it never does.
+- **Alt+Tab could leave the timeline completely unusable (Windows).** The
+  cursor became a scissors and selecting, dragging a clip and scrubbing the
+  playhead all stopped working, with no key held and no obvious way out. The
+  cut tool arms while you hold Alt, and Alt+Tab hands the key-down to Clingfy
+  and the key-up to whatever you switched to — so Windows kept reporting Alt as
+  held forever, and clicking back into the timeline re-armed the tool from that
+  stale state. The only escape was pressing and releasing Alt once, which
+  nobody would guess. Arming now needs a real key press received while the
+  timeline has focus, so a key-up that went to another window can no longer
+  strand it. macOS was never affected, because Cmd+Tab is the switcher there.
+  One trade: holding Option in another app and clicking into the timeline no
+  longer arms the tool — press it again once you are back.
 - **A dropdown row with no value was unclickable**, which is what the window
   picker's "no window" row was.
 - **Intel Macs are told why subtitles are unavailable** rather than being
