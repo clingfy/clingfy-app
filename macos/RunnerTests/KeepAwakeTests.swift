@@ -28,15 +28,15 @@ final class KeepAwakeTests: XCTestCase {
     /// holds would then share an identifier and a leak could hide behind the
     /// arithmetic. Holding them keeps every identifier distinct.
     private var issued: [Token] = []
-    private(set) var modes: [KeepAwakeMode] = []
+    private var recordedModes: [KeepAwakeMode] = []
 
     final class Token {}
 
     func begin(reason: String, mode: KeepAwakeMode) -> Any {
-      modes.append(mode)
       let token = Token()
       lock.lock()
       beginsByReason.append(reason)
+      recordedModes.append(mode)
       issued.append(token)
       lock.unlock()
       return token
@@ -56,6 +56,12 @@ final class KeepAwakeTests: XCTestCase {
       lock.lock()
       defer { lock.unlock() }
       return beginsByReason
+    }
+
+    var modes: [KeepAwakeMode] {
+      lock.lock()
+      defer { lock.unlock() }
+      return recordedModes
     }
 
     var ended: [ObjectIdentifier] {
@@ -158,20 +164,24 @@ final class KeepAwakeTests: XCTestCase {
   func testConcurrentAcquireAndReleaseStayBalanced() {
     let fake = FakeKeepAwake()
     let slot = KeepAwakeSlot(service: fake)
-    let queue = DispatchQueue(
-      label: "keepawake.test", attributes: .concurrent)
-    let group = DispatchGroup()
 
-    for index in 0..<200 {
-      queue.async(group: group) {
-        if index.isMultiple(of: 2) {
-          slot.acquire(reason: "export \(index)", mode: .system)
-        } else {
-          slot.release()
-        }
+    // `concurrentPerform` rather than 200 `queue.async` blocks on a concurrent
+    // queue. That earlier shape CRASHED the test host on CI — every block can
+    // block on the slot's NSLock, libdispatch caps threads per QoS, and a
+    // runner with fewer cores than a dev machine hits that ceiling. The
+    // symptom was a test "failing" in 0.000s on a different host PID from its
+    // neighbours, which is process death rather than an assertion.
+    //
+    // This is bounded by the active core count by construction, so it still
+    // interleaves genuinely — the point of the test — without being able to
+    // exhaust the pool.
+    DispatchQueue.concurrentPerform(iterations: 200) { index in
+      if index.isMultiple(of: 2) {
+        slot.acquire(reason: "export \(index)", mode: .system)
+      } else {
+        slot.release()
       }
     }
-    group.wait()
 
     slot.release()
 

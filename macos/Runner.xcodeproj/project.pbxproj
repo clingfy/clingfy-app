@@ -151,6 +151,7 @@
 		C4P71002CAP71002CAP71002 /* CaptionPreviewTrack.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71001CAP71001CAP71001 /* CaptionPreviewTrack.swift */; };
 		12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */; };
 		B22CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */; };
+		B22FINALWAITER0F1E4B0C01 /* RecordingOutputFinalizationWaiterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11FINALWAITER0F1E4B0C01 /* RecordingOutputFinalizationWaiterTests.swift */; };
 		B22KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift */; };
 		B22BACKPRESSURE0F1E4B0C1 /* ExportBackpressureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11BACKPRESSURE0F1E4B0C1 /* ExportBackpressureTests.swift */; };
 		C4P71008CAP71008CAP71008 /* ExportCaptionWiringTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */; };
@@ -346,6 +347,7 @@
 		C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionOverlayRendererTests.swift; sourceTree = "<group>"; };
 		0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionCueTrackTests.swift; sourceTree = "<group>"; };
 		A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CaptionReflowParityTests.swift; sourceTree = "<group>"; };
+		A11FINALWAITER0F1E4B0C01 /* RecordingOutputFinalizationWaiterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingOutputFinalizationWaiterTests.swift; sourceTree = "<group>"; };
 		A11KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = KeepAwakeTests.swift; sourceTree = "<group>"; };
 		A11BACKPRESSURE0F1E4B0C1 /* ExportBackpressureTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportBackpressureTests.swift; sourceTree = "<group>"; };
 		C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ExportCaptionWiringTests.swift; sourceTree = "<group>"; };
@@ -702,6 +704,7 @@
 				C2658B73179F52226D6D29DF /* CaptionOverlayRendererTests.swift */,
 				0E057F32867A1DB4C958B0B3 /* CaptionCueTrackTests.swift */,
 				A11CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift */,
+				A11FINALWAITER0F1E4B0C01 /* RecordingOutputFinalizationWaiterTests.swift */,
 				A11KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift */,
 				A11BACKPRESSURE0F1E4B0C1 /* ExportBackpressureTests.swift */,
 				C4P71007CAP71007CAP71007 /* ExportCaptionWiringTests.swift */,
@@ -1599,6 +1602,7 @@
 				9059C1FCB24BB8C03F71CFC8 /* CaptionOverlayRendererTests.swift in Sources */,
 				12D91885E4F7C378D82C5CC4 /* CaptionCueTrackTests.swift in Sources */,
 				B22CAP7E0F1E4B0FA0C0PARITY /* CaptionReflowParityTests.swift in Sources */,
+				B22FINALWAITER0F1E4B0C01 /* RecordingOutputFinalizationWaiterTests.swift in Sources */,
 				B22KEEPAWAKE0F1E4B0FA0C1 /* KeepAwakeTests.swift in Sources */,
 				B22BACKPRESSURE0F1E4B0C1 /* ExportBackpressureTests.swift in Sources */,
 				C4P71008CAP71008CAP71008 /* ExportCaptionWiringTests.swift in Sources */,
