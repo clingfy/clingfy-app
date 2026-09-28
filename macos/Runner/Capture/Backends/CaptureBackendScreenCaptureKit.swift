@@ -54,17 +54,95 @@ struct CursorFailureFinalizationPlan {
   }
 }
 
-private final class RecordingOutputFinalizationWaiter {
-  private var result: Result<Void, Error>?
-  private var continuations: [CheckedContinuation<Void, Error>] = []
-
-  func wait() async throws {
-    if let result {
-      return try result.get()
+/// Waits for `SCRecordingOutput` to say a segment finished, with a deadline.
+///
+/// Without one this was the only place a Stop could hang forever. `wait()` is
+/// awaited inside `finalizeSegment`, which both `stopAsync` and `pauseAsync`
+/// run through; if neither delegate callback arrives and the stream does not
+/// die — so the `finishWithFailure` failsafe never fires either — the user's
+/// Stop simply never completes. Since the recording keep-awake is released
+/// only where `didStart` becomes false, and every one of those sites is past
+/// this await, a wedge also left the Mac unable to sleep until the app quit.
+///
+/// A timeout means resuming a continuation that a late `succeed()` might then
+/// resume again, and double-resuming a `CheckedContinuation` is a hard crash,
+/// not an error. That is made structurally impossible here rather than merely
+/// unlikely: each waiting call owns a token, and whichever of `resolve` and
+/// `timeOut` removes that token from `pending` first is the only one that
+/// resumes it. The other finds nothing.
+///
+/// The asymmetry that makes it fall out cleanly: **a timeout never writes
+/// `result`.** Expiry is a property of one `wait()` call, not of the latch. So
+/// a genuinely-late success still records `.success`, and a later `wait()`
+/// sees the truth rather than a timeout this object invented. Stamping
+/// `result = .failure` on expiry would make a late success unrepresentable and
+/// would poison the shared context for the start-retry path.
+///
+/// Deliberately not an `actor`. `succeed()` and `fail()` are called from
+/// synchronous `@MainActor` code — `finishWithFailure` and
+/// `resetStartAttemptForRetry` — which would have to become `async` or spawn
+/// Tasks, changing when those resumes land relative to the teardown that
+/// follows them. An `NSLock` gets the mutual exclusion without touching any
+/// call site, and matches the idiom already used in `CursorRecorder` and
+/// `KeepAwakeSlot`.
+final class RecordingOutputFinalizationWaiter {
+  /// Thrown when finalization does not report in. Carries the deadline so the
+  /// log says what was actually waited for.
+  struct TimedOut: LocalizedError {
+    let seconds: TimeInterval
+    var errorDescription: String? {
+      "The recording did not finish writing within \(Int(seconds))s."
     }
+  }
+
+  /// Generous on purpose, and it bounds a wedge rather than policing slowness.
+  ///
+  /// What is being waited on is `SCRecordingOutput` closing a file whose media
+  /// is already on disk. The expected cost is milliseconds; the realistic tail
+  /// is I/O — a network volume, a starved disk, a thermally throttled machine
+  /// at the end of a long capture — which is seconds. 90 is far above any of
+  /// that, so no healthy finalization reaches it, while still resolving inside
+  /// one sitting rather than after the user has force-quit.
+  static let defaultTimeout: TimeInterval = 90
+
+  private let lock = NSLock()
+  private var result: Result<Void, Error>?
+  private var pending: [UInt64: CheckedContinuation<Void, Error>] = [:]
+  private var timers: [UInt64: Task<Void, Never>] = [:]
+  private var nextToken: UInt64 = 0
+
+  func wait(timeout: TimeInterval = RecordingOutputFinalizationWaiter.defaultTimeout) async throws {
+    lock.lock()
+    if let settled = result {
+      lock.unlock()
+      return try settled.get()
+    }
+    lock.unlock()
 
     try await withCheckedThrowingContinuation { continuation in
-      continuations.append(continuation)
+      lock.lock()
+      // Resolved between the early check and here.
+      if let settled = result {
+        lock.unlock()
+        continuation.resume(with: settled)
+        return
+      }
+
+      nextToken &+= 1
+      let token = nextToken
+      pending[token] = continuation
+
+      // Armed inside the SAME critical section that inserts the entry. `Task`
+      // only enqueues, so the body cannot run inline; a degenerate timeout
+      // therefore cannot fire before the entry it would remove exists.
+      // Captured strongly on purpose: a weak capture would let the timer die
+      // with the context and leave the continuation pending forever, which is
+      // the hang being fixed.
+      timers[token] = Task {
+        try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+        self.timeOut(token: token, after: timeout)
+      }
+      lock.unlock()
     }
   }
 
@@ -76,14 +154,37 @@ private final class RecordingOutputFinalizationWaiter {
     resolve(.failure(error))
   }
 
-  private func resolve(_ result: Result<Void, Error>) {
-    guard self.result == nil else { return }
-    self.result = result
-    let continuations = self.continuations
-    self.continuations.removeAll()
-    for continuation in continuations {
-      continuation.resume(with: result)
+  private func resolve(_ outcome: Result<Void, Error>) {
+    lock.lock()
+    guard result == nil else {
+      lock.unlock()
+      return
     }
+    result = outcome
+    let waiting = pending
+    pending.removeAll()
+    let cancelling = timers
+    timers.removeAll()
+    lock.unlock()
+
+    // Outside the lock: resuming under it can re-enter on an immediate-hop
+    // scheduler.
+    for task in cancelling.values {
+      task.cancel()
+    }
+    for continuation in waiting.values {
+      continuation.resume(with: outcome)
+    }
+  }
+
+  private func timeOut(token: UInt64, after seconds: TimeInterval) {
+    lock.lock()
+    let continuation = pending.removeValue(forKey: token)
+    timers.removeValue(forKey: token)
+    lock.unlock()
+
+    guard let continuation else { return }
+    continuation.resume(throwing: TimedOut(seconds: seconds))
   }
 }
 
