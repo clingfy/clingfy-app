@@ -21,7 +21,7 @@ the shape this document specified, and one of its four PRs was abandoned midway.
 | Phase | Planned | Reality | Shipped in |
 |---|---|---|---|
 | **0 — foundation** | one global `EditSession`, 4 PRs | built, **fragmented into four independent sessions**; PR-0d abandoned midway | 1.0.5 – 1.0.6 |
-| **1 — volume / normalize** | per-source gain once 1.5 lands | **half-done.** Per-source `gainDb`/`normalize` landed in the model (1.0.5); the UI still sends the one flat value it has sent since 1.0.0 | model 1.0.5, UI never |
+| **1 — volume / normalize** | per-source gain once 1.5 lands | **half-done, and bigger than it looks.** The model has per-source `gainDb`/`normalize` (1.0.5) but is constructed nowhere in `lib/`; the UI sends one flat value; and **native pins system gain at unity by design on both platforms**. Splits into 1a (Dart scope/plumbing) and 1b (native system gain) | model 1.0.5, UI never |
 | **1.5 — audio source separation** | separate mic/system to export | **shipped**, but **additively** — `screen.mov` still carries the muxed track | 1.0.6 |
 | **2 — colour** | auto + manual grade | **shipped** both platforms; Windows diverges numerically (see §D) | 1.0.5 |
 | **3 — split & cut** | split/trim/enable, rearrange deferred | **shipped, and overshot the plan** — clip reorder landed too | 1.0.5 |
@@ -310,8 +310,67 @@ Swift" comment honest ⑧ tests both sides.
 
 `_audioGainDb` dates to the **initial public release** (2026-03-16) — it predates
 this entire initiative. The per-source model shape arrived beside it in PR-0c
-(#179, 2026-06-21) and the two were never joined. That is the whole of Phase 1:
-delete the flat path, point the UI at the model that already exists.
+(#179, 2026-06-21) and the two were never joined.
+
+**Correction (2026-09-30, same day as the rewrite).** An earlier revision of this
+section said Phase 1 was "UI plus routing through an `EditSession`, not a schema
+change" and called it the smallest item on the list. A scope pass against the
+native code refuted that. Recorded here rather than quietly edited, because
+under-sizing an item is the same failure this rewrite exists to fix.
+
+Four things make it bigger than a UI change:
+
+1. **System gain is pinned at unity by design, on both platforms.**
+   `windows/runner/Capture/Export/export_audio.h:104` documents the contract as
+   `system = {1, master}`. `LetterboxExporter.resolveSeparatedAudioControls`
+   (`:3926-3968`) and `ResolveSeparatedAudioStages` (`export_audio.h:108-112`)
+   each take **one** `gainDb` and aim it at the mic. Master volume is the only
+   thing that touches system audio, and it touches every track equally, so it is
+   not a system control.
+2. **Two Windows tests encode "system never gets gain" as intended behavior** —
+   `GainBoostsTheMicOnly` and `NormalizeScalingDownRidesTheVolume`
+   (`export_audio_test.cpp:237` and `:257`). They must be rewritten, not extended.
+3. **System gain must be BAKED, never tapped.** `LetterboxExporter.swift:234-242`
+   and `:3327-3331`: the manual export path reads through
+   `AVAssetReaderAudioMixOutput`, which applies a per-track tap to the **mixed**
+   stream, so a mic-only boost multiplied the system audio too and the tap's
+   ±1.0 clamp squared the mix off at full scale. That is the "distorted system
+   audio when the mic is on" bug. `MicEchoCanceller.bakeGain` is already generic
+   (decode → multiply → clip → write CAF) and only *named* for the mic, so a
+   `gainBakedSystemURL` sibling is the shape.
+4. **There is no audio `EditSession`, and audio is app-scoped.** `EditDomain.audio`
+   exists (`edit_command.dart:4`) but only `edit_session_test.dart` references it;
+   `commands/` holds captions, clips and colour and no audio command; and
+   `AudioTrack` is constructed **nowhere** in `lib/` — the only construction in the
+   repo is `test/core/timeline/timeline_codec_test.dart:47`. Today's audio state
+   lives in app-wide SharedPreferences, re-seeded onto every project at
+   `post_processing_controller.dart:1883-1885`. Phase 1 therefore changes the
+   **scope** of audio settings from app-wide to per-recording, which is a
+   user-visible behaviour change, not a refactor.
+
+**The natural split, since the halves have different risk:**
+
+- **Phase 1a — scope and plumbing, Dart only.** Construct a real `AudioTrack` in
+  `PostStateStore`, add `SetAudioCommand` and an audio-owning `EditSession`, move
+  gain/volume/cleanup from app-wide prefs to per-project `post/state.json`. No
+  native change, no new bridge arg. Ships the undo/redo and per-project scoping
+  the roadmap always wanted. Watch for two traps: `AudioTrack` and
+  `AudioTrackSource` define no `operator==`/`hashCode` (unlike `VoiceCleanup`), so
+  the `if (value == _current) return;` dedupe guard degrades to identity and never
+  dedupes; and `_audioVolumePercent` has **no corresponding field on `AudioTrack`**
+  at all.
+- **Phase 1b — system gain and per-source normalize, native both platforms.** Add
+  `micGainDb`/`systemGainDb` to `updateAudioPreview` and `exportVideo` (both are
+  additive: every audio arg is read with a default on both sides, so old payloads
+  still parse), bake system gain on export, extend both resolvers, rewrite the two
+  Windows tests. Needs a Windows machine for its half.
+
+Two facts worth carrying into 1b. **Normalize is peak, not LUFS**, despite
+`targetLoudnessDbfs` — it computes `targetLinear / micPeakLinear`
+(`LetterboxExporter.swift:3941-3948`). And **normalize is export-only**: preview
+hardcodes `autoNormalizeOnExport: false` at `InlinePreviewView.swift:729`, so the
+editor never previews it. There is **no limiter anywhere** despite
+`AudioTrack.limiter` — the only ceilings are hard clips.
 
 **This is the oldest open item in the document.** The plan's own trigger —
 "master gain initially; per-source once 1.5 lands" — fired in 1.0.6, two months
@@ -555,10 +614,12 @@ faster than camera footage.
 
 In rough order of user-visible value per unit of risk.
 
-1. **Finish Phase 1 (per-source gain + normalize UI).** The model has carried
-   `gainDb` and `normalize` per source since 1.0.6; only the UI and the routing
-   through an `EditSession` are missing. Smallest remaining item, oldest debt, no
-   schema change, no native work.
+1. **Phase 1a — audio scope and plumbing (Dart only).** Construct a real
+   `AudioTrack`, add the audio `EditSession` + command, move audio state from
+   app-wide prefs to per-project `post/state.json`. Brings audio in line with
+   clips/zoom/colour/captions and makes it undoable. **Phase 1b** (system gain +
+   per-source normalize) is native work on both platforms and is listed
+   separately below — see the Phase 1 section for why the two split.
 2. **Windows ↔ macOS colour parity.** Fixtures are committed and the test is
    written — it is excluded, not absent. Fixing the D2D matrix chain and deleting
    the `-E` filter in `ci.yml` is a bounded, verifiable task. Needs a Windows
