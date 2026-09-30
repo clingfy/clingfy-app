@@ -555,15 +555,32 @@ cannot do it. Fold it into the camera on-device QA pass.
 
 ### Log files lose their beginning while the app is still running
 
-- **What:** The current day's log file is silently rewritten mid-session, losing everything written before some point. The app never recovers the lost lines; it just keeps appending after them.
-- **Reproduced twice, with evidence.**
-  - `logs_2026-07-27.jsonl` was 313,453 bytes / 917 rows at 22:31 local. Four minutes later: 3,439 bytes / 7 rows.
-  - `logs_2026-07-28.jsonl` carries `sessionId 2026-07-27T22:12:15Z`, but its earliest surviving row is `22:14:39Z` — **2.4 minutes of that session's own output is missing from the front**, and the file contains no `Logger initialized` line even though `Log.init` emits one on every launch.
-- **Therefore it is not launch-time truncation.** The loss happens while a session is running, and appends continue normally afterwards (the file was back to 138 KB / 294 rows within minutes).
-- **Why it matters:** Diagnosis has now been blocked by this twice. The camera-finalize root cause is still unknown specifically because the deciding lines were destroyed while being investigated. Every logging improvement is worth less than it looks until this is fixed.
-- **Ruled out, each by reading the code:** `FileLogSink` only ever appends (`FileMode.append`, `file_log_sink.dart:125`) and its single `delete()` (:183) is inside `_pruneOldLogs`, which compares the *filename* date against `today - 30 days` and so cannot touch the current file. `Log.init` (`logger_service.dart:159`) creates no file and truncates nothing. On macOS the native side only ever *reads* the path — `getTodayLogFilePath`, `revealTodayLogFile`, `revealLogsFolder` and `StorageDiagnosticsService` all stat or reveal, none write. `AppPaths.ensureDirectory` calls `createDirectory(withIntermediateDirectories:)`, which does not delete. There is no log-clearing UI; `logsBytes` is display-only.
-- **So the writer is outside the app's logging path.** Candidates, in the order worth testing: a second app instance sharing the file, an external tail/editor/sync tool rewriting it, or a crash-and-restart cycle that reopens the path without append.
-- **How to reproduce cheaply:** `while :; do stat -f "%z %m" logs_$(date +%F).jsonl; sleep 5; done` while using the app, and note what is on screen when the size drops.
+> **NARROWED 2026-09-30.** Two of the three evidence points turned out not to be
+> loss at all, and five candidate causes inside the app are now closed — four of
+> them pinned by tests in `test/core/logging/file_log_sink_test.dart`. What is
+> left is one real, unexplained sighting. Read "What is no longer evidence"
+> before spending time here; it is where the previous two attempts went.
+
+- **What:** a day's log file is rewritten mid-session, losing everything written before some point. The app never recovers the lost lines; it keeps appending after them.
+- **The one sighting that still stands:** `logs_2026-07-27.jsonl` was 313,453 bytes / 917 rows at 22:31 local, and 3,439 bytes / 7 rows four minutes later, with appends continuing normally afterwards (back to 138 KB / 294 rows within minutes). Nothing explains that yet. It predates the logging unification, and has not recurred in any file on the Windows box since.
+
+**What is no longer evidence — do not re-chase these.**
+
+- **"No `Logger initialized` line, and a first row later than the session's own id."** This was listed as the truncation signature. It is the normal **midnight rollover** shape: the sink recomputes the daily filename on every flush, so a session that crosses local midnight writes its start line into the previous day's file and continues into the next one, which legitimately has no start line. `logs_2026-09-16.jsonl` on the Windows box shows exactly this for session `2026-09-15T20:16:42Z`. Pinned now by *"the post-midnight file legitimately has no session-start line"*.
+- **"A file contains the previous day's timestamps."** Filenames use the **local** date (`_dateStamp(DateTime.now())`), rows carry **UTC** (`_nowUtcIso()` → `toUtc()`). At UTC+3 every file legitimately opens with rows stamped 21:00 the day before. The second sighting — `logs_2026-07-28.jsonl` carrying sessionId `2026-07-27T22:12:15Z` — is this, not loss: that is local 01:12 on the 28th, the right file.
+
+**Closed inside the app, with tests where a test was possible.**
+
+- *A crash-and-restart cycle reopening the path without append* — the entry's own leading hypothesis, never actually exercised. `init()` on an existing same-day file does not shorten it, and the next append extends it. Pinned.
+- *Pruning reaching the live file* — `_pruneOldLogs` holds the sink's only `delete()`. Pinned at `retentionDays: 1`, the tightest cutoff.
+- *A clock jumping backwards across midnight* re-points the sink at a file that already has content. It appends. Pinned.
+- *Lines lost in the write queue* — `_processQueue` snapshots, clears, then awaits, so anything enqueued during the await lands in the next batch. 200 appends produce exactly 200 lines, none dropped, none duplicated. Pinned.
+- *Lines dropped before the sink is ready* — `append` is a no-op before `init`, but `Log.init` awaits `FileLogSink().init()` and then drains a pre-init buffer before emitting its own start line (`logger_service.dart:159-180`). Nothing is dropped. Not separately pinned; the ordering is the proof.
+
+**Also ruled out by reading, unchanged from before:** `FileLogSink` only ever appends (`FileMode.append`, `file_log_sink.dart:125`); `_rollToCurrentDate` constructs a `File` object and creates nothing. On macOS the native side only reads the path. **On Windows too** — `storage_router.cpp` only stats and reveals the logs dir; its one `fs::remove_all` (:228) is gated to `.clingfyproj` directories under the recordings root and cannot reach `Logs/`. There is no log-clearing UI; `logsBytes` is display-only.
+
+- **So the writer is still outside the app's logging path,** and that conclusion is now much better supported. Candidates, in the order worth testing: a second app instance sharing the file, an external tail/editor/sync tool rewriting it, or a crash-and-restart cycle at the OS level.
+- **How to settle it cheaply:** watch the size while using the app and note what is on screen when it drops — `while :; do stat -c '%s %y' "$LOGS/logs_$(date +%F).jsonl"; sleep 5; done`. One drop caught in the act ends this entry. Without one there is nothing further to deduce from inside the repo; every in-app path is now either pinned or read.
 - **Start at:** `lib/core/logging/file_log_sink.dart`, `lib/core/logging/logger_service.dart:159`.
 - **Effort:** human ~2h / CC ~30min once the drop is caught in the act.
 
