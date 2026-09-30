@@ -568,6 +568,22 @@ class AudioTrackSource {
     normalize: normalize ?? this.normalize,
     cleanup: cleanup ?? this.cleanup,
   );
+
+  // Value equality, like [VoiceCleanup] above. Without it the `if (next ==
+  // current) return;` guard every audio setter uses falls back to identity and
+  // never fires, so each no-op setter call would push its own undo entry and
+  // its own disk write.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AudioTrackSource &&
+          other.path == path &&
+          other.gainDb == gainDb &&
+          other.normalize == normalize &&
+          other.cleanup == cleanup;
+
+  @override
+  int get hashCode => Object.hash(path, gainDb, normalize, cleanup);
 }
 
 /// Audio track — separated mic/system sources plus the master mix. Legacy
@@ -580,6 +596,7 @@ final class AudioTrack extends EditTrack {
     this.system,
     this.mixedFallbackPath,
     this.masterGainDb = 0,
+    this.masterVolumePercent = 100,
     this.limiter = true,
   });
 
@@ -587,6 +604,15 @@ final class AudioTrack extends EditTrack {
   final AudioTrackSource? system;
   final String? mixedFallbackPath;
   final double masterGainDb;
+
+  /// The master fader, 0-100. Distinct from [masterGainDb]: gain BOOSTS one
+  /// source (the mic today, capped at +24 dB), volume ATTENUATES the whole mix.
+  ///
+  /// Added after the rest of this class, which is why it defaults to 100 rather
+  /// than 0 — an older `post/state.json` has no `masterVolumePercent` in its
+  /// `mix` block, and unity is precisely what those recordings played at. No
+  /// schema bump for the same reason: nothing about an old file is misread.
+  final double masterVolumePercent;
   final bool limiter;
 
   @override
@@ -602,7 +628,11 @@ final class AudioTrack extends EditTrack {
       if (system != null) 'system': system!.toMap(),
     },
     'mixedFallbackPath': mixedFallbackPath,
-    'mix': {'masterGainDb': masterGainDb, 'limiter': limiter},
+    'mix': {
+      'masterGainDb': masterGainDb,
+      'masterVolumePercent': masterVolumePercent,
+      'limiter': limiter,
+    },
   };
 
   factory AudioTrack.fromMap(Map<dynamic, dynamic> m) {
@@ -619,6 +649,8 @@ final class AudioTrack extends EditTrack {
           : null,
       mixedFallbackPath: m['mixedFallbackPath'] as String?,
       masterGainDb: (mix['masterGainDb'] as num?)?.toDouble() ?? 0,
+      masterVolumePercent:
+          (mix['masterVolumePercent'] as num?)?.toDouble() ?? 100,
       limiter: mix['limiter'] as bool? ?? true,
     );
   }
@@ -630,6 +662,7 @@ final class AudioTrack extends EditTrack {
     AudioTrackSource? system,
     String? mixedFallbackPath,
     double? masterGainDb,
+    double? masterVolumePercent,
     bool? limiter,
   }) => AudioTrack(
     id: id ?? this.id,
@@ -638,6 +671,34 @@ final class AudioTrack extends EditTrack {
     system: system ?? this.system,
     mixedFallbackPath: mixedFallbackPath ?? this.mixedFallbackPath,
     masterGainDb: masterGainDb ?? this.masterGainDb,
+    masterVolumePercent: masterVolumePercent ?? this.masterVolumePercent,
     limiter: limiter ?? this.limiter,
+  );
+
+  // See [AudioTrackSource.==] — same reason, and this is the type the audio
+  // EditSession actually compares.
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AudioTrack &&
+          other.id == id &&
+          other.enabled == enabled &&
+          other.mic == mic &&
+          other.system == system &&
+          other.mixedFallbackPath == mixedFallbackPath &&
+          other.masterGainDb == masterGainDb &&
+          other.masterVolumePercent == masterVolumePercent &&
+          other.limiter == limiter;
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    enabled,
+    mic,
+    system,
+    mixedFallbackPath,
+    masterGainDb,
+    masterVolumePercent,
+    limiter,
   );
 }

@@ -13,6 +13,7 @@ import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
+import 'package:clingfy/core/timeline/commands/set_audio_command.dart';
 import 'package:clingfy/core/timeline/commands/set_captions_command.dart';
 import 'package:clingfy/core/timeline/commands/set_color_grade_command.dart';
 import 'package:clingfy/core/timeline/edit_command.dart';
@@ -212,6 +213,17 @@ class PostProcessingController extends ChangeNotifier {
   double _audioGainDb = 0.0;
   VoiceCleanup _voiceCleanup = const VoiceCleanup();
 
+  /// The parts of the stored [AudioTrack] no control on this panel edits —
+  /// the separated source paths, the legacy mixed fallback, and the limiter.
+  ///
+  /// Held so a round-trip through [_audioTrack] cannot silently drop them.
+  /// The three live fields above stay the source of truth for the values the
+  /// UI does drive, because ~40 read sites (preview push, export args, Sentry
+  /// contexts) reach for them directly and rewriting all of them to go through
+  /// a track would be a large diff whose only failure mode is a mistyped wire
+  /// key.
+  AudioTrack _audioRest = const AudioTrack();
+
   // ---- Subtitles -----------------------------------------------------------
 
   /// What native says about captioning this machine and this recording.
@@ -321,6 +333,16 @@ class PostProcessingController extends ChangeNotifier {
   late final EditSession _captionsSession = EditSession(
     onFlush: _onCaptionEditFlushed,
   );
+  // Undo/redo history for the audio panel — the fifth domain to get one, and
+  // the last of the editable tracks that had none. Before this, changing gain
+  // or voice cleanup was the only edit in the app with no way back.
+  late final EditSession _audioSession = EditSession(
+    onFlush: _onAudioEditFlushed,
+  );
+  // Audio as it was when the current slider gesture started. Non-null only
+  // between the first tick and the matching `...End`, so a whole drag collapses
+  // into ONE history entry. Same shape as [_colorGestureBaseline].
+  AudioTrack? _audioGestureBaseline;
   // Grade as it was when the current slider gesture started, i.e. before the
   // live drag ticks. Non-null only between the first tick and the matching
   // [commitColorGrade], so a whole drag collapses into ONE history entry
@@ -1510,7 +1532,29 @@ class PostProcessingController extends ChangeNotifier {
     applyProcessing();
   }
 
+  /// This recording's audio settings as one value object.
+  ///
+  /// Packs the three live fields over [_audioRest] so the sources and limiter
+  /// a stored track carried survive the round trip.
+  AudioTrack get _audioTrack => _audioRest.copyWith(
+    mic: (_audioRest.mic ?? const AudioTrackSource()).copyWith(
+      gainDb: _audioGainDb,
+      cleanup: _voiceCleanup,
+    ),
+    masterVolumePercent: _audioVolumePercent,
+  );
+
+  /// The inverse of [_audioTrack]: unpacks a track back onto the live fields.
+  /// Used by [SetAudioCommand] for apply, revert and redo alike.
+  void _applyAudioTrack(AudioTrack track) {
+    _audioRest = track;
+    _audioGainDb = (track.mic?.gainDb ?? 0.0).clamp(0.0, 24.0);
+    _voiceCleanup = track.mic?.cleanup ?? const VoiceCleanup();
+    _audioVolumePercent = track.masterVolumePercent.clamp(0.0, 100.0);
+  }
+
   void setAudioGainDb(double v) {
+    _audioGestureBaseline ??= _audioTrack;
     _audioGainDb = v.clamp(0.0, 24.0);
     notifyListeners();
     _schedulePreviewAudioMix();
@@ -1518,13 +1562,11 @@ class PostProcessingController extends ChangeNotifier {
 
   void setAudioGainDbEnd(double v) {
     _audioGainDb = v.clamp(0.0, 24.0);
-    notifyListeners();
-    unawaited(_settings.post.updatePostAudioGainDb(_audioGainDb));
-    _audioPreviewDebouncer.cancel();
-    _pushPreviewAudioMix();
+    _commitAudioGesture();
   }
 
   void setAudioVolumePercent(double v) {
+    _audioGestureBaseline ??= _audioTrack;
     _audioVolumePercent = v.clamp(0.0, 100.0);
     notifyListeners();
     _schedulePreviewAudioMix();
@@ -1532,10 +1574,26 @@ class PostProcessingController extends ChangeNotifier {
 
   void setAudioVolumePercentEnd(double v) {
     _audioVolumePercent = v.clamp(0.0, 100.0);
-    notifyListeners();
-    unawaited(_settings.post.updatePostAudioVolumePercent(_audioVolumePercent));
-    _audioPreviewDebouncer.cancel();
-    _pushPreviewAudioMix();
+    _commitAudioGesture();
+  }
+
+  /// Closes a slider gesture into a single undoable entry. Mirrors
+  /// [commitColorGrade]: rewind to the pre-gesture value so the command
+  /// snapshots an honest "previous" through its own getter, then execute,
+  /// which re-applies the new one before anything is painted.
+  void _commitAudioGesture() {
+    final baseline = _audioGestureBaseline;
+    _audioGestureBaseline = null;
+    final next = _audioTrack;
+    if (baseline == null || baseline == next) {
+      // A tap, or a drag that landed where it started. Push and persist, but
+      // do not record a history entry for a no-op.
+      notifyListeners();
+      _syncAudioToPreviewAndDisk();
+      return;
+    }
+    _applyAudioTrack(baseline);
+    _executeAudioEdit(next);
   }
 
   /// Voice cleanup is a discrete choice, not a dragged slider, so there is no
@@ -1545,10 +1603,83 @@ class PostProcessingController extends ChangeNotifier {
   /// continuous gesture.
   void setVoiceCleanup(VoiceCleanup value) {
     if (value == _voiceCleanup) return;
+    // A discrete toggle can land while a slider gesture is still open. Close
+    // that gesture first so the drag keeps its own entry instead of being
+    // swallowed by this one — same hazard [setColorGradeAutoEnhance] handles.
+    final baseline = _audioGestureBaseline;
+    if (baseline != null && baseline != _audioTrack) _commitAudioGesture();
+    _audioGestureBaseline = null;
+    final previous = _voiceCleanup;
     _voiceCleanup = value;
+    final next = _audioTrack;
+    _voiceCleanup = previous;
+    _executeAudioEdit(next);
+  }
+
+  void _executeAudioEdit(AudioTrack next) {
+    _audioSession.execute(
+      SetAudioCommand(
+        get: () => _audioTrack,
+        set: _applyAudioTrack,
+        next: next,
+      ),
+    );
+  }
+
+  /// Steps the audio settings back to the state before the last committed
+  /// edit. No-op when the history is empty.
+  void undoAudio() {
+    if (!_audioSession.canUndo) return;
+    // An in-flight drag is abandoned rather than committed: the user asked for
+    // the *previous* state, so its uncommitted ticks must not become an entry.
+    _audioGestureBaseline = null;
+    _audioSession.undo();
+  }
+
+  /// Re-applies the last undone audio edit. No-op when nothing was undone.
+  void redoAudio() {
+    if (!_audioSession.canRedo) return;
+    _audioGestureBaseline = null;
+    _audioSession.redo();
+  }
+
+  bool get canUndoAudio => _audioSession.canUndo;
+  bool get canRedoAudio => _audioSession.canRedo;
+
+  /// Every history-recorded audio change lands here via [EditSession.onFlush]
+  /// — execute, undo and redo alike.
+  void _onAudioEditFlushed(Set<EditDomain> dirtyDomains) {
+    if (!dirtyDomains.contains(EditDomain.audio)) return;
     notifyListeners();
-    unawaited(_settings.post.updatePostVoiceCleanup(value));
+    _syncAudioToPreviewAndDisk();
+  }
+
+  void _syncAudioToPreviewAndDisk() {
+    _audioPreviewDebouncer.cancel();
+    _pushPreviewAudioMix();
     _pushPreviewVoiceCleanup();
+    // Still written to app-wide prefs, deliberately. Prefs are now the SEED for
+    // a recording that has no stored audio of its own (see [attachToRecording])
+    // rather than the live value — so "I always boost my mic" still carries to
+    // the next take, while reopening an old recording gets ITS settings back
+    // instead of whatever was last touched.
+    unawaited(_settings.post.updatePostAudioGainDb(_audioGainDb));
+    unawaited(_settings.post.updatePostAudioVolumePercent(_audioVolumePercent));
+    unawaited(_settings.post.updatePostVoiceCleanup(_voiceCleanup));
+    _persistAudioIfActive();
+  }
+
+  /// Persists this recording's audio track to its bundle. Fire-and-forget, and
+  /// snapshotted outside the closure for the reason spelled out in
+  /// [_persistCanvasAppearance]: a write queued for project A must not execute
+  /// against B's freshly-reset fields.
+  void _persistAudioIfActive() {
+    final projectPath = _projectPath;
+    if (projectPath == null) return;
+    final track = _audioTrack;
+    unawaited(
+      PostStateStore.update(projectPath, (state) => state.withTrack(track)),
+    );
   }
 
   void _pushPreviewVoiceCleanup() {
@@ -1800,6 +1931,15 @@ class PostProcessingController extends ChangeNotifier {
     // means the app preference still governs.
     _captionDestination = storedCaptions?.destination;
     _hasEverGeneratedCaptions = _captions.isNotEmpty;
+    // Audio belongs to the recording, not to the app. `_resetForNewRecording`
+    // has just seeded the three fields from prefs, which is the right default
+    // for a take that has never been touched; a recording that HAS stored
+    // audio overrides that with its own. Before this, every project displayed
+    // and exported whatever gain the last one was left at.
+    final storedAudio = PostStateStore.load(
+      projectPath,
+    ).trackOfType<AudioTrack>();
+    if (storedAudio != null) _applyAudioTrack(storedAudio);
     // Another recording's manifest may still be installed natively.
     _pushedCaptionSignature = null;
     notifyListeners();
@@ -1884,11 +2024,14 @@ class PostProcessingController extends ChangeNotifier {
     _voiceCleanup = _settings.post.postVoiceCleanup;
     _audioVolumePercent = _settings.post.postAudioVolumePercent;
     _colorGrade = const ColorGrade();
+    _audioRest = const AudioTrack();
     // History belongs to the recording that produced it — never let an undo
     // from the previous project reach into this one.
     _colorSession.clear();
     _captionsSession.clear();
+    _audioSession.clear();
     _colorGestureBaseline = null;
+    _audioGestureBaseline = null;
     _cameraPath = null;
     _cameraState = null;
     _cameraExportCapabilities = const CameraExportCapabilities.allSupported();
@@ -1967,7 +2110,9 @@ class PostProcessingController extends ChangeNotifier {
     // recorded in that window would now point at a stale pre-restore grade.
     _colorSession.clear();
     _captionsSession.clear();
+    _audioSession.clear();
     _colorGestureBaseline = null;
+    _audioGestureBaseline = null;
   }
 
   /// Persists the current editor state (canvas appearance + color grade) to the
