@@ -240,6 +240,30 @@ abstract class NativeMethod {
   // --- Updates and app lifecycle ---
   static const String checkForUpdates = 'checkForUpdates';
   static const String relaunchApp = 'relaunchApp';
+  // --- Capability probes ---
+  static const String captionsCapability = 'captionsCapability';
+  static const String getRecordingCapabilities = 'getRecordingCapabilities';
+  static const String previewGetZoomCapabilities = 'previewGetZoomCapabilities';
+
+  // --- Device and display enumeration ---
+  static const String getAppWindows = 'getAppWindows';
+  static const String getAudioSources = 'getAudioSources';
+  static const String getDisplays = 'getDisplays';
+  static const String getVideoSources = 'getVideoSources';
+
+  // --- Preview queries ---
+  static const String getRecordingSceneInfo = 'getRecordingSceneInfo';
+  static const String previewGetCursorSamples = 'previewGetCursorSamples';
+  static const String previewGetSourceDimensions = 'previewGetSourceDimensions';
+  static const String previewOpen = 'previewOpen';
+
+  // --- Captions ---
+  static const String generateCaptions = 'generateCaptions';
+
+  // --- Storage and diagnostics ---
+  static const String clearCachedRecordings = 'clearCachedRecordings';
+  static const String getCaptureDiagnostics = 'getCaptureDiagnostics';
+  static const String getStorageSnapshot = 'getStorageSnapshot';
 }
 
 /// Method names for native → Flutter calls.

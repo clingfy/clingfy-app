@@ -154,7 +154,9 @@ class DeviceController extends ChangeNotifier {
     try {
       Log.i("Device", "Loading audio resources...");
       final raw =
-          await _nativeBridge.invokeMethod<List<dynamic>>('getAudioSources') ??
+          await _nativeBridge.invokeMethod<List<dynamic>>(
+            NativeMethod.getAudioSources,
+          ) ??
           [];
       final sources = raw
           .map((e) => AudioSource.fromMap(Map<dynamic, dynamic>.from(e as Map)))
@@ -230,7 +232,9 @@ class DeviceController extends ChangeNotifier {
     notifyListeners();
     try {
       final raw =
-          await _nativeBridge.invokeMethod<List<dynamic>>('getVideoSources') ??
+          await _nativeBridge.invokeMethod<List<dynamic>>(
+            NativeMethod.getVideoSources,
+          ) ??
           [];
       final cams = raw
           .map((e) => CamSource.fromMap(Map<dynamic, dynamic>.from(e as Map)))
@@ -327,7 +331,10 @@ class DeviceController extends ChangeNotifier {
     final seq = ++_displaysSeq;
     try {
       final raw =
-          await _nativeBridge.invokeMethod<List<dynamic>>('getDisplays') ?? [];
+          await _nativeBridge.invokeMethod<List<dynamic>>(
+            NativeMethod.getDisplays,
+          ) ??
+          [];
       Log.i("Device", "Displays: $raw");
       if (seq != _displaysSeq) return;
 
@@ -466,7 +473,9 @@ class DeviceController extends ChangeNotifier {
     notifyListeners();
     try {
       final raw =
-          await _nativeBridge.invokeMethod<List<dynamic>>('getAppWindows') ??
+          await _nativeBridge.invokeMethod<List<dynamic>>(
+            NativeMethod.getAppWindows,
+          ) ??
           [];
       final windows = raw
           .map((e) => AppWindowInfo.fromMap(Map<dynamic, dynamic>.from(e)))

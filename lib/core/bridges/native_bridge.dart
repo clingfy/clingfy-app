@@ -417,7 +417,7 @@ class NativeBridge {
 
   Future<RecordingPauseResumeCapabilities> getRecordingCapabilities() async {
     final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-      'getRecordingCapabilities',
+      NativeMethod.getRecordingCapabilities,
     );
     return RecordingPauseResumeCapabilities.fromMap(raw);
   }
@@ -785,7 +785,7 @@ class NativeBridge {
   Future<ZoomNativeCapabilities> previewGetZoomCapabilities() async {
     try {
       final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-        'previewGetZoomCapabilities',
+        NativeMethod.previewGetZoomCapabilities,
       );
       if (raw == null) return ZoomNativeCapabilities.legacy;
       return ZoomNativeCapabilities.fromMap(raw);
@@ -848,13 +848,15 @@ class NativeBridge {
     String? sessionId,
   }) async {
     try {
-      final raw = await _nativeBridge
-          .invokeMethod<Map<dynamic, dynamic>>('previewGetCursorSamples', {
-            if (sessionId != null) 'sessionId': sessionId,
-            'startMs': startMs,
-            'endMs': endMs,
-            'playheadMs': playheadMs,
-          });
+      final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
+        NativeMethod.previewGetCursorSamples,
+        {
+          if (sessionId != null) 'sessionId': sessionId,
+          'startMs': startMs,
+          'endMs': endMs,
+          'playheadMs': playheadMs,
+        },
+      );
       if (raw == null) return CursorSamplesResult.empty;
       return CursorSamplesResult.fromMap(raw);
     } on MissingPluginException catch (e) {
@@ -879,7 +881,7 @@ class NativeBridge {
   Future<Size?> previewGetSourceDimensions({String? sessionId}) async {
     try {
       final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-        'previewGetSourceDimensions',
+        NativeMethod.previewGetSourceDimensions,
         {if (sessionId != null) 'sessionId': sessionId},
       );
       if (raw == null) return null;
@@ -904,7 +906,7 @@ class NativeBridge {
 
   Future<StorageSnapshot> getStorageSnapshot() async {
     final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-      'getStorageSnapshot',
+      NativeMethod.getStorageSnapshot,
     );
     if (raw == null) {
       throw StateError('Native storage snapshot returned null.');
@@ -922,7 +924,7 @@ class NativeBridge {
 
   Future<int> clearCachedRecordings() async {
     final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-      'clearCachedRecordings',
+      NativeMethod.clearCachedRecordings,
     );
     if (raw == null) {
       throw StateError('Native clearCachedRecordings returned null.');
@@ -947,7 +949,7 @@ class NativeBridge {
     // wrong-shape responses as a macOS-equivalent "no texture" so the
     // caller can rely on a non-null result type.
     final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-      'previewOpen',
+      NativeMethod.previewOpen,
       {
         'sessionId': sessionId,
         'projectPath': projectPath,
@@ -965,7 +967,7 @@ class NativeBridge {
 
   Future<RecordingSceneInfo> getRecordingSceneInfo(String projectPath) async {
     final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-      'getRecordingSceneInfo',
+      NativeMethod.getRecordingSceneInfo,
       {'projectPath': projectPath},
     );
     if (raw == null) {
@@ -997,7 +999,7 @@ class NativeBridge {
     String? language,
   }) async {
     final raw = await _nativeBridge
-        .invokeMethod<Map<dynamic, dynamic>>('generateCaptions', {
+        .invokeMethod<Map<dynamic, dynamic>>(NativeMethod.generateCaptions, {
           'projectPath': projectPath,
           'useMic': useMic,
           'useSystem': useSystem,
@@ -1043,7 +1045,7 @@ class NativeBridge {
   Future<CaptionsCapabilityInfo> captionsCapability(String projectPath) async {
     try {
       final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-        'captionsCapability',
+        NativeMethod.captionsCapability,
         {'projectPath': projectPath},
       );
       if (raw == null) return CaptionsCapabilityInfo.unsupported;

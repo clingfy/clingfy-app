@@ -449,7 +449,7 @@ class WorkspaceSettingsController extends ChangeNotifier {
       final service = DiagnosticsPackageService(
         captureDiagnostics: () async =>
             (await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
-              'getCaptureDiagnostics',
+              NativeMethod.getCaptureDiagnostics,
             ))?.map<String, dynamic>((k, v) => MapEntry(k.toString(), v)),
         permissionStatus: () async => _nativeBridge.getPermissionStatus(),
         deviceInventory: () async => <String, dynamic>{
