@@ -6,13 +6,29 @@ import Foundation
 /// arrive on first transcription and nothing in the app has ever shown them or
 /// offered to remove them. It is deliberately kept out of the storage snapshot's
 /// "Total Clingfy usage" for the same reason — re-downloadable weights are not
-/// recordings, and folding them in would make that number jump by ~859 MB the
-/// first time somebody captions something.
+/// recordings, and folding them in would make that number jump by the better
+/// part of a gigabyte the first time somebody captions something (600 MB of
+/// weights on this machine, plus the tokenizer repo beside them).
 enum CaptionModelStore {
 
   struct Info {
-    /// Keyed off bytes, never directory existence: an empty `Models/` folder is
-    /// not an installed model, and something else may well have created it.
+    /// Whether there are bytes here to report and to free — keyed off bytes,
+    /// never directory existence, because an empty `Models/` folder is not an
+    /// installed model and something else may well have created it.
+    ///
+    /// NOT the same question as `WhisperKitTranscriber.existingModelFolder()`,
+    /// which is stricter: it requires all three compiled bundles plus
+    /// `config.json` and answers "can the engine load this". The two disagree
+    /// for exactly one state, a half-finished download, and both are right for
+    /// their own purpose — this one says "300 MB you can delete", that one says
+    /// "not loadable, fetch again". The engine repairs such a folder on the next
+    /// Generate, so the disagreement is not a stuck state, and the Storage card
+    /// never claims readiness: it shows the byte count and a Delete button,
+    /// both of which are true of a partial download.
+    ///
+    /// Do not unify them. Making this one stricter would hide the Delete button
+    /// for the one state where there are real bytes and no way for the user to
+    /// reclaim them.
     let installed: Bool
     let modelBytes: Int64
     let compiledCacheBytes: Int64
@@ -50,8 +66,13 @@ enum CaptionModelStore {
   /// Removes both directories and returns what was measured immediately before.
   ///
   /// Measured before, not after, and measured with the same walk that deletes:
-  /// reporting a number derived from a different set than the one removed is
-  /// how "freed 600 MB" ends up wrong while a third of it is still on disk.
+  /// reporting a number derived from a different set than the one removed is how
+  /// a "freed" figure ends up describing bytes that are still on disk.
+  ///
+  /// Both directories here are Clingfy's own. The shared ANE cache that holds
+  /// the real compiled bundles is deliberately not among them — see
+  /// `AppPaths.compiledModelCacheDirectoryURLIfPresent` for why removing it
+  /// would take other apps' models with it.
   @discardableResult
   static func delete() -> Int64 {
     var freed: Int64 = 0

@@ -2867,8 +2867,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'Delete the speech model?';
 
   @override
-  String get storageDeleteCaptionModelConfirmMessage =>
-      'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.';
+  String storageDeleteCaptionModelConfirmMessage(String size) {
+    return 'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and about $size.';
+  }
 
   @override
   String get storageDeleteCaptionModelConfirmAction => 'Delete';

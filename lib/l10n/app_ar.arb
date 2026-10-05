@@ -949,7 +949,7 @@
   "storageCaptionModelNotDownloaded": "لم يُنزَّل بعد. عند أول إنشاء للترجمات، ينزّل Clingfy نموذج الكلام.",
   "storageDeleteCaptionModel": "حذف نموذج الكلام",
   "storageDeleteCaptionModelConfirmTitle": "حذف نموذج الكلام؟",
-  "storageDeleteCaptionModelConfirmMessage": "تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو 600 ميجابايت.",
+  "storageDeleteCaptionModelConfirmMessage": "تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو {size}.",
   "storageDeleteCaptionModelConfirmAction": "حذف",
   "storageDeleteCaptionModelSuccess": "تم تحرير {value}."
 }

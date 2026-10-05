@@ -1001,7 +1001,14 @@
   "storageCaptionModelNotDownloaded": "Not downloaded yet. The first time you generate subtitles, Clingfy downloads the speech model.",
   "storageDeleteCaptionModel": "Delete speech model",
   "storageDeleteCaptionModelConfirmTitle": "Delete the speech model?",
-  "storageDeleteCaptionModelConfirmMessage": "Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.",
+  "storageDeleteCaptionModelConfirmMessage": "Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and about {size}.",
+  "@storageDeleteCaptionModelConfirmMessage": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageDeleteCaptionModelConfirmAction": "Delete",
   "storageDeleteCaptionModelSuccess": "Freed {value}.",
   "@storageDeleteCaptionModelSuccess": {

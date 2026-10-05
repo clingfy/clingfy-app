@@ -2851,8 +2851,9 @@ class AppLocalizationsAr extends AppLocalizations {
   String get storageDeleteCaptionModelConfirmTitle => 'حذف نموذج الكلام؟';
 
   @override
-  String get storageDeleteCaptionModelConfirmMessage =>
-      'تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو 600 ميجابايت.';
+  String storageDeleteCaptionModelConfirmMessage(String size) {
+    return 'تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو $size.';
+  }
 
   @override
   String get storageDeleteCaptionModelConfirmAction => 'حذف';

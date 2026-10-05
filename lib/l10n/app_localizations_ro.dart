@@ -2903,8 +2903,9 @@ class AppLocalizationsRo extends AppLocalizations {
       'Ștergi modelul de vorbire?';
 
   @override
-  String get storageDeleteCaptionModelConfirmMessage =>
-      'Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ 600 MB.';
+  String storageDeleteCaptionModelConfirmMessage(String size) {
+    return 'Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ $size.';
+  }
 
   @override
   String get storageDeleteCaptionModelConfirmAction => 'Șterge';
