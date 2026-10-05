@@ -103,7 +103,7 @@ class DeviceController extends ChangeNotifier {
       _selectedCamId = sp.getString(_prefVideoDeviceId);
 
       // Set initial window target
-      await _nativeBridge.invokeMethod<void>('setAppWindowTarget', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setAppWindowTarget, {
         'windowId': _selectedAppWindowId,
       });
 
@@ -182,7 +182,7 @@ class DeviceController extends ChangeNotifier {
               _selectedAudioSourceId.isEmpty)
           ? null
           : _selectedAudioSourceId;
-      await _nativeBridge.invokeMethod<void>('setAudioSource', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setAudioSource, {
         'id': nativeAudioId,
       });
       Log.i("Device", "Finished loading audio resources.");
@@ -209,7 +209,7 @@ class DeviceController extends ChangeNotifier {
         : sourceId;
 
     try {
-      await _nativeBridge.invokeMethod<void>('setAudioSource', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setAudioSource, {
         'id': nativeAudioId,
       });
       final sp = await SharedPreferences.getInstance();
@@ -260,7 +260,7 @@ class DeviceController extends ChangeNotifier {
           ? preferredCamId
           : (cams.isNotEmpty ? cams.first.id : null);
 
-      await _nativeBridge.invokeMethod<void>('setVideoSource', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setVideoSource, {
         'id': _selectedCamId,
       });
     } on PlatformException catch (e) {
@@ -278,7 +278,9 @@ class DeviceController extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      await _nativeBridge.invokeMethod<void>('setVideoSource', {'id': id});
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setVideoSource, {
+        'id': id,
+      });
       final sp = await SharedPreferences.getInstance();
       if (id == null || id.isEmpty) {
         await sp.remove(_prefVideoDeviceId);
@@ -368,7 +370,9 @@ class DeviceController extends ChangeNotifier {
       // Native holds its own selected display; without this the Swift facade
       // keeps targeting a screen Dart has already moved off.
       if (changed) {
-        await _nativeBridge.invokeMethod<void>('setDisplay', {'id': nextId});
+        await _nativeBridge.invokeMethod<void>(NativeMethod.setDisplay, {
+          'id': nextId,
+        });
       }
       if (changedList || changed) notifyListeners();
     } on MissingPluginException catch (e) {
@@ -428,7 +432,9 @@ class DeviceController extends ChangeNotifier {
       notifyListeners();
     }
     try {
-      await _nativeBridge.invokeMethod<void>('setDisplay', {'id': id});
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setDisplay, {
+        'id': id,
+      });
       final sp = await SharedPreferences.getInstance();
       if (id == null) {
         await sp.remove(_prefSelectedDisplayId);
@@ -493,7 +499,7 @@ class DeviceController extends ChangeNotifier {
       } else {
         await sp.setInt(_prefSelectedAppWindowId, id);
       }
-      await _nativeBridge.invokeMethod<void>('setAppWindowTarget', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setAppWindowTarget, {
         'windowId': id,
       });
     } on PlatformException catch (e) {

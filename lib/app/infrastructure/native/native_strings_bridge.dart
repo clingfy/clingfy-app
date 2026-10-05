@@ -3,6 +3,7 @@ import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/bridges/native_ui_string_keys.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 
 /// Bridge for providing localized strings to native code.
 ///
@@ -53,7 +54,10 @@ class NativeStringsBridge {
 
     final strings = getLocalizedStrings(NativeUIStringKey.allKeys);
     try {
-      await _nativeBridge.invokeMethod<void>('cacheLocalizedStrings', strings);
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.cacheLocalizedStrings,
+        strings,
+      );
       Log.i(
         'NativeStringsBridge',
         'Pushed ${strings.length} strings to native',

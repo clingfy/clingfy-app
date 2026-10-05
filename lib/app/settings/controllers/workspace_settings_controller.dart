@@ -10,6 +10,7 @@ import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/infrastructure/diagnostics/diagnostics_package_service.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 
 class WorkspaceSettingsController extends ChangeNotifier {
   WorkspaceSettingsController({required NativeBridge nativeBridge})
@@ -214,7 +215,9 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<void> _loadSaveFolder(SharedPreferences prefs) async {
     try {
-      final path = await _nativeBridge.invokeMethod<String>('getSaveFolder');
+      final path = await _nativeBridge.invokeMethod<String>(
+        NativeMethod.getSaveFolder,
+      );
       _saveFolderPath = path;
       if (path == null || path.isEmpty) {
         await prefs.remove(_prefSaveFolderPath);
@@ -293,7 +296,9 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<String?> chooseSaveFolderPath() async {
     try {
-      final path = await _nativeBridge.invokeMethod<String>('chooseSaveFolder');
+      final path = await _nativeBridge.invokeMethod<String>(
+        NativeMethod.chooseSaveFolder,
+      );
       if (path != null) {
         _saveFolderPath = path;
         await _cacheSaveFolderPath(path);
@@ -312,7 +317,9 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<void> resetSaveFolder() async {
     try {
-      final path = await _nativeBridge.invokeMethod<String>('resetSaveFolder');
+      final path = await _nativeBridge.invokeMethod<String>(
+        NativeMethod.resetSaveFolder,
+      );
       _saveFolderPath = path;
       await _cacheSaveFolderPath(path);
       notifyListeners();
@@ -326,7 +333,7 @@ class WorkspaceSettingsController extends ChangeNotifier {
       // The chosen folder is persisted Dart-side, so pass it along: Windows
       // opens exactly this path (falling back to its default when absent);
       // macOS persists the folder natively and ignores the argument.
-      await _nativeBridge.invokeMethod<void>('openSaveFolder', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.openSaveFolder, {
         if (_saveFolderPath != null) 'path': _saveFolderPath,
       });
       return true;
@@ -354,7 +361,9 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<void> revealFile(String path) async {
     try {
-      await _nativeBridge.invokeMethod<void>('revealFile', {'path': path});
+      await _nativeBridge.invokeMethod<void>(NativeMethod.revealFile, {
+        'path': path,
+      });
     } catch (e, st) {
       Log.e('Settings', 'Error revealing file', e, st);
     }
@@ -362,7 +371,9 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<String?> getTodayLogFilePath() async {
     try {
-      return await _nativeBridge.invokeMethod<String>('getTodayLogFilePath');
+      return await _nativeBridge.invokeMethod<String>(
+        NativeMethod.getTodayLogFilePath,
+      );
     } catch (e) {
       Log.w('Settings', 'Error getting today log path: $e');
       return null;
@@ -371,7 +382,7 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<void> revealTodayLogFile() async {
     try {
-      await _nativeBridge.invokeMethod<void>('revealTodayLogFile');
+      await _nativeBridge.invokeMethod<void>(NativeMethod.revealTodayLogFile);
     } on PlatformException catch (e) {
       // Rethrow the CODE, not the human message — the diagnostics section
       // matches StateError.message against the LOG_FILE_* code constants to
@@ -387,7 +398,7 @@ class WorkspaceSettingsController extends ChangeNotifier {
 
   Future<void> revealLogsFolder() async {
     try {
-      await _nativeBridge.invokeMethod<void>('revealLogsFolder');
+      await _nativeBridge.invokeMethod<void>(NativeMethod.revealLogsFolder);
     } catch (e, st) {
       Log.e('Settings', 'Error revealing logs folder', e, st);
     }

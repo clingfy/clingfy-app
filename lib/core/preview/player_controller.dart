@@ -466,7 +466,9 @@ class PlayerController extends ChangeNotifier {
     _isPeeking = false;
     _playerPlaying = true;
     notifyListeners();
-    await _nativeBridge.invokeMethod('previewPlay', {'sessionId': sessionId});
+    await _nativeBridge.invokeMethod(NativeMethod.previewPlay, {
+      'sessionId': sessionId,
+    });
   }
 
   Future<void> pause() async {
@@ -475,7 +477,9 @@ class PlayerController extends ChangeNotifier {
     if (_rebuildingInvalidatedPreview && !_restoringTransportAfterRebuild) {
       _userTransportDuringRebuild = true;
     }
-    await _nativeBridge.invokeMethod('previewPause', {'sessionId': sessionId});
+    await _nativeBridge.invokeMethod(NativeMethod.previewPause, {
+      'sessionId': sessionId,
+    });
     _playerPlaying = false;
     notifyListeners();
   }
@@ -489,7 +493,7 @@ class PlayerController extends ChangeNotifier {
     _posMs = ms;
     Log.d("Player", "seekTo: $ms ms");
     notifyListeners();
-    await _nativeBridge.invokeMethod('previewSeekTo', {
+    await _nativeBridge.invokeMethod(NativeMethod.previewSeekTo, {
       'sessionId': sessionId,
       'ms': ms,
     });
@@ -500,7 +504,7 @@ class PlayerController extends ChangeNotifier {
     if (sessionId == null || _playerPlaying) return;
 
     _isPeeking = true;
-    await _nativeBridge.invokeMethod('previewPeekTo', {
+    await _nativeBridge.invokeMethod(NativeMethod.previewPeekTo, {
       'sessionId': sessionId,
       'ms': ms,
     });

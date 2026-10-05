@@ -13,6 +13,7 @@ import 'package:clingfy/core/models/app_models.dart';
 
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/infrastructure/observability/telemetry_service.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/ui/platform/platform_kind.dart';
 
 const _prefOverlayShapeId = 'pref.overlayShapeId';
@@ -174,44 +175,53 @@ class OverlayController extends ChangeNotifier {
 
       notifyListeners();
 
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayShape', {
-        'shapeId': _overlayShape.wireValue,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlaySize', {
-        'size': _overlaySize,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayShadow', {
-        'shadow': _overlayShadow.index,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayBorder', {
-        'border': _overlayBorder.index,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayBorderWidth', {
-        'width': _overlayBorderWidth,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayBorderColor', {
-        'color': _overlayBorderColor,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayRoundness', {
-        'roundness': _overlayRoundness,
-      });
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayOpacity', {
-        'opacity': _overlayOpacity,
-      });
-      await _nativeBridge.invokeMethod<void>('setOverlayMirror', {
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayShape,
+        {'shapeId': _overlayShape.wireValue},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlaySize,
+        {'size': _overlaySize},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayShadow,
+        {'shadow': _overlayShadow.index},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayBorder,
+        {'border': _overlayBorder.index},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayBorderWidth,
+        {'width': _overlayBorderWidth},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayBorderColor,
+        {'color': _overlayBorderColor},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayRoundness,
+        {'roundness': _overlayRoundness},
+      );
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayOpacity,
+        {'opacity': _overlayOpacity},
+      );
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setOverlayMirror, {
         'mirrored': _overlayMirror,
       });
-      await _nativeBridge.invokeMethod<void>('setChromaKeyEnabled', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setChromaKeyEnabled, {
         'enabled': _chromaKeyEnabled,
       });
-      await _nativeBridge.invokeMethod<void>('setChromaKeyStrength', {
-        'strength': _chromaKeyStrength,
-      });
-      await _nativeBridge.invokeMethod<void>('setChromaKeyColor', {
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setChromaKeyStrength,
+        {'strength': _chromaKeyStrength},
+      );
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setChromaKeyColor, {
         'color': _chromaKeyColor,
       });
       await _nativeBridge.invokeMethod<void>(
-        'setCameraOverlayHighlightStrength',
+        NativeMethod.setCameraOverlayHighlightStrength,
         {'strength': _overlayRecordingHighlightStrength},
       );
 
@@ -219,7 +229,7 @@ class OverlayController extends ChangeNotifier {
 
       await _nativeBridge.setOverlayLinkedToRecording(_linkOverlayToRecording);
       try {
-        await _nativeBridge.invokeMethod<void>('setOverlayEnabled', {
+        await _nativeBridge.invokeMethod<void>(NativeMethod.setOverlayEnabled, {
           'enabled': _cameraOverlayEnabled,
         });
       } on PlatformException catch (e) {
@@ -314,12 +324,12 @@ class OverlayController extends ChangeNotifier {
           _overlayCustomNormalizedX != null &&
           _overlayCustomNormalizedY != null) {
         await _nativeBridge
-            .invokeMethod<void>('setCameraOverlayCustomPosition', {
+            .invokeMethod<void>(NativeMethod.setCameraOverlayCustomPosition, {
               'normalizedX': _overlayCustomNormalizedX,
               'normalizedY': _overlayCustomNormalizedY,
             });
       }
-      await _nativeBridge.invokeMethod<void>('setOverlayEnabled', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setOverlayEnabled, {
         'enabled': _cameraOverlayEnabled,
       });
       await _updateNativeHighlight();
@@ -345,7 +355,7 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await _persistOverlayShape(sp, shape);
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayShape', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setCameraOverlayShape, {
       'shapeId': shape.wireValue,
     });
   }
@@ -356,7 +366,7 @@ class OverlayController extends ChangeNotifier {
     final sp = await SharedPreferences.getInstance();
     await sp.setDouble('overlaySize', size);
     // setCameraOverlaySize updates size in-place without rebuild
-    await _nativeBridge.invokeMethod<void>('setCameraOverlaySize', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setCameraOverlaySize, {
       'size': size,
     });
   }
@@ -366,9 +376,10 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await sp.setInt('overlayShadow', shadow.index);
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayShadow', {
-      'shadow': shadow.index,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayShadow,
+      {'shadow': shadow.index},
+    );
   }
 
   Future<void> setOverlayBorder(OverlayBorder border) async {
@@ -384,13 +395,15 @@ class OverlayController extends ChangeNotifier {
     await sp.setInt('overlayBorder', border.index);
     await sp.setInt('overlayBorderColor', _overlayBorderColor);
 
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayBorder', {
-      'border': border.index,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayBorder,
+      {'border': border.index},
+    );
     // Also push the color in case it was a preset change
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayBorderColor', {
-      'color': _overlayBorderColor,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayBorderColor,
+      {'color': _overlayBorderColor},
+    );
   }
 
   Future<void> setOverlayPosition(OverlayPosition position) async {
@@ -402,9 +415,10 @@ class OverlayController extends ChangeNotifier {
     final sp = await SharedPreferences.getInstance();
     await sp.setInt('overlayPosition', position.index);
     await _clearStoredCustomPosition(sp);
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayPosition', {
-      'position': position.index,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayPosition,
+      {'position': position.index},
+    );
     await ClingfyTelemetry.addUiBreadcrumb(
       category: 'ui.facecam',
       message: 'facecam_position_preset_selected',
@@ -417,9 +431,10 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await sp.setDouble('overlayRoundness', roundness);
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayRoundness', {
-      'roundness': roundness,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayRoundness,
+      {'roundness': roundness},
+    );
   }
 
   Future<void> setOverlayOpacity(double opacity) async {
@@ -427,9 +442,10 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await sp.setDouble('overlayOpacity', opacity);
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayOpacity', {
-      'opacity': opacity,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayOpacity,
+      {'opacity': opacity},
+    );
   }
 
   Future<void> setOverlayMirror(bool mirrored) async {
@@ -442,7 +458,7 @@ class OverlayController extends ChangeNotifier {
       message: 'User toggled facecam mirror',
       data: {'mirrored': mirrored},
     );
-    await _nativeBridge.invokeMethod<void>('setOverlayMirror', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setOverlayMirror, {
       'mirrored': mirrored,
     });
   }
@@ -452,7 +468,7 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await sp.setBool('chromaKeyEnabled', enabled);
-    await _nativeBridge.invokeMethod<void>('setChromaKeyEnabled', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setChromaKeyEnabled, {
       'enabled': enabled,
     });
   }
@@ -462,7 +478,7 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await sp.setDouble('chromaKeyStrength', strength);
-    await _nativeBridge.invokeMethod<void>('setChromaKeyStrength', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setChromaKeyStrength, {
       'strength': strength,
     });
   }
@@ -472,7 +488,7 @@ class OverlayController extends ChangeNotifier {
     notifyListeners();
     final sp = await SharedPreferences.getInstance();
     await sp.setInt('chromaKeyColor', color);
-    await _nativeBridge.invokeMethod<void>('setChromaKeyColor', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setChromaKeyColor, {
       'color': color,
     });
   }
@@ -487,9 +503,10 @@ class OverlayController extends ChangeNotifier {
       message: 'User changed facecam border width',
       data: {'borderWidth': width},
     );
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayBorderWidth', {
-      'width': width,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayBorderWidth,
+      {'width': width},
+    );
   }
 
   Future<void> setOverlayBorderColor(int color) async {
@@ -502,12 +519,14 @@ class OverlayController extends ChangeNotifier {
     await sp.setInt('overlayBorderColor', color);
     await sp.setInt('overlayBorder', _overlayBorder.index);
 
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayBorderColor', {
-      'color': color,
-    });
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayBorder', {
-      'border': _overlayBorder.index,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayBorderColor,
+      {'color': color},
+    );
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayBorder,
+      {'border': _overlayBorder.index},
+    );
   }
 
   Color _borderPresetToColor(OverlayBorder border) {
@@ -565,7 +584,7 @@ class OverlayController extends ChangeNotifier {
               action: HomeUiNoticeAction(
                 label: AppLocalizations.of(context)!.openSettings,
                 onPressed: () {
-                  _nativeBridge.invokeMethod('relaunchApp');
+                  _nativeBridge.invokeMethod(NativeMethod.relaunchApp);
                 },
               ),
             ),
@@ -602,7 +621,7 @@ class OverlayController extends ChangeNotifier {
     final sp = await SharedPreferences.getInstance();
     await sp.setDouble('overlayRecordingHighlightStrength', clamped);
     await _nativeBridge.invokeMethod<void>(
-      'setCameraOverlayHighlightStrength',
+      NativeMethod.setCameraOverlayHighlightStrength,
       {'strength': clamped},
     );
     await ClingfyTelemetry.addUiBreadcrumb(
@@ -632,10 +651,10 @@ class OverlayController extends ChangeNotifier {
       normalizedY: normalizedY,
     );
     if (pushToNative) {
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayCustomPosition', {
-        'normalizedX': normalizedX,
-        'normalizedY': normalizedY,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayCustomPosition,
+        {'normalizedX': normalizedX, 'normalizedY': normalizedY},
+      );
     }
     final now = DateTime.now();
     final shouldEmitBreadcrumb =
@@ -693,9 +712,10 @@ class OverlayController extends ChangeNotifier {
         cameraOverlayEnabled;
 
     try {
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayHighlight', {
-        'enabled': shouldHighlight,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setCameraOverlayHighlight,
+        {'enabled': shouldHighlight},
+      );
     } catch (e) {
       Log.e("Overlay", "Error setting highlight: $e");
     }
@@ -705,15 +725,17 @@ class OverlayController extends ChangeNotifier {
     if (_overlayUseCustomPosition &&
         _overlayCustomNormalizedX != null &&
         _overlayCustomNormalizedY != null) {
-      await _nativeBridge.invokeMethod<void>('setCameraOverlayCustomPosition', {
-        'normalizedX': _overlayCustomNormalizedX,
-        'normalizedY': _overlayCustomNormalizedY,
-      });
+      await _nativeBridge
+          .invokeMethod<void>(NativeMethod.setCameraOverlayCustomPosition, {
+            'normalizedX': _overlayCustomNormalizedX,
+            'normalizedY': _overlayCustomNormalizedY,
+          });
       return;
     }
-    await _nativeBridge.invokeMethod<void>('setCameraOverlayPosition', {
-      'position': _overlayPosition.index,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCameraOverlayPosition,
+      {'position': _overlayPosition.index},
+    );
   }
 
   void _onCameraOverlayMovedFromNative(double normalizedX, double normalizedY) {
@@ -807,7 +829,7 @@ class OverlayController extends ChangeNotifier {
   Future<void> pickAreaRecordingRegion() async {
     try {
       final Map<dynamic, dynamic>? result = await _nativeBridge.invokeMethod(
-        'pickAreaRecordingRegion',
+        NativeMethod.pickAreaRecordingRegion,
       );
       if (result != null) {
         _areaDisplayId = result['displayId'];

@@ -34,6 +34,7 @@ import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/bridges/job_progress.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'dart:convert';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
 import 'package:clingfy/core/captions/caption_reflow.dart';
 
@@ -2249,7 +2250,7 @@ class PostProcessingController extends ChangeNotifier {
       );
 
       final newPath = await _nativeBridge.invokeMethod<String>(
-        'processVideo',
+        NativeMethod.processVideo,
         args,
       );
 
@@ -2790,7 +2791,7 @@ class PostProcessingController extends ChangeNotifier {
       );
 
       final newPath = await _nativeBridge.invokeMethod<String>(
-        'exportVideo',
+        NativeMethod.exportVideo,
         args,
       );
 
@@ -2922,7 +2923,7 @@ class PostProcessingController extends ChangeNotifier {
         category: 'ui.export',
         message: 'export_cancel_requested',
       );
-      await _nativeBridge.invokeMethod('cancelExport');
+      await _nativeBridge.invokeMethod(NativeMethod.cancelExport);
     } catch (e) {
       Log.e("PostProcessing", 'Error cancelling export: $e');
     }
@@ -2950,7 +2951,9 @@ class PostProcessingController extends ChangeNotifier {
 
   Future<String?> pickImage() async {
     try {
-      final picked = await _nativeBridge.invokeMethod<String>('pickImage');
+      final picked = await _nativeBridge.invokeMethod<String>(
+        NativeMethod.pickImage,
+      );
       if (picked == null || picked.isEmpty) return null;
       // Bundle a copy into the project. A raw path breaks the moment the
       // original moves or is deleted, and a macOS path is meaningless on

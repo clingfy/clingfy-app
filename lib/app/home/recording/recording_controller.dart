@@ -446,7 +446,7 @@ class RecordingController extends ChangeNotifier {
         phase: WorkflowPhase.startingRecording,
       );
 
-      await _nativeBridge.invokeMethod<void>('startRecording', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.startRecording, {
         'sessionId': activeSessionId,
         'frameRate': _settings.recording.captureFrameRate,
         'systemAudioEnabled': _settings.recording.systemAudioEnabled,
@@ -529,9 +529,10 @@ class RecordingController extends ChangeNotifier {
         recordingId: _state.sessionId,
       );
 
-      final stopFuture = _nativeBridge.invokeMethod<void>('stopRecording', {
-        'sessionId': _state.sessionId,
-      });
+      final stopFuture = _nativeBridge.invokeMethod<void>(
+        NativeMethod.stopRecording,
+        {'sessionId': _state.sessionId},
+      );
       if (previousState.phase == WorkflowPhase.recording) {
         _elapsed = _durationTracker.current();
       }
@@ -1531,7 +1532,7 @@ class RecordingController extends ChangeNotifier {
       return;
     }
     try {
-      await _nativeBridge.invokeMethod<void>('stopRecording', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.stopRecording, {
         'sessionId': sessionId,
       });
     } catch (e) {

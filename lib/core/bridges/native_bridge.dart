@@ -126,7 +126,7 @@ class NativeBridge {
     // test environments without a platform side must never fail construction.
     unawaited(
       _nativeBridge
-          .invokeMethod<void>('flushPendingNativeLogs')
+          .invokeMethod<void>(NativeMethod.flushPendingNativeLogs)
           .catchError((_) {}),
     );
   }
@@ -295,54 +295,60 @@ class NativeBridge {
   }
 
   Future<void> setRecordingIndicatorPinned(bool pinned) async {
-    await _nativeBridge.invokeMethod<void>('setRecordingIndicatorPinned', {
-      'pinned': pinned,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setRecordingIndicatorPinned,
+      {'pinned': pinned},
+    );
   }
 
   Future<void> setRecordingQuality(String wireValue) async {
-    await _nativeBridge.invokeMethod<void>('setRecordingQuality', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setRecordingQuality, {
       'quality': wireValue,
     });
   }
 
   Future<bool> getExcludeRecorderApp() async {
     final result = await _nativeBridge.invokeMethod<bool>(
-      'getExcludeRecorderApp',
+      NativeMethod.getExcludeRecorderApp,
     );
     return result ?? false;
   }
 
   Future<void> setExcludeRecorderApp(bool exclude) async {
-    await _nativeBridge.invokeMethod<void>('setExcludeRecorderApp', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setExcludeRecorderApp, {
       'exclude': exclude,
     });
   }
 
   Future<void> setFileNameTemplate(String template) async {
-    await _nativeBridge.invokeMethod<void>('setFileNameTemplate', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setFileNameTemplate, {
       'template': template,
     });
   }
 
   Future<void> setDisplayTargetMode(DisplayTargetMode m) async {
-    await _nativeBridge.invokeMethod<void>('setDisplayTargetMode', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setDisplayTargetMode, {
       'mode': m.index,
     });
   }
 
   Future<void> revealAreaRecordingRegion() async {
-    await _nativeBridge.invokeMethod<void>('revealAreaRecordingRegion');
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.revealAreaRecordingRegion,
+    );
   }
 
   Future<void> clearAreaRecordingSelection() async {
-    await _nativeBridge.invokeMethod<void>('clearAreaRecordingSelection');
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.clearAreaRecordingSelection,
+    );
   }
 
   Future<void> setPreRecordingBarEnabled(bool enabled) async {
-    await _nativeBridge.invokeMethod<void>('setPreRecordingBarEnabled', {
-      'enabled': enabled,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setPreRecordingBarEnabled,
+      {'enabled': enabled},
+    );
   }
 
   /// Pushes the runtime log threshold to the native logger so the Settings
@@ -351,17 +357,17 @@ class NativeBridge {
   /// Keep this in sync with Swift `NativeLogger.setMinLevel` / the
   /// `setNativeLogLevel` handler.
   Future<void> setNativeLogLevel(String level) async {
-    await _nativeBridge.invokeMethod<void>('setNativeLogLevel', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.setNativeLogLevel, {
       'level': level,
     });
   }
 
   Future<void> showPreRecordingBar() async {
-    await _nativeBridge.invokeMethod<void>('showPreRecordingBar');
+    await _nativeBridge.invokeMethod<void>(NativeMethod.showPreRecordingBar);
   }
 
   Future<void> togglePreRecordingBar() async {
-    await _nativeBridge.invokeMethod<void>('togglePreRecordingBar');
+    await _nativeBridge.invokeMethod<void>(NativeMethod.togglePreRecordingBar);
   }
 
   Future<void> setPreRecordingBarVisible(bool enabled) async {
@@ -375,32 +381,36 @@ class NativeBridge {
   /// missing handler is expected and ignored rather than surfaced.
   Future<void> setAppWindowWatchActive(bool active) async {
     try {
-      await _nativeBridge.invokeMethod<void>('setAppWindowWatchActive', {
-        'active': active,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setAppWindowWatchActive,
+        {'active': active},
+      );
     } on MissingPluginException {
       // Platform without a watcher; manual refresh still works.
     }
   }
 
   Future<void> setPreRecordingBarState(Map<String, dynamic> state) async {
-    await _nativeBridge.invokeMethod<void>('setPreRecordingBarState', state);
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setPreRecordingBarState,
+      state,
+    );
   }
 
   Future<void> pauseRecording({String? sessionId}) async {
-    await _nativeBridge.invokeMethod<void>('pauseRecording', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.pauseRecording, {
       if (sessionId != null) 'sessionId': sessionId,
     });
   }
 
   Future<void> resumeRecording({String? sessionId}) async {
-    await _nativeBridge.invokeMethod<void>('resumeRecording', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.resumeRecording, {
       if (sessionId != null) 'sessionId': sessionId,
     });
   }
 
   Future<void> togglePauseRecording({String? sessionId}) async {
-    await _nativeBridge.invokeMethod<void>('togglePauseRecording', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.togglePauseRecording, {
       if (sessionId != null) 'sessionId': sessionId,
     });
   }
@@ -413,20 +423,22 @@ class NativeBridge {
   }
 
   Future<void> setCursorHighlightEnabled(bool enabled) async {
-    await _nativeBridge.invokeMethod<void>('setCursorHighlightEnabled', {
-      'enabled': enabled,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setCursorHighlightEnabled,
+      {'enabled': enabled},
+    );
   }
 
   Future<void> setOverlayLinkedToRecording(bool linked) async {
-    await _nativeBridge.invokeMethod<void>('setOverlayLinkedToRecording', {
-      'linked': linked,
-    });
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.setOverlayLinkedToRecording,
+      {'linked': linked},
+    );
   }
 
   Future<void> setCursorHighlightLinkedToRecording(bool linked) async {
     await _nativeBridge.invokeMethod<void>(
-      'setCursorHighlightLinkedToRecording',
+      NativeMethod.setCursorHighlightLinkedToRecording,
       {'linked': linked},
     );
   }
@@ -440,7 +452,7 @@ class NativeBridge {
     required double volumePercent,
     required String? sessionId,
   }) async {
-    await _nativeBridge.invokeMethod<void>('updateAudioPreview', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.updateAudioPreview, {
       if (sessionId != null) 'sessionId': sessionId,
       'gain': gainDb,
       'volume': volumePercent,
@@ -523,10 +535,11 @@ class NativeBridge {
     required String? sessionId,
   }) async {
     try {
-      await _nativeBridge.invokeMethod<void>('previewSetVoiceCleanup', {
-        if (sessionId != null) 'sessionId': sessionId,
-        'voiceCleanup': voiceCleanup.toMap(),
-      });
+      await _nativeBridge
+          .invokeMethod<void>(NativeMethod.previewSetVoiceCleanup, {
+            if (sessionId != null) 'sessionId': sessionId,
+            'voiceCleanup': voiceCleanup.toMap(),
+          });
     } on MissingPluginException {
       Log.w(
         'NativeBridge',
@@ -542,13 +555,14 @@ class NativeBridge {
     required String? cameraPath,
     required CameraCompositionState? cameraState,
   }) async {
-    await _nativeBridge.invokeMethod<void>('previewSetCameraPlacement', {
-      'projectPath': projectPath,
-      if (sessionId != null) 'sessionId': sessionId,
-      if (cameraPath != null) 'cameraPath': cameraPath,
-      'cameraPreviewChangeKind': changeKind.name,
-      ...?cameraState?.toMap(),
-    });
+    await _nativeBridge
+        .invokeMethod<void>(NativeMethod.previewSetCameraPlacement, {
+          'projectPath': projectPath,
+          if (sessionId != null) 'sessionId': sessionId,
+          if (cameraPath != null) 'cameraPath': cameraPath,
+          'cameraPreviewChangeKind': changeKind.name,
+          ...?cameraState?.toMap(),
+        });
   }
 
   /// Pushes the canvas-wide color grade to the live macOS preview. No-op on
@@ -558,7 +572,7 @@ class NativeBridge {
     required ColorGrade colorGrade,
     required String? sessionId,
   }) async {
-    await _nativeBridge.invokeMethod<void>('previewSetColorGrade', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.previewSetColorGrade, {
       'colorGrade': colorGrade.toMap(),
       if (sessionId != null) 'sessionId': sessionId,
     });
@@ -592,7 +606,7 @@ class NativeBridge {
     required String resolutionPreset,
     required String? sessionId,
   }) async {
-    await _nativeBridge.invokeMethod<void>('previewSetCanvas', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.previewSetCanvas, {
       'padding': padding,
       'cornerRadius': cornerRadius,
       'backgroundColor': backgroundColor,
@@ -636,15 +650,16 @@ class NativeBridge {
     required int height,
   }) async {
     try {
-      return await _nativeBridge.invokeMethod<String>('canvasPresetThumbnail', {
-        'presetId': presetId,
-        'palette': palette,
-        'intensity': intensity,
-        'blur': blur,
-        'seed': seed,
-        'width': width,
-        'height': height,
-      });
+      return await _nativeBridge
+          .invokeMethod<String>(NativeMethod.canvasPresetThumbnail, {
+            'presetId': presetId,
+            'palette': palette,
+            'intensity': intensity,
+            'blur': blur,
+            'seed': seed,
+            'width': width,
+            'height': height,
+          });
     } on MissingPluginException {
       return null;
     } on PlatformException {
@@ -660,7 +675,7 @@ class NativeBridge {
     required List<Clip> clips,
     required String? sessionId,
   }) async {
-    await _nativeBridge.invokeMethod<void>('previewSetClips', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.previewSetClips, {
       'clips': [for (final c in clips) c.toMap()],
       if (sessionId != null) 'sessionId': sessionId,
     });
@@ -669,7 +684,7 @@ class NativeBridge {
   Future<List<ZoomSegment>> getZoomSegments(String videoPath) async {
     try {
       final List? results = await _nativeBridge.invokeMethod<List>(
-        'getZoomSegments',
+        NativeMethod.getZoomSegments,
         {'projectPath': videoPath},
       );
       if (results == null) return [];
@@ -683,7 +698,7 @@ class NativeBridge {
   Future<List<ZoomSegment>> getManualZoomSegments(String videoPath) async {
     try {
       final List? results = await _nativeBridge.invokeMethod<List>(
-        'getManualZoomSegments',
+        NativeMethod.getManualZoomSegments,
         {'projectPath': videoPath},
       );
       if (results == null) return [];
@@ -702,7 +717,7 @@ class NativeBridge {
   ) async {
     try {
       final bool? success = await _nativeBridge
-          .invokeMethod<bool>('saveManualZoomSegments', {
+          .invokeMethod<bool>(NativeMethod.saveManualZoomSegments, {
             'projectPath': videoPath,
             'segments': segments.map((s) => s.toMap()).toList(),
           });
@@ -730,7 +745,7 @@ class NativeBridge {
     required String? sessionId,
   }) async {
     try {
-      await _nativeBridge.invokeMethod('previewSetZoomSegments', {
+      await _nativeBridge.invokeMethod(NativeMethod.previewSetZoomSegments, {
         if (sessionId != null) 'sessionId': sessionId,
         'segments': segments.map((s) {
           final map = <String, dynamic>{
@@ -898,11 +913,11 @@ class NativeBridge {
   }
 
   Future<void> revealRecordingsFolder() async {
-    await _nativeBridge.invokeMethod<void>('revealRecordingsFolder');
+    await _nativeBridge.invokeMethod<void>(NativeMethod.revealRecordingsFolder);
   }
 
   Future<void> revealTempFolder() async {
-    await _nativeBridge.invokeMethod<void>('revealTempFolder');
+    await _nativeBridge.invokeMethod<void>(NativeMethod.revealTempFolder);
   }
 
   Future<int> clearCachedRecordings() async {
@@ -1008,7 +1023,7 @@ class NativeBridge {
   /// Abandons an in-flight transcription. Safe to call when none is running.
   Future<void> cancelCaptions() async {
     try {
-      await _nativeBridge.invokeMethod<void>('cancelCaptions');
+      await _nativeBridge.invokeMethod<void>(NativeMethod.cancelCaptions);
     } on MissingPluginException {
       // Nothing to cancel on a platform without the engine.
     }
@@ -1149,7 +1164,7 @@ class NativeBridge {
     required double canvasHeight,
   }) async {
     try {
-      await _nativeBridge.invokeMethod<void>('previewSetCaptions', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.previewSetCaptions, {
         'sessionId': sessionId,
         'bitmapDirectory': bitmapDirectory,
         'cues': cues,
@@ -1164,7 +1179,7 @@ class NativeBridge {
   }
 
   Future<void> previewClose({required String sessionId}) async {
-    await _nativeBridge.invokeMethod<void>('previewClose', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.previewClose, {
       'sessionId': sessionId,
     });
   }
@@ -1177,7 +1192,7 @@ class NativeBridge {
   Future<bool> setCameraPreviewMode({required bool floating}) async {
     try {
       final result = await _nativeBridge.invokeMethod<Map>(
-        'setCameraPreviewMode',
+        NativeMethod.setCameraPreviewMode,
         {'floating': floating},
       );
       return (result?['floating'] as bool?) ?? false;
@@ -1191,7 +1206,7 @@ class NativeBridge {
 
   Future<Map<String, bool>> getPermissionStatus() async {
     final Map? result = await _nativeBridge.invokeMethod<Map>(
-      'getPermissionStatus',
+      NativeMethod.getPermissionStatus,
     );
     Log.d('NativeBridge', 'Permission status fetched', null, null, {
       'result': result,
@@ -1234,7 +1249,7 @@ class NativeBridge {
   Future<WindowsPermissionDetails?> getWindowsPermissionDetails() async {
     try {
       final Map? result = await _nativeBridge.invokeMethod<Map>(
-        'getWindowsPermissionDetails',
+        NativeMethod.getWindowsPermissionDetails,
       );
       return WindowsPermissionDetails.fromMap(result);
     } on MissingPluginException {
@@ -1247,41 +1262,45 @@ class NativeBridge {
 
   Future<bool> requestScreenRecordingPermission() async {
     final result = await _nativeBridge.invokeMethod<bool>(
-      'requestScreenRecordingPermission',
+      NativeMethod.requestScreenRecordingPermission,
     );
     return result ?? false;
   }
 
   Future<bool> requestMicrophonePermission() async {
     final result = await _nativeBridge.invokeMethod<bool>(
-      'requestMicrophonePermission',
+      NativeMethod.requestMicrophonePermission,
     );
     return result ?? false;
   }
 
   Future<bool> requestCameraPermission() async {
     final result = await _nativeBridge.invokeMethod<bool>(
-      'requestCameraPermission',
+      NativeMethod.requestCameraPermission,
     );
     return result ?? false;
   }
 
   Future<void> openAccessibilitySettings() async {
-    await _nativeBridge.invokeMethod<void>('openAccessibilitySettings');
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.openAccessibilitySettings,
+    );
   }
 
   Future<void> openSystemSettings(String pane) async {
-    await _nativeBridge.invokeMethod<void>('openSystemSettings', {
+    await _nativeBridge.invokeMethod<void>(NativeMethod.openSystemSettings, {
       'pane': pane,
     });
   }
 
   Future<void> openScreenRecordingSettings() async {
-    await _nativeBridge.invokeMethod<void>('openScreenRecordingSettings');
+    await _nativeBridge.invokeMethod<void>(
+      NativeMethod.openScreenRecordingSettings,
+    );
   }
 
   Future<void> relaunchApp() async {
-    await _nativeBridge.invokeMethod<void>('relaunchApp');
+    await _nativeBridge.invokeMethod<void>(NativeMethod.relaunchApp);
   }
 
   /// Starts an update check. Returns true when the check STARTED (results
@@ -1308,7 +1327,7 @@ class NativeBridge {
         }
       }
       final result = await _nativeBridge.invokeMethod<bool>(
-        'checkForUpdates',
+        NativeMethod.checkForUpdates,
         args,
       );
       return result ?? false;
