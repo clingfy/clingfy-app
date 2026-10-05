@@ -137,13 +137,19 @@ Current paths, re-verified 2026-09-30:
   `Capture/Export/mic_cleanup.{h,cpp}`. Export =
   `windows/runner/Encoding/mf_sink_writer_encoder.cpp` +
   `windows/runner/preview/preview_compositor.cpp`.
-- **Bridge command names are constants.** `NativeMethod` holds **100** of
+- **Bridge command names are constants.** `NativeMethod` holds **115** of
   them, one per Flutter→native method, and `native_method_names_test.dart`
   fails the build if any `invokeMethod` call in `lib/` names a method with a
-  bare string. Before PR-0d finished (2026-10-05) only 7 were constants and
-  **120 call sites across 9 files** passed literals — not the 37 in one file an
-  earlier revision of this document claimed, which came from a regex that only
-  read `native_bridge.dart` and only matched single-line calls.
+  bare string. Before PR-0d (2026-10-05) only 7 were constants and **143 call
+  sites across 10 files** passed literals.
+  
+  This number has now been wrong three times, each time because a regex was
+  trusted over a count: "37 in `native_bridge.dart`" came from a pattern that
+  read one file and only single-line calls; "120 across 9 files" came from one
+  whose generic matcher could not cross a `>`, so every
+  `invokeMethod<Map<dynamic, dynamic>>` was invisible. The figure here was
+  derived by resolving every call site to the string it actually sends and
+  counting, on both sides of the change.
 - **Durable editor state is `post/state.json`** via
   `lib/core/timeline/post_state_store.dart`, at **schema v4**. It subsumed
   `clips_state.json`, `captions_state.json` and `editor_state.json`; the bundle
@@ -216,7 +222,7 @@ Deviations from the planned layout, all deliberate and all harmless:
 | **0a** | `TimelineTimebase` extract | **Done** (#177, 2026-06-21). `ZoomEditorController` delegates at `:225`/`:233`; `frameMs` and `minDurationMs` re-export from it. |
 | **0b** | `EditCommand` + `EditSession` | **Done, but instantiated four times.** `undo()`, `redo()`, `beginBatch()`, `endBatch()` all exist and work — per domain. |
 | **0c** | `Timeline` tree + `TimelineCodec` + migrator | **Done**, migrator folded into `post_state_store.dart`. Schema now v4. |
-| **0d** | Promote inline bridge strings → constants | **Done 2026-10-05**, three years of plan-time late. 93 names promoted across **120 call sites in 9 files**, verified by proving the multiset of 121 wire strings is byte-identical before and after. The real scope was never the "37 in `native_bridge.dart`" an earlier revision recorded: `overlay_controller.dart` alone held 38. A ratchet test now fails the build on any new literal, which is the part that matters — four `previewSet*` literals had been added *after* `NativeMethod` already existed, one per feature phase. |
+| **0d** | Promote inline bridge strings → constants | **Done 2026-10-05** in two passes. 108 names promoted across **143 call sites in 10 files**, verified by resolving every call site to the string it sends and proving the multiset identical to the pre-PR-0d codebase. The first pass (#589) missed 16 literals and shipped a ratchet that could not see them: its generic matcher used `<[^>]*>`, which cannot cross a `>`, so every nested generic escaped — and its constant parser required the value on the same line, hiding 15 wrapped declarations from all four assertions. Both fixed in the follow-up. A ratchet test now fails the build on any new literal, which is the part that matters — four `previewSet*` literals had been added *after* `NativeMethod` already existed, one per feature phase. |
 
 ### `post/state.json` — schema v4, not v2
 
@@ -624,7 +630,7 @@ In rough order of user-visible value per unit of risk.
    written — it is excluded, not absent. Fixing the D2D matrix chain and deleting
    the `-E` filter in `ci.yml` is a bounded, verifiable task. Needs a Windows
    machine.
-3. ~~**Finish PR-0d.**~~ **Done 2026-10-05.** 93 names, 120 call sites, 9
+3. ~~**Finish PR-0d.**~~ **Done 2026-10-05.** 108 names, 143 call sites, 10
    files, with a ratchet test so the debt cannot regrow. The sweep also
    confirmed something worth keeping: **every** Dart method name resolves to a
    handler on at least one platform, so nothing in the bridge is dead.

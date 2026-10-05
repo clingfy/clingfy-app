@@ -16,7 +16,17 @@ import 'package:flutter_test/flutter_test.dart';
 /// `native_error_codes_sync_test.dart`, because const classes cannot be
 /// enumerated by reflection in a Flutter test.
 void main() {
-  final constDecl = RegExp(r"static const String (\w+) = '([^']+)';");
+  // `\s*` after the `=`, not a space. dart format wraps a declaration whose
+  // line would run long:
+  //
+  //     static const String setCameraOverlayHighlightStrength =
+  //         'setCameraOverlayHighlightStrength';
+  //
+  // The first version of this regex required the value on the same line, so
+  // fifteen constants — every one with a name long enough to wrap — were
+  // invisible to all four assertions below. The test reported on 100 of 115
+  // and passed.
+  final constDecl = RegExp(r"static const String (\w+) =\s*'([^']+)';");
 
   String read(String path) {
     final file = File(path);
@@ -79,10 +89,19 @@ void main() {
   /// own — this is what stops the next one.
   test('no invokeMethod call in lib/ passes an inline string literal', () {
     // `invokeMethod`, an optional generic, the paren, optional whitespace or a
-    // line break, then a quote. Matches the wrapped formatting dart format
-    // produces for long call sites.
+    // line break, then a quote.
+    //
+    // The generic is bounded on `(` rather than `>`, and that is the whole
+    // point: the first version of this test used `<[^>]*>`, which cannot cross
+    // a `>` and therefore could not see a NESTED generic. Sixteen call sites
+    // escaped through that hole — every `invokeMethod<Map<dynamic, dynamic>>`
+    // and `invokeMethod<List<dynamic>>` in the codebase, including
+    // `generateCaptions`, `previewOpen` and `getDisplays` — and the test passed
+    // anyway, which is worse than not having had it. A Dart type argument list
+    // cannot contain `(`, so `[^(]*?` matches any depth of nesting and stops at
+    // the call's own paren.
     final literalCall = RegExp(
-      '''invokeMethod(<[^>]*>)?\\(\\s*['"]''',
+      '''invokeMethod\\s*(<[^(]*?>)?\\s*\\(\\s*['"]''',
       multiLine: true,
     );
 

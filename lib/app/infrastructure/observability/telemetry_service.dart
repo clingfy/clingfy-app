@@ -8,6 +8,7 @@ import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/app/settings/settings_controller.dart';
+import 'package:clingfy/core/bridges/native_method_channel.dart';
 
 class CaptureDiagnostics {
   const CaptureDiagnostics({
@@ -237,7 +238,9 @@ class ClingfyTelemetry implements RemoteLogSink {
   }) async {
     try {
       final raw = await bridge
-          .invokeMethod<Map<dynamic, dynamic>>('getCaptureDiagnostics')
+          .invokeMethod<Map<dynamic, dynamic>>(
+            NativeMethod.getCaptureDiagnostics,
+          )
           .timeout(timeout);
       final diagnostics = CaptureDiagnostics.fromMap(raw);
       if (!diagnostics.isEmpty) {
