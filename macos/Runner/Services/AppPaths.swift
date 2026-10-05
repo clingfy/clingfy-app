@@ -60,12 +60,30 @@ enum AppPaths {
     applicationSupportRootURL().appendingPathComponent("Models", isDirectory: true)
   }
 
-  /// The ANE-specialised model bundle Core ML compiles next to the weights.
+  /// Clingfy's own slice of the Core ML ANE bundle cache.
   ///
-  /// A second, larger-than-you-expect cost of transcription that nothing in the
-  /// app has ever counted: on this developer's machine it is 259 MB against the
-  /// 600 MB of weights. Deleting the weights without this leaves most of the
-  /// footprint behind, so "freed 600 MB" would be a lie by a third.
+  /// Measured 2026-10-05, because the number this comment used to carry was
+  /// wrong and worth replacing with how to check rather than another figure.
+  /// On this machine, macOS build 25B78:
+  ///
+  ///   ~/Library/Caches/com.clingfy.clingfy.dev/com.apple.e5rt.e5bundlecache
+  ///     -> 24 KB, and only 64-byte `model.milhash` stubs
+  ///   ~/Library/Caches/com.apple.e5rt.e5bundlecache/25B78
+  ///     -> 29 MB, the actual compiled bundles
+  ///
+  /// The real blobs are in the SECOND path, which is not ours. It sits outside
+  /// every app container, is keyed by OS build, and its ten entries are named
+  /// by content hash with nothing identifying which app asked for them — any
+  /// app doing Core ML on the ANE has entries there. So it is deliberately
+  /// neither counted nor deleted: reporting it would attribute other apps'
+  /// bytes to Clingfy, and removing it would throw away their compiled models
+  /// to reclaim a cache macOS rebuilds on demand.
+  ///
+  /// What that means for the Storage screen: the compiled-cache row is honest
+  /// about what Clingfy owns and can free, and understates the true one-off
+  /// cost of a transcription by whatever the shared cache holds. That is the
+  /// right trade, but it is a trade, so do not "fix" the row by pointing it at
+  /// the shared path.
   static func compiledModelCacheDirectoryURLIfPresent() -> URL {
     cachesRootURL().appendingPathComponent(
       "com.apple.e5rt.e5bundlecache", isDirectory: true)

@@ -170,7 +170,13 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
     final confirmed = await AppDialog.confirm(
       context,
       title: l10n.storageDeleteCaptionModelConfirmTitle,
-      message: l10n.storageDeleteCaptionModelConfirmMessage,
+      // The size comes off the object rather than the string. It used to read
+      // "around 600 MB" as prose in all three locales, which is both the only
+      // place in the product that names the download size and a number that
+      // goes stale the moment the variant changes.
+      message: l10n.storageDeleteCaptionModelConfirmMessage(
+        _formatBytes(widget.controller.storage.captionModel.modelBytes),
+      ),
       confirmLabel: l10n.storageDeleteCaptionModelConfirmAction,
       cancelLabel: l10n.cancel,
     );
@@ -1133,10 +1139,13 @@ class _CaptionModelCard extends StatelessWidget {
           value: _formatBytes(info.modelBytes),
         ),
         const SizedBox(height: 8),
-        // Shown separately because it is the surprising half: Core ML compiles
-        // its own bundle beside the weights, and on a real machine that was a
-        // third of the total. A single number would look wrong to anyone who
-        // checked in Finder.
+        // Shown separately because it is a different KIND of cost: Core ML
+        // compiles its own bundle, and what lands in Clingfy's container is
+        // the part the Delete button can free. It is usually small — 24 KB of
+        // stubs on the machine this was measured on — because the compiled
+        // bundles themselves go to a shared, OS-build-keyed cache that is not
+        // ours to count or remove. Keeping the row means the total on screen
+        // and the total in Finder agree about Clingfy's own folders.
         _StorageStatRow(
           label: l10n.storageCaptionModelCompiledCache,
           value: _formatBytes(info.compiledCacheBytes),

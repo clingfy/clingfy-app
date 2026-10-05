@@ -5227,8 +5227,8 @@ abstract class AppLocalizations {
   /// No description provided for @storageDeleteCaptionModelConfirmMessage.
   ///
   /// In en, this message translates to:
-  /// **'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and around 600 MB.'**
-  String get storageDeleteCaptionModelConfirmMessage;
+  /// **'Subtitles you have already generated are kept. The next time you generate subtitles, Clingfy downloads the model again — that needs an internet connection and about {size}.'**
+  String storageDeleteCaptionModelConfirmMessage(String size);
 
   /// No description provided for @storageDeleteCaptionModelConfirmAction.
   ///

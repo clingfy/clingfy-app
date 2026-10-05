@@ -703,8 +703,11 @@ void main() {
   // ---- Speech model ------------------------------------------------------
   //
   // The model arrives on first transcription and nothing in the app had ever
-  // shown it or offered to remove it. On a real machine that was ~859 MB across
-  // two directories, invisible to the very page that charts disk usage.
+  // shown it or offered to remove it: the better part of a gigabyte of weights,
+  // invisible to the very page that charts disk usage. (An earlier version of
+  // this comment put the compiled cache at a third of that. It is not — see
+  // AppPaths.compiledModelCacheDirectoryURLIfPresent; the compiled bundles land
+  // in a shared OS cache Clingfy neither counts nor deletes.)
 
   testWidgets('the speech model card reports both buckets, not just weights', (
     tester,
@@ -819,6 +822,222 @@ void main() {
     expect(
       find.byKey(const Key('storage_delete_caption_model_button')),
       findsNothing,
+    );
+  });
+
+  // ---- Deleting the speech model ----------------------------------------
+  //
+  // The whole delete path was untested: the confirm dialog, the freed-bytes
+  // notice, the zero-bytes suppression and the MODEL_IN_USE refusal. That last
+  // one matters most — native refuses the delete while Core ML still has the
+  // weights mmapped, and the bridge deliberately lets that PlatformException
+  // escape (unlike the read, which degrades to notInstalled) so the user is
+  // told rather than left pressing a button that does nothing.
+  //
+  // Three rules for everything below, all three learned by getting them wrong.
+  // `pumpAndSettle` must NOT be used after confirming: the success notice
+  // cancels itself on a 5s Timer, and settling advances the clock past it, so
+  // the assertion sees an empty screen and reads as a broken notice. A single
+  // short pump is not enough either — the dialog's dismiss animation is still
+  // running, so its buttons are still in the tree. And the notice has to be
+  // scrolled back INTO the tree before it can be found; see [confirmDelete].
+
+  Future<void> openDeleteDialog(WidgetTester tester) async {
+    await tester.tap(
+      find.byKey(const Key('storage_delete_caption_model_button')),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  /// Confirm, let the dialog finish closing, scroll back to where the notices
+  /// live, and stop short of the 5s dismiss timer.
+  ///
+  /// The scroll back is not cosmetic. Both notices render near the TOP of the
+  /// section, above the overview card, while these tests have scrolled all the
+  /// way down to the speech-model card — and the section's scroll view is lazy,
+  /// so the notice is not merely off screen, it is not in the widget tree at
+  /// all. Asserting without coming back up reports "no notice" for a notice
+  /// that was set correctly, which is exactly the false negative that cost an
+  /// hour here.
+  Future<void> confirmDelete(WidgetTester tester) async {
+    await tester.tap(find.text('Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, 3000));
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+
+  /// Drain every timer the assertions left armed, so flutter_test's
+  /// pending-timer invariant does not fire on teardown.
+  ///
+  /// `pumpAndSettle`, not a fixed pump: the notice's own 5s dismiss timer is
+  /// the obvious one, but scrolling back up also rebuilds the usage doughnut,
+  /// and the Syncfusion chart arms its own animation timer on attach. A
+  /// 6-second pump cleared the notice and left the chart's timer pending,
+  /// which fails the test AFTER its assertions have already passed.
+  Future<void> drainTimers(WidgetTester tester) async {
+    await tester.pumpAndSettle();
+  }
+
+  /// The size in the dialog comes off `modelBytes`, not out of the string.
+  ///
+  /// Deliberately NOT the default payload: 629485189 bytes renders as exactly
+  /// "600 MB", which is the figure the three locales used to hardcode, so a
+  /// test on the default would pass whether or not the plumbing works. The
+  /// assertion matches the surrounding sentence rather than the bare size,
+  /// because the card's own Model row renders the same number.
+  testWidgets(
+    'the delete dialog names the real model size, not a fixed 600 MB',
+    (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getStorageSnapshot') {
+              return storageSnapshotPayload();
+            }
+            if (call.method == 'getCaptionModelInfo') {
+              return captionModelPayload(modelBytes: 123 * 1024 * 1024);
+            }
+            return null;
+          });
+
+      final settings = SettingsController(nativeBridge: NativeBridge.instance);
+      await pumpStorageSection(tester, settings);
+      await tester.pumpAndSettle();
+      await scrollToCaptionModelCard(tester);
+      await openDeleteDialog(tester);
+
+      expect(
+        find.textContaining('internet connection and about 123 MB'),
+        findsOneWidget,
+        reason: 'the dialog must quote the size it actually measured',
+      );
+      expect(
+        find.textContaining('and about 600 MB'),
+        findsNothing,
+        reason: 'the hardcoded figure must be gone from every locale',
+      );
+    },
+  );
+
+  testWidgets('cancelling the dialog deletes nothing', (tester) async {
+    var deleteCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload();
+          }
+          if (call.method == 'deleteCaptionModel') {
+            deleteCalls++;
+            return <String, dynamic>{'freedBytes': 1};
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+    await openDeleteDialog(tester);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(deleteCalls, 0);
+  });
+
+  testWidgets('confirming deletes and reports what was freed', (tester) async {
+    var deleteCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload();
+          }
+          if (call.method == 'deleteCaptionModel') {
+            deleteCalls++;
+            return <String, dynamic>{'freedBytes': 123 * 1024 * 1024};
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+    await openDeleteDialog(tester);
+    await confirmDelete(tester);
+
+    expect(deleteCalls, 1);
+    expect(find.textContaining('Freed 123 MB'), findsOneWidget);
+
+    await drainTimers(tester);
+  });
+
+  /// Native returns 0 when it removed nothing. Announcing "Freed 0 B" reads as
+  /// a successful delete that did nothing, so the notice is suppressed.
+  testWidgets('freeing nothing announces nothing', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload();
+          }
+          if (call.method == 'deleteCaptionModel') {
+            return <String, dynamic>{'freedBytes': 0};
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+    await openDeleteDialog(tester);
+    await confirmDelete(tester);
+
+    expect(find.textContaining('Freed'), findsNothing);
+  });
+
+  /// MODEL_IN_USE is the one error the user must see. Core ML keeps the weights
+  /// mmapped while a transcription runs, so native refuses rather than deleting
+  /// under a live pipeline — and `busy` on the card can be up to a refresh
+  /// stale, so this refusal is reachable from a button that looked enabled.
+  testWidgets('a refused delete tells the user why', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload();
+          }
+          if (call.method == 'deleteCaptionModel') {
+            throw PlatformException(
+              code: 'MODEL_IN_USE',
+              message: 'The speech model is in use right now.',
+            );
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+    await openDeleteDialog(tester);
+    await confirmDelete(tester);
+
+    expect(
+      find.textContaining('is in use right now'),
+      findsOneWidget,
+      reason: "the native message must reach the user, not a generic failure",
     );
   });
 }

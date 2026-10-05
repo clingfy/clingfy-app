@@ -949,7 +949,7 @@
   "storageCaptionModelNotDownloaded": "Încă nedescărcat. Prima dată când generezi subtitrări, Clingfy descarcă modelul de vorbire.",
   "storageDeleteCaptionModel": "Șterge modelul de vorbire",
   "storageDeleteCaptionModelConfirmTitle": "Ștergi modelul de vorbire?",
-  "storageDeleteCaptionModelConfirmMessage": "Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ 600 MB.",
+  "storageDeleteCaptionModelConfirmMessage": "Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ {size}.",
   "storageDeleteCaptionModelConfirmAction": "Șterge",
   "storageDeleteCaptionModelSuccess": "S-au eliberat {value}."
 }

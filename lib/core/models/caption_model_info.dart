@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 ///
 /// Two buckets because the weights are not the whole story: Core ML compiles an
 /// ANE-specialised bundle beside them, and on a real machine that second
-/// directory was 259 MB against 600 MB of weights. Reporting only the weights
+/// directory holds what Clingfy can free of it. Reporting only the weights
 /// would understate the footprint by a third and leave most of it behind after
 /// a delete.
 @immutable
