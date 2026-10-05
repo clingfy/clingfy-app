@@ -127,7 +127,7 @@ class RecordingSettingsController extends ChangeNotifier {
       try {
         _excludeMicFromSystemAudio =
             await _nativeBridge.invokeMethod<bool>(
-              'getExcludeMicFromSystemAudio',
+              NativeMethod.getExcludeMicFromSystemAudio,
             ) ??
             true;
         await prefs.setBool(
@@ -144,9 +144,10 @@ class RecordingSettingsController extends ChangeNotifier {
       }
     }
     try {
-      await _nativeBridge.invokeMethod<void>('setExcludeMicFromSystemAudio', {
-        'exclude': _excludeMicFromSystemAudio,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setExcludeMicFromSystemAudio,
+        {'exclude': _excludeMicFromSystemAudio},
+      );
     } catch (e, st) {
       Log.e(
         'Settings',
@@ -159,9 +160,10 @@ class RecordingSettingsController extends ChangeNotifier {
     _micEchoCancellationEnabled =
         prefs.getBool(_prefMicEchoCancellationEnabled) ?? false;
     try {
-      await _nativeBridge.invokeMethod<void>('setMicEchoCancellationEnabled', {
-        'enabled': _micEchoCancellationEnabled,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setMicEchoCancellationEnabled,
+        {'enabled': _micEchoCancellationEnabled},
+      );
     } catch (e, st) {
       Log.e(
         'Settings',
@@ -237,7 +239,7 @@ class RecordingSettingsController extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     try {
       await prefs.setInt('captureFrameRate', value);
-      await _nativeBridge.invokeMethod<void>('setCaptureFrameRate', {
+      await _nativeBridge.invokeMethod<void>(NativeMethod.setCaptureFrameRate, {
         'fps': value,
       });
     } catch (e, st) {
@@ -305,9 +307,10 @@ class RecordingSettingsController extends ChangeNotifier {
       );
     }
     try {
-      await _nativeBridge.invokeMethod<void>('setExcludeMicFromSystemAudio', {
-        'exclude': value,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setExcludeMicFromSystemAudio,
+        {'exclude': value},
+      );
     } catch (e, st) {
       Log.e(
         'Settings',
@@ -334,9 +337,10 @@ class RecordingSettingsController extends ChangeNotifier {
       );
     }
     try {
-      await _nativeBridge.invokeMethod<void>('setMicEchoCancellationEnabled', {
-        'enabled': value,
-      });
+      await _nativeBridge.invokeMethod<void>(
+        NativeMethod.setMicEchoCancellationEnabled,
+        {'enabled': value},
+      );
     } catch (e, st) {
       Log.e(
         'Settings',

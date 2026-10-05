@@ -20,7 +20,7 @@ the shape this document specified, and one of its four PRs was abandoned midway.
 
 | Phase | Planned | Reality | Shipped in |
 |---|---|---|---|
-| **0 — foundation** | one global `EditSession`, 4 PRs | built, **fragmented into four independent sessions**; PR-0d abandoned midway | 1.0.5 – 1.0.6 |
+| **0 — foundation** | one global `EditSession`, 4 PRs | built, **fragmented into four independent sessions**; PR-0d finished late | 1.0.5 – 1.0.6, PR-0d 2026-10-05 |
 | **1 — volume / normalize** | per-source gain once 1.5 lands | **half-done, and bigger than it looks.** The model has per-source `gainDb`/`normalize` (1.0.5) but is constructed nowhere in `lib/`; the UI sends one flat value; and **native pins system gain at unity by design on both platforms**. Splits into 1a (Dart scope/plumbing) and 1b (native system gain) | model 1.0.5, UI never |
 | **1.5 — audio source separation** | separate mic/system to export | **shipped**, but **additively** — `screen.mov` still carries the muxed track | 1.0.6 |
 | **2 — colour** | auto + manual grade | **shipped** both platforms; Windows diverges numerically (see §D) | 1.0.5 |
@@ -137,13 +137,13 @@ Current paths, re-verified 2026-09-30:
   `Capture/Export/mic_cleanup.{h,cpp}`. Export =
   `windows/runner/Encoding/mf_sink_writer_encoder.cpp` +
   `windows/runner/preview/preview_compositor.cpp`.
-- **Bridge command names are still mostly inline string literals** in
-  `lib/core/bridges/native_bridge.dart`. Of ~44 distinct Flutter→native method
-  names, **7** go through a `NativeMethod` constant and **37 are literals** —
-  including all **9 `previewSet*` call sites** (7 distinct names). The seven that
-  were promoted are all methods added *after* the convention existed
-  (`getCaptionModelInfo`, `identifyDisplays`, `resolveExportSize`, …), not a
-  sweep of the existing surface. See §A.
+- **Bridge command names are constants.** `NativeMethod` holds **100** of
+  them, one per Flutter→native method, and `native_method_names_test.dart`
+  fails the build if any `invokeMethod` call in `lib/` names a method with a
+  bare string. Before PR-0d finished (2026-10-05) only 7 were constants and
+  **120 call sites across 9 files** passed literals — not the 37 in one file an
+  earlier revision of this document claimed, which came from a regex that only
+  read `native_bridge.dart` and only matched single-line calls.
 - **Durable editor state is `post/state.json`** via
   `lib/core/timeline/post_state_store.dart`, at **schema v4**. It subsumed
   `clips_state.json`, `captions_state.json` and `editor_state.json`; the bundle
@@ -216,7 +216,7 @@ Deviations from the planned layout, all deliberate and all harmless:
 | **0a** | `TimelineTimebase` extract | **Done** (#177, 2026-06-21). `ZoomEditorController` delegates at `:225`/`:233`; `frameMs` and `minDurationMs` re-export from it. |
 | **0b** | `EditCommand` + `EditSession` | **Done, but instantiated four times.** `undo()`, `redo()`, `beginBatch()`, `endBatch()` all exist and work — per domain. |
 | **0c** | `Timeline` tree + `TimelineCodec` + migrator | **Done**, migrator folded into `post_state_store.dart`. Schema now v4. |
-| **0d** | Promote inline bridge strings → constants | **Barely started.** The `NativeMethod` class exists and holds **7** constants; **37** method names are still literals, including every `previewSet*`. New methods land as constants, old ones were never swept — so the convention exists without the migration. The debt also *grew* after the plan: `previewSetColorGrade`, `previewSetClips`, `previewSetCaptions` and `previewSetVoiceCleanup` were each added as literals, after `NativeMethod` already existed. |
+| **0d** | Promote inline bridge strings → constants | **Done 2026-10-05**, three years of plan-time late. 93 names promoted across **120 call sites in 9 files**, verified by proving the multiset of 121 wire strings is byte-identical before and after. The real scope was never the "37 in `native_bridge.dart`" an earlier revision recorded: `overlay_controller.dart` alone held 38. A ratchet test now fails the build on any new literal, which is the part that matters — four `previewSet*` literals had been added *after* `NativeMethod` already existed, one per feature phase. |
 
 ### `post/state.json` — schema v4, not v2
 
@@ -624,11 +624,10 @@ In rough order of user-visible value per unit of risk.
    written — it is excluded, not absent. Fixing the D2D matrix chain and deleting
    the `-E` filter in `ci.yml` is a bounded, verifiable task. Needs a Windows
    machine.
-3. **Finish PR-0d.** 37 of ~44 bridge method names in `native_bridge.dart` are
-   still literals, the 9 `previewSet*` call sites among them. Pure mechanical
-   cleanup, but do it *soon*: four of those literals were added *after*
-   `NativeMethod` existed, so the debt is actively growing, one feature phase at
-   a time.
+3. ~~**Finish PR-0d.**~~ **Done 2026-10-05.** 93 names, 120 call sites, 9
+   files, with a ratchet test so the debt cannot regrow. The sweep also
+   confirmed something worth keeping: **every** Dart method name resolves to a
+   handler on at least one platform, so nothing in the bridge is dead.
 4. **Subtitle translation.** `Caption.translatedText` already persists and
    round-trips; `generateCaptions` already proves the async + progress bridge
    shape. Needs `translateCaptions` on the bridge, the turbo-caveat enforcement

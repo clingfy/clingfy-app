@@ -94,6 +94,152 @@ abstract class NativeMethod {
   /// `MissingPluginException`, which the bridge maps to
   /// `IdentifyDisplaysResult.unsupported` so the UI hides the control.
   static const String identifyDisplays = 'identifyDisplays';
+  // The rest of the Flutter -> native surface. These carry no doc comment
+  // each because the name IS the contract and the Dart method that wraps
+  // them documents the arguments; the seven above are annotated because
+  // their payload or platform support is not obvious from the name.
+
+  // --- Recording lifecycle ---
+  static const String pauseRecording = 'pauseRecording';
+  static const String resumeRecording = 'resumeRecording';
+  static const String startRecording = 'startRecording';
+  static const String stopRecording = 'stopRecording';
+  static const String togglePauseRecording = 'togglePauseRecording';
+
+  // --- Recording settings ---
+  static const String getExcludeMicFromSystemAudio =
+      'getExcludeMicFromSystemAudio';
+  static const String getExcludeRecorderApp = 'getExcludeRecorderApp';
+  static const String setCaptureFrameRate = 'setCaptureFrameRate';
+  static const String setDisplayTargetMode = 'setDisplayTargetMode';
+  static const String setExcludeMicFromSystemAudio =
+      'setExcludeMicFromSystemAudio';
+  static const String setExcludeRecorderApp = 'setExcludeRecorderApp';
+  static const String setFileNameTemplate = 'setFileNameTemplate';
+  static const String setMicEchoCancellationEnabled =
+      'setMicEchoCancellationEnabled';
+  static const String setRecordingIndicatorPinned =
+      'setRecordingIndicatorPinned';
+  static const String setRecordingQuality = 'setRecordingQuality';
+
+  // --- Capture targets and devices ---
+  static const String setAppWindowTarget = 'setAppWindowTarget';
+  static const String setAppWindowWatchActive = 'setAppWindowWatchActive';
+  static const String setAudioSource = 'setAudioSource';
+  static const String setDisplay = 'setDisplay';
+  static const String setVideoSource = 'setVideoSource';
+
+  // --- Area selection ---
+  static const String clearAreaRecordingSelection =
+      'clearAreaRecordingSelection';
+  static const String pickAreaRecordingRegion = 'pickAreaRecordingRegion';
+  static const String revealAreaRecordingRegion = 'revealAreaRecordingRegion';
+
+  // --- Pre-recording bar ---
+  static const String setPreRecordingBarEnabled = 'setPreRecordingBarEnabled';
+  static const String setPreRecordingBarState = 'setPreRecordingBarState';
+  static const String showPreRecordingBar = 'showPreRecordingBar';
+  static const String togglePreRecordingBar = 'togglePreRecordingBar';
+
+  // --- Camera overlay ---
+  static const String setCameraOverlayBorder = 'setCameraOverlayBorder';
+  static const String setCameraOverlayBorderColor =
+      'setCameraOverlayBorderColor';
+  static const String setCameraOverlayBorderWidth =
+      'setCameraOverlayBorderWidth';
+  static const String setCameraOverlayCustomPosition =
+      'setCameraOverlayCustomPosition';
+  static const String setCameraOverlayHighlight = 'setCameraOverlayHighlight';
+  static const String setCameraOverlayHighlightStrength =
+      'setCameraOverlayHighlightStrength';
+  static const String setCameraOverlayOpacity = 'setCameraOverlayOpacity';
+  static const String setCameraOverlayPosition = 'setCameraOverlayPosition';
+  static const String setCameraOverlayRoundness = 'setCameraOverlayRoundness';
+  static const String setCameraOverlayShadow = 'setCameraOverlayShadow';
+  static const String setCameraOverlayShape = 'setCameraOverlayShape';
+  static const String setCameraOverlaySize = 'setCameraOverlaySize';
+  static const String setCameraPreviewMode = 'setCameraPreviewMode';
+  static const String setChromaKeyColor = 'setChromaKeyColor';
+  static const String setChromaKeyEnabled = 'setChromaKeyEnabled';
+  static const String setChromaKeyStrength = 'setChromaKeyStrength';
+  static const String setOverlayEnabled = 'setOverlayEnabled';
+  static const String setOverlayLinkedToRecording =
+      'setOverlayLinkedToRecording';
+  static const String setOverlayMirror = 'setOverlayMirror';
+
+  // --- Cursor ---
+  static const String setCursorHighlightEnabled = 'setCursorHighlightEnabled';
+  static const String setCursorHighlightLinkedToRecording =
+      'setCursorHighlightLinkedToRecording';
+
+  // --- Preview playback ---
+  static const String previewClose = 'previewClose';
+  static const String previewPause = 'previewPause';
+  static const String previewPeekTo = 'previewPeekTo';
+  static const String previewPlay = 'previewPlay';
+  static const String previewSeekTo = 'previewSeekTo';
+
+  // --- Preview composition ---
+  static const String canvasPresetThumbnail = 'canvasPresetThumbnail';
+  static const String previewSetCameraPlacement = 'previewSetCameraPlacement';
+  static const String previewSetCanvas = 'previewSetCanvas';
+  static const String previewSetCaptions = 'previewSetCaptions';
+  static const String previewSetClips = 'previewSetClips';
+  static const String previewSetColorGrade = 'previewSetColorGrade';
+  static const String previewSetVoiceCleanup = 'previewSetVoiceCleanup';
+  static const String previewSetZoomSegments = 'previewSetZoomSegments';
+  static const String updateAudioPreview = 'updateAudioPreview';
+
+  // --- Zoom ---
+  static const String getManualZoomSegments = 'getManualZoomSegments';
+  static const String getZoomSegments = 'getZoomSegments';
+  static const String saveManualZoomSegments = 'saveManualZoomSegments';
+
+  // --- Export ---
+  static const String cancelExport = 'cancelExport';
+  static const String exportVideo = 'exportVideo';
+  static const String processVideo = 'processVideo';
+
+  // --- Captions ---
+  static const String cancelCaptions = 'cancelCaptions';
+
+  // --- Permissions ---
+  static const String getPermissionStatus = 'getPermissionStatus';
+  static const String getWindowsPermissionDetails =
+      'getWindowsPermissionDetails';
+  static const String openAccessibilitySettings = 'openAccessibilitySettings';
+  static const String openScreenRecordingSettings =
+      'openScreenRecordingSettings';
+  static const String openSystemSettings = 'openSystemSettings';
+  static const String requestCameraPermission = 'requestCameraPermission';
+  static const String requestMicrophonePermission =
+      'requestMicrophonePermission';
+  static const String requestScreenRecordingPermission =
+      'requestScreenRecordingPermission';
+
+  // --- Files and folders ---
+  static const String chooseSaveFolder = 'chooseSaveFolder';
+  static const String getSaveFolder = 'getSaveFolder';
+  static const String getTodayLogFilePath = 'getTodayLogFilePath';
+  static const String openSaveFolder = 'openSaveFolder';
+  static const String pickImage = 'pickImage';
+  static const String resetSaveFolder = 'resetSaveFolder';
+  static const String revealFile = 'revealFile';
+  static const String revealLogsFolder = 'revealLogsFolder';
+  static const String revealRecordingsFolder = 'revealRecordingsFolder';
+  static const String revealTempFolder = 'revealTempFolder';
+  static const String revealTodayLogFile = 'revealTodayLogFile';
+
+  // --- Logging ---
+  static const String flushPendingNativeLogs = 'flushPendingNativeLogs';
+  static const String setNativeLogLevel = 'setNativeLogLevel';
+
+  // --- Localization ---
+  static const String cacheLocalizedStrings = 'cacheLocalizedStrings';
+
+  // --- Updates and app lifecycle ---
+  static const String checkForUpdates = 'checkForUpdates';
+  static const String relaunchApp = 'relaunchApp';
 }
 
 /// Method names for native → Flutter calls.
