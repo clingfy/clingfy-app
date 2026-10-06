@@ -139,6 +139,16 @@ struct PassthroughInput {
   // The `format` field above selects the container (.mp4 vs .mov).
   std::string bitrate;
 
+  // Requested export audio tier ("standard"/"high"/"best"). Copied across to
+  // RenderRequest and resolved there by ResolveAudioBitrateBps.
+  //
+  // This struct is the one the ROUTER fills; RenderRequest is built from it in
+  // export_passthrough.cpp. Both carry the field because a value added to only
+  // one of them reaches the encoder as the empty string — which the resolver
+  // reads as "standard", so the user's choice is dropped with nothing logged.
+  // That is precisely what happened on the first attempt at this change.
+  std::string audio_quality;
+
   // Requested video codec ("h264" / "hevc"). Dart has always sent this and
   // Windows always dropped it on the floor, so a user picking HEVC — which is
   // the Dart DEFAULT — silently received H.264. Empty/unknown → H.264.
