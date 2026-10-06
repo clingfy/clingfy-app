@@ -382,15 +382,6 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       .appendingPathComponent(model, isDirectory: true)
   }
 
-  /// The three compiled bundles `WhisperKit.loadModels` resolves, by name.
-  ///
-  /// Read off the resolved package, not guessed: `loadModels` calls
-  /// `ModelUtilities.detectModelURL(inFolder:named:)` for exactly these, then
-  /// throws `WhisperError.modelsUnavailable("Model file not found at …")` if any
-  /// of them is missing. A folder that has fewer than all three is not a model
-  /// this engine can load.
-  private static let requiredModelBundles = ["MelSpectrogram", "AudioEncoder", "TextDecoder"]
-
   /// The model already on disk, or nil.
   ///
   /// Presence is judged on EVERY compiled Core ML bundle the engine loads plus
@@ -405,36 +396,15 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// every time, with nothing in the UI able to recover it. All four files come
   /// from the one `HubApi.snapshot` a complete download runs, so requiring them
   /// costs a finished install nothing.
+  /// Delegates to `CaptionModelStore.isCompleteModel`, which owns the rule.
+  ///
+  /// It used to live here. The Storage card needs the same answer per variant,
+  /// and two copies of "is this model installed" would drift — invisibly, since
+  /// the symptom is a picker claiming a variant is ready and the engine then
+  /// refetching it. Behaviour is unchanged; the three tests below pin it.
   func existingModelFolder() -> URL? {
     let url = localModelFolder
-    let fm = FileManager.default
-    var isDirectory: ObjCBool = false
-    guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue
-    else { return nil }
-    for name in Self.requiredModelBundles {
-      guard Self.compiledModelExists(inFolder: url, named: name) else { return nil }
-    }
-    // The variant metadata, fetched by the same snapshot as the weights, so its
-    // absence means the download did not finish either.
-    return fm.fileExists(atPath: url.appendingPathComponent("config.json").path) ? url : nil
-  }
-
-  /// Mirrors `ModelUtilities.detectModelURL(inFolder:named:)`: a compiled
-  /// `<name>.mlmodelc`, or an uncompiled `<name>.mlpackage` whose Core ML
-  /// payload is on disk.
-  ///
-  /// Reimplemented rather than called because that helper returns a URL whether
-  /// or not anything is there — it is a path builder, not an existence check —
-  /// so asking it alone would answer "installed" for an empty folder.
-  private static func compiledModelExists(inFolder folder: URL, named name: String) -> Bool {
-    let fm = FileManager.default
-    if fm.fileExists(atPath: folder.appendingPathComponent("\(name).mlmodelc").path) {
-      return true
-    }
-    let packagePayload = folder
-      .appendingPathComponent("\(name).mlpackage")
-      .appendingPathComponent("Data/com.apple.CoreML/model.mlmodel")
-    return fm.fileExists(atPath: packagePayload.path)
+    return CaptionModelStore.isCompleteModel(at: url) ? url : nil
   }
 
   private func loadedPipeline(

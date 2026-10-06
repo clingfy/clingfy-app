@@ -157,6 +157,12 @@ void HandleCaptionModelInfo(
       flutter::EncodableValue(static_cast<int64_t>(0));
   out[flutter::EncodableValue("modelPath")] = flutter::EncodableValue("");
   out[flutter::EncodableValue("variant")] = flutter::EncodableValue("");
+  // Empty rather than absent. The Dart parser reads a missing `variants` as an
+  // empty list anyway, but answering with the key keeps this stub a complete
+  // mirror of the macOS payload — which is the whole reason it replies at all
+  // instead of letting the method go unhandled.
+  out[flutter::EncodableValue("variants")] =
+      flutter::EncodableValue(flutter::EncodableList{});
   out[flutter::EncodableValue("busy")] = flutter::EncodableValue(false);
   out[flutter::EncodableValue("loaded")] = flutter::EncodableValue(false);
   result->Success(flutter::EncodableValue(out));

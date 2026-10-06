@@ -1378,7 +1378,7 @@ TEST(StubShapesTest, CaptionModelInfoReportsNothingInstalledWithEveryKey) {
     EXPECT_TRUE(str->empty());
   }
 
-  EXPECT_EQ(map->size(), 7u) << "The full key set, so the storage page renders "
+  EXPECT_EQ(map->size(), 8u) << "The full key set, so the storage page renders "
                                 "'nothing downloaded' rather than an error.";
 }
 

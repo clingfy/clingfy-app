@@ -955,5 +955,7 @@
   "audioQuality": "Calitate audio",
   "audioQualityStandard": "Standard ({kbps} kbps)",
   "audioQualityHigh": "Înaltă ({kbps} kbps)",
-  "audioQualityBest": "Maximă ({kbps} kbps)"
+  "audioQualityBest": "Maximă ({kbps} kbps)",
+  "storageCaptionModelInUse": "în uz",
+  "storageCaptionModelIncomplete": "descărcare neterminată"
 }

@@ -2896,4 +2896,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String audioQualityBest(int kbps) {
     return 'Best ($kbps kbps)';
   }
+
+  @override
+  String get storageCaptionModelInUse => 'in use';
+
+  @override
+  String get storageCaptionModelIncomplete => 'unfinished download';
 }

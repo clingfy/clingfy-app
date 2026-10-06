@@ -100,6 +100,7 @@ void main() {
     int modelBytes = 629485189,
     int compiledCacheBytes = 271581184,
     bool busy = false,
+    List<Map<String, dynamic>>? variants,
   }) => <String, dynamic>{
     'installed': installed,
     'modelBytes': modelBytes,
@@ -108,6 +109,7 @@ void main() {
     'variant': 'openai_whisper-large-v3-v20240930_626MB',
     'busy': busy,
     'loaded': false,
+    if (variants != null) 'variants': variants,
   };
 
   Future<void> pumpStorageSection(
@@ -1038,6 +1040,182 @@ void main() {
       find.textContaining('is in use right now'),
       findsOneWidget,
       reason: "the native message must reach the user, not a generic failure",
+    );
+  });
+
+  // ---- More than one model on disk ---------------------------------------
+  //
+  // Models are variant-scoped natively, so switching downloads the new one
+  // BESIDE the old. Before this the card measured the whole tree as one number
+  // and named neither model: a user carrying 1.2 GB saw one figure, no names,
+  // and one button that removed both. These pin what they see instead.
+
+  testWidgets('two models are listed by name, with the active one marked', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload(
+              modelBytes: 700 * 1024 * 1024,
+              compiledCacheBytes: 0,
+              variants: [
+                {
+                  'variant': 'openai_whisper-large-v3-v20240930_626MB',
+                  'bytes': 626 * 1024 * 1024,
+                  'complete': true,
+                },
+                {
+                  'variant': 'openai_whisper-tiny',
+                  'bytes': 75 * 1024 * 1024,
+                  'complete': true,
+                },
+              ],
+            );
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+
+    // Each model named, vendor prefix trimmed, active one marked.
+    expect(
+      find.text('large-v3-v20240930_626MB (in use)'),
+      findsOneWidget,
+      reason: 'the user must be able to tell which model the engine uses',
+    );
+    expect(find.text('tiny'), findsOneWidget);
+    // And each carries its OWN size, not the shared total. Note the formatter
+    // keeps one decimal below 100 and drops it above, so these differ in shape.
+    expect(find.text('626 MB'), findsOneWidget);
+    expect(find.text('75.0 MB'), findsOneWidget);
+    // The anonymous single-model row is gone in this state.
+    expect(find.text('Model'), findsNothing);
+  });
+
+  testWidgets('an unfinished download is listed and labelled as such', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload(
+              variants: [
+                {
+                  'variant': 'openai_whisper-large-v3-v20240930_626MB',
+                  'bytes': 626 * 1024 * 1024,
+                  'complete': true,
+                },
+                {
+                  'variant': 'openai_whisper-medium',
+                  'bytes': 120 * 1024 * 1024,
+                  'complete': false,
+                },
+              ],
+            );
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+
+    expect(
+      find.text('medium (unfinished download)'),
+      findsOneWidget,
+      reason:
+          'bytes that cannot be loaded still occupy disk, so they are shown '
+          'rather than hidden',
+    );
+  });
+
+  /// One model is every user today, and that case must look exactly as it did.
+  testWidgets('a single model keeps the anonymous Model row', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload(
+              variants: [
+                {
+                  'variant': 'openai_whisper-large-v3-v20240930_626MB',
+                  'bytes': 626 * 1024 * 1024,
+                  'complete': true,
+                },
+              ],
+            );
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+
+    expect(find.text('Model'), findsOneWidget);
+    expect(find.text('Compiled cache'), findsOneWidget);
+    expect(find.textContaining('(in use)'), findsNothing);
+  });
+
+  /// The dialog quotes what a re-download would FETCH, which is one model.
+  /// Quoting the root total would promise roughly double.
+  testWidgets('the delete dialog quotes the active model, not both', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getStorageSnapshot') {
+            return storageSnapshotPayload();
+          }
+          if (call.method == 'getCaptionModelInfo') {
+            return captionModelPayload(
+              modelBytes: 701 * 1024 * 1024,
+              variants: [
+                {
+                  'variant': 'openai_whisper-large-v3-v20240930_626MB',
+                  'bytes': 626 * 1024 * 1024,
+                  'complete': true,
+                },
+                {
+                  'variant': 'openai_whisper-tiny',
+                  'bytes': 75 * 1024 * 1024,
+                  'complete': true,
+                },
+              ],
+            );
+          }
+          return null;
+        });
+
+    final settings = SettingsController(nativeBridge: NativeBridge.instance);
+    await pumpStorageSection(tester, settings);
+    await tester.pumpAndSettle();
+    await scrollToCaptionModelCard(tester);
+    await openDeleteDialog(tester);
+
+    expect(
+      find.textContaining('and about 626 MB'),
+      findsOneWidget,
+      reason: 'one model is refetched, so one model is the figure to quote',
+    );
+    expect(
+      find.textContaining('701 MB'),
+      findsNothing,
+      reason: 'the root total would overstate the download by both models',
     );
   });
 }
