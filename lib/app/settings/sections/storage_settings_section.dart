@@ -174,8 +174,16 @@ class _StorageSettingsSectionState extends State<StorageSettingsSection> {
       // "around 600 MB" as prose in all three locales, which is both the only
       // place in the product that names the download size and a number that
       // goes stale the moment the variant changes.
+      // The ACTIVE variant's size, not the root total. A re-download fetches
+      // one variant; with two on disk `modelBytes` roughly doubles what the
+      // next Generate would actually pull. #591 made this figure data-driven
+      // and this makes it the right datum. Falls back to the root when the
+      // active variant is not on disk, which is the single-model case.
       message: l10n.storageDeleteCaptionModelConfirmMessage(
-        _formatBytes(widget.controller.storage.captionModel.modelBytes),
+        _formatBytes(
+          widget.controller.storage.captionModel.activeVariantBytes ??
+              widget.controller.storage.captionModel.modelBytes,
+        ),
       ),
       confirmLabel: l10n.storageDeleteCaptionModelConfirmAction,
       cancelLabel: l10n.cancel,
@@ -1134,10 +1142,27 @@ class _CaptionModelCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
-        _StorageStatRow(
-          label: l10n.storageCaptionModelWeights,
-          value: _formatBytes(info.modelBytes),
-        ),
+        // One row per model once there is more than one. Models are
+        // variant-scoped on disk, so switching leaves both — and a single
+        // "Model" total then names neither and invites deleting the wrong
+        // thing. With one model (every user today) this is unchanged.
+        if (info.hasMultipleVariants)
+          for (final v in info.variants) ...[
+            _StorageStatRow(
+              label: v.variant == info.variant
+                  ? '${v.displayName} (${l10n.storageCaptionModelInUse})'
+                  : v.complete
+                  ? v.displayName
+                  : '${v.displayName} (${l10n.storageCaptionModelIncomplete})',
+              value: _formatBytes(v.bytes),
+            ),
+            const SizedBox(height: 8),
+          ]
+        else
+          _StorageStatRow(
+            label: l10n.storageCaptionModelWeights,
+            value: _formatBytes(info.modelBytes),
+          ),
         const SizedBox(height: 8),
         // Shown separately because it is a different KIND of cost: Core ML
         // compiles its own bundle, and what lands in Clingfy's container is

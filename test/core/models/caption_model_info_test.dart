@@ -34,6 +34,7 @@ void main() {
       compiledCacheBytes: 259,
       modelPath: '/m',
       variant: 'v',
+      variants: [],
       busy: false,
       loaded: false,
     );
@@ -63,6 +64,7 @@ void main() {
       compiledCacheBytes: 0,
       modelPath: '/m',
       variant: 'v',
+      variants: [],
       busy: true,
       loaded: true,
     );
@@ -75,5 +77,136 @@ void main() {
 
   test('an empty install is not deletable either', () {
     expect(CaptionModelInfo.notInstalled.canDelete, isFalse);
+  });
+
+  group('per-variant reporting', () {
+    Map<String, dynamic> payload({List<Map<String, dynamic>>? variants}) => {
+      'installed': true,
+      'modelBytes': 1200,
+      'compiledCacheBytes': 24,
+      'modelPath': '/tmp/Models',
+      'variant': 'openai_whisper-large-v3-v20240930_626MB',
+      if (variants != null) 'variants': variants,
+      'busy': false,
+      'loaded': false,
+    };
+
+    test('parses the variant list', () {
+      final info = CaptionModelInfo.fromMap(
+        payload(
+          variants: [
+            {
+              'variant': 'openai_whisper-large-v3-v20240930_626MB',
+              'bytes': 600,
+              'complete': true,
+            },
+            {'variant': 'openai_whisper-tiny', 'bytes': 75, 'complete': false},
+          ],
+        ),
+      );
+      expect(info.variants, hasLength(2));
+      expect(info.variants.first.bytes, 600);
+      expect(info.variants.first.complete, isTrue);
+      expect(info.variants.last.complete, isFalse);
+      expect(info.hasMultipleVariants, isTrue);
+    });
+
+    /// Older payloads and the Windows stub send no list. Empty is the honest
+    /// reading, and it must not throw into the settings page.
+    test('an absent or malformed list reads as empty', () {
+      expect(CaptionModelInfo.fromMap(payload()).variants, isEmpty);
+      expect(
+        CaptionModelInfo.fromMap({
+          ...payload(),
+          'variants': 'nonsense',
+        }).variants,
+        isEmpty,
+      );
+      expect(
+        CaptionModelInfo.fromMap({
+          ...payload(),
+          'variants': [42, 'x'],
+        }).variants,
+        isEmpty,
+        reason: 'non-map entries are skipped rather than crashing the parse',
+      );
+      expect(CaptionModelInfo.fromMap(payload()).hasMultipleVariants, isFalse);
+    });
+
+    /// The figure the delete dialog quotes. `modelBytes` is the whole tree, so
+    /// with two models on disk it roughly doubles what a re-download fetches.
+    test('activeVariantBytes is the active model, not the root total', () {
+      final info = CaptionModelInfo.fromMap(
+        payload(
+          variants: [
+            {
+              'variant': 'openai_whisper-large-v3-v20240930_626MB',
+              'bytes': 600,
+              'complete': true,
+            },
+            {'variant': 'openai_whisper-tiny', 'bytes': 75, 'complete': true},
+          ],
+        ),
+      );
+      expect(info.modelBytes, 1200, reason: 'the root holds both');
+      expect(
+        info.activeVariantBytes,
+        600,
+        reason: 'but one would be refetched',
+      );
+    });
+
+    test('activeVariantBytes is null when the active model is not on disk', () {
+      final info = CaptionModelInfo.fromMap(
+        payload(
+          variants: [
+            {'variant': 'openai_whisper-tiny', 'bytes': 75, 'complete': true},
+          ],
+        ),
+      );
+      expect(
+        info.activeVariantBytes,
+        isNull,
+        reason: 'the caller falls back to the root total in this case',
+      );
+    });
+
+    test(
+      'displayName drops the vendor prefix and keeps what distinguishes',
+      () {
+        const v = CaptionModelVariant(
+          variant: 'openai_whisper-large-v3-v20240930_626MB',
+          bytes: 1,
+          complete: true,
+        );
+        expect(v.displayName, 'large-v3-v20240930_626MB');
+        // An unprefixed name is left alone rather than mangled.
+        const other = CaptionModelVariant(
+          variant: 'custom-build',
+          bytes: 1,
+          complete: true,
+        );
+        expect(other.displayName, 'custom-build');
+      },
+    );
+
+    test('variants participate in equality', () {
+      final a = CaptionModelInfo.fromMap(
+        payload(
+          variants: [
+            {'variant': 'x', 'bytes': 1, 'complete': true},
+          ],
+        ),
+      );
+      final b = CaptionModelInfo.fromMap(
+        payload(
+          variants: [
+            {'variant': 'x', 'bytes': 2, 'complete': true},
+          ],
+        ),
+      );
+      expect(a, isNot(equals(b)));
+      expect(a.hashCode, isNot(equals(b.hashCode)));
+    });
   });
 }

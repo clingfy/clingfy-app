@@ -1024,5 +1024,7 @@
   "audioQualityHigh": "High ({kbps} kbps)",
   "@audioQualityHigh": {"placeholders": {"kbps": {"type": "int"}}},
   "audioQualityBest": "Best ({kbps} kbps)",
-  "@audioQualityBest": {"placeholders": {"kbps": {"type": "int"}}}
+  "@audioQualityBest": {"placeholders": {"kbps": {"type": "int"}}},
+  "storageCaptionModelInUse": "in use",
+  "storageCaptionModelIncomplete": "unfinished download"
 }

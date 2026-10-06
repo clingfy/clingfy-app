@@ -29,7 +29,7 @@ the shape this document specified, and one of its four PRs was abandoned midway.
 | **4 — voice cleanup** | RNNoise, macOS then Windows | **shipped both platforms.** High Quality / DeepFilterNet still unbuilt | 1.0.6 |
 | **5 — subtitles** | ASR + translate | **transcription shipped** (macOS, Apple silicon). **Translation unbuilt. Windows ASR unbuilt.** | 1.1.0, refined 1.2.0 |
 | **Export audio presets** | Standard 128 / High 192 / Best 256 | **shipped 2026-10-06 as 192 / 256 / 320**, macOS only. The plan's ladder was written believing today's default was 128 kbps; macOS has always exported 192. Windows was at 128 and is raised to 192 | 1.3.0 (unreleased) |
-| **`LocalModelManager`** | first-class, built early (§A.7) | **unbuilt as specified.** Only caption-specific `caption_model_info.dart` exists | — |
+| **`LocalModelManager`** | first-class, built early (§A.7) | **reporting half shipped 2026-10-06** (per-variant sizes, readiness, named rows). Per-variant delete, download-on-demand, hash verify and versioning still unbuilt | 1.3.0 (unreleased) |
 
 **Release dates:** 1.0.5 (2026-07-01), 1.0.6 (2026-07-22), 1.0.7 (2026-08-01),
 1.1.0 (2026-09-20), 1.2.0 (changelog 2026-09-23, published 2026-09-27).
@@ -282,17 +282,58 @@ Both held.
    Every `previewSet*` above has a Windows handler, and several went past stub to
    full parity.
 
-### A.7 Local model manager — still unbuilt
+### A.7 Local model manager — first step shipped 2026-10-06
 
 The plan called for `lib/core/models/local_model_manifest.dart` and
-`lib/core/models/model_download_manager.dart`. Neither exists. What shipped is
-caption-specific: `caption_model_info.dart`, plus the Settings › Storage screen
-(1.1.0) that reports and deletes the speech model.
+`lib/core/models/model_download_manager.dart`. Neither exists, and neither is the
+right first move. The **reporting** half shipped instead, because it turned out to
+be a hard prerequisite for the thing everyone wants next.
 
-**The gap is mostly unpaid because only one model shipped.** It becomes real the
-moment a second arrives — DeepFilterNet for High Quality cleanup, or M2M-100 for
-translation. Both of those are blocked on exactly this, so build it with whichever
-comes first rather than as a standalone task.
+**What forced it.** Scoping a Whisper quality picker found that the storage layer
+could not survive one. Models are variant-scoped natively — WhisperKit downloads
+into `Models/models/argmaxinc/whisperkit-coreml/<variant>/` — so selecting a
+second variant lands it BESIDE the first. But `CaptionModelStore.info(variant:)`
+took a variant and **ignored it**, measuring the whole `Models/` tree as one
+number, and `delete()` took no variant at all. Concretely, after one switch the
+user would see a single card reading ~1.2 GB, no model named, and one button that
+removed both. Worse, `installed` was root-bytes, so a picker reading it for
+readiness would have reported "already downloaded" immediately before a 626 MB
+fetch.
+
+**What shipped.** Per-variant *reporting*: `installedVariants()` enumerates the
+variant folders with each one's own size and whether the engine could load it;
+the payload carries a `variants` list (7 keys → 8, and both the Swift and C++
+tests that pinned the count moved with it); the Storage card lists one row per
+model, names them, marks the active one and labels an unfinished download; and
+the delete confirmation quotes the ACTIVE variant's size rather than the root
+total, which with two models on disk overstated the re-download by roughly
+double.
+
+**One definition of "installed", finally.** The strict rule — all three compiled
+bundles plus `config.json` — moved from `WhisperKitTranscriber` into
+`CaptionModelStore.isCompleteModel`, and the transcriber delegates. Two copies
+would have drifted, and the drift is invisible: the symptom is a picker promising
+a variant is ready and the engine refetching it. Note that `installed`
+(root-bytes, "there are bytes to free") and `complete` (loadable) still disagree
+for exactly one state, a half-finished download, and both answers remain right
+for their own question. Pinned by test; do not unify them.
+
+**Still unbuilt**, and genuinely waiting for a second model rather than for
+nothing: per-variant *delete* (which has to decide where the out-of-folder
+tokenizer repo and the app-wide ANE cache are attributed), download-on-demand
+with progress outside a transcription job, hash verification, versioning, offline
+state, and per-model licence notes. The runtime half is separate again:
+`CaptionsService.transcriber` is a `private let` built once and deliberately not
+lazy, because a non-atomic lazy init once handed two threads different engines
+and freed 730 MB while Core ML still had it mapped. A variant picker has to
+rebuild or reassign that engine, and every `MODEL_IN_USE` gate currently assumes
+there is one.
+
+**Trap for whoever builds the picker:** in WhisperKit a `_turbo` SUFFIX means an
+extra context-prefill model, not OpenAI's turbo release, and those variants are
+dead download weight. The plan's prose name `large-v3-turbo` maps to the string
+`openai_whisper-large-v3-v20240930_626MB`. A picker offering a `_turbo`-suffixed
+variant would ship the wrong thing while looking correct.
 
 ## B. Phased roadmap — outcome per phase
 

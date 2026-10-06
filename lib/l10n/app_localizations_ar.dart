@@ -2880,4 +2880,10 @@ class AppLocalizationsAr extends AppLocalizations {
   String audioQualityBest(int kbps) {
     return 'الأفضل ($kbps كيلوبت/ث)';
   }
+
+  @override
+  String get storageCaptionModelInUse => 'قيد الاستخدام';
+
+  @override
+  String get storageCaptionModelIncomplete => 'تنزيل غير مكتمل';
 }

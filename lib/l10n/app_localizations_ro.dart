@@ -2932,4 +2932,10 @@ class AppLocalizationsRo extends AppLocalizations {
   String audioQualityBest(int kbps) {
     return 'Maximă ($kbps kbps)';
   }
+
+  @override
+  String get storageCaptionModelInUse => 'în uz';
+
+  @override
+  String get storageCaptionModelIncomplete => 'descărcare neterminată';
 }

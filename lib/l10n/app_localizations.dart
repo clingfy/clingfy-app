@@ -5265,6 +5265,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Best ({kbps} kbps)'**
   String audioQualityBest(int kbps);
+
+  /// No description provided for @storageCaptionModelInUse.
+  ///
+  /// In en, this message translates to:
+  /// **'in use'**
+  String get storageCaptionModelInUse;
+
+  /// No description provided for @storageCaptionModelIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'unfinished download'**
+  String get storageCaptionModelIncomplete;
 }
 
 class _AppLocalizationsDelegate

@@ -955,5 +955,7 @@
   "audioQuality": "جودة الصوت",
   "audioQualityStandard": "عادية ({kbps} كيلوبت/ث)",
   "audioQualityHigh": "عالية ({kbps} كيلوبت/ث)",
-  "audioQualityBest": "الأفضل ({kbps} كيلوبت/ث)"
+  "audioQualityBest": "الأفضل ({kbps} كيلوبت/ث)",
+  "storageCaptionModelInUse": "قيد الاستخدام",
+  "storageCaptionModelIncomplete": "تنزيل غير مكتمل"
 }
