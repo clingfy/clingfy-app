@@ -37,6 +37,7 @@ final class ExportEngineTests: XCTestCase {
       writesSubtitleSidecars: false,
       codec: "hevc",
       bitrate: "auto",
+      audioQuality: "standard",
       audioGainDb: 0,
       audioVolumePercent: 100,
       autoNormalizeOnExport: false,

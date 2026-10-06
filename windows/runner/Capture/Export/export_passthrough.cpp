@@ -597,6 +597,7 @@ PassthroughResult ExportPassthroughCopy(
       render.system_audio_path = *read.project->system_audio_path;
     }
     render.bitrate = input.bitrate;
+    render.audio_quality = input.audio_quality;
     render.codec = input.codec;
     // Phase 8.2/8.3: cursor + zoom share the sidecar path; set it when EITHER is
     // active so each feature can read it independently.

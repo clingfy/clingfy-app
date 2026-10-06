@@ -1910,7 +1910,9 @@ final class LetterboxExporter {
   /// SOURCE track instead of the historic 44.1kHz hardcode: capture writes
   /// 48kHz (typically), Windows exports 48kHz, and the old constant forced a
   /// pointless 48→44.1 resample into every manual-path export.
-  private func manualAudioWriterSettings(sourceTracks: [AVAssetTrack]) -> [String: Any] {
+  private func manualAudioWriterSettings(
+    sourceTracks: [AVAssetTrack], audioQuality: String
+  ) -> [String: Any] {
     let channels = 2
     let sampleRate = Self.aacWriterSampleRate(for: sourceTracks)
     return [
@@ -1920,8 +1922,8 @@ final class LetterboxExporter {
       // Was a flat 192_000. A 16 kHz source cannot carry 96 kbps per channel,
       // and the encoder only says so on the first append, as
       // -11861 "Cannot Encode Media".
-      AVEncoderBitRateKey: AACEncoderSettings.bitRate(
-        sampleRate: sampleRate, channels: channels),
+      AVEncoderBitRateKey: AACEncoderSettings.exportBitRate(
+        sampleRate: sampleRate, channels: channels, quality: audioQuality),
     ]
   }
 
@@ -2108,6 +2110,7 @@ final class LetterboxExporter {
     keptRanges: [ClipKeptRange] = [],
     captionBitmapDirectory: String? = nil,
     captions: [CaptionCueTrack.Cue] = [],
+    audioQuality: String,
     audioAsset: AVAsset? = nil,
     useAllAudioSourceTracks: Bool = false,
     editedDurationSeconds: Double? = nil,
@@ -2383,7 +2386,8 @@ final class LetterboxExporter {
 
       let candidateInput = AVAssetWriterInput(
         mediaType: .audio,
-        outputSettings: manualAudioWriterSettings(sourceTracks: audioSourceTracks)
+        outputSettings: manualAudioWriterSettings(
+          sourceTracks: audioSourceTracks, audioQuality: audioQuality)
       )
       candidateInput.expectsMediaDataInRealTime = false
 
@@ -3095,6 +3099,7 @@ final class LetterboxExporter {
     format: String,
     codec: String,
     bitrate: String,
+    audioQuality: String,
     fitMode: String? = nil,
     audioGainDb: Double = 0.0,
     audioVolumePercent: Double = 100.0,
@@ -3699,6 +3704,7 @@ final class LetterboxExporter {
           keptRanges: keptRanges,
           captionBitmapDirectory: captionBitmapDirectory,
           captions: captions,
+          audioQuality: audioQuality,
           audioAsset: audioCutComposition,
           useAllAudioSourceTracks: separatedComposition != nil,
           editedDurationSeconds: editedDurationSeconds,
@@ -4288,6 +4294,10 @@ final class LetterboxExporter {
     captionBitmapDirectory: String? = nil,
     captions: [CaptionCueTrack.Cue] = [],
     keptRanges: [ClipKeptRange] = [],
+    // Defaulted only here: this is a test seam, so a default cannot mask a
+    // user's choice the way one on the production path could. Tests that care
+    // about the tier pass it explicitly.
+    audioQuality: String = "standard",
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     // Unconditional, exactly like production. This helper used to carry its own
@@ -4311,6 +4321,7 @@ final class LetterboxExporter {
       keptRanges: keptRanges,
       captionBitmapDirectory: captionBitmapDirectory,
       captions: captions,
+      audioQuality: audioQuality,
       completion: completion
     )
   }

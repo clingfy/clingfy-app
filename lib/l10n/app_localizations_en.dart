@@ -2878,4 +2878,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String storageDeleteCaptionModelSuccess(String value) {
     return 'Freed $value.';
   }
+
+  @override
+  String get audioQuality => 'Audio quality';
+
+  @override
+  String audioQualityStandard(int kbps) {
+    return 'Standard ($kbps kbps)';
+  }
+
+  @override
+  String audioQualityHigh(int kbps) {
+    return 'High ($kbps kbps)';
+  }
+
+  @override
+  String audioQualityBest(int kbps) {
+    return 'Best ($kbps kbps)';
+  }
 }

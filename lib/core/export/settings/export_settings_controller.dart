@@ -9,16 +9,19 @@ class ExportSettingsController extends ChangeNotifier {
   String _exportCodec = ExportCodec.hevc.wireValue;
   String _exportBitrate = ExportBitratePreset.auto.wireValue;
   String _gifSize = GifSizePreset.large.wireValue;
+  String _audioQuality = AudioQuality.standard.wireValue;
 
   String get exportFormat => _exportFormat;
   String get exportCodec => _exportCodec;
   String get exportBitrate => _exportBitrate;
   String get gifSize => _gifSize;
+  String get audioQuality => _audioQuality;
   ExportFormat get exportFormatType => exportFormatFromWire(_exportFormat);
   ExportCodec get exportCodecType => exportCodecFromWire(_exportCodec);
   ExportBitratePreset get exportBitrateType =>
       exportBitratePresetFromWire(_exportBitrate);
   GifSizePreset get gifSizeType => gifSizePresetFromWire(_gifSize);
+  AudioQuality get audioQualityType => audioQualityFromWire(_audioQuality);
 
   Future<void> loadPreferences(SharedPreferences prefs) async {
     _exportFormat = exportFormatFromWire(
@@ -31,6 +34,9 @@ class ExportSettingsController extends ChangeNotifier {
       prefs.getString('exportBitrate'),
     ).wireValue;
     _gifSize = gifSizePresetFromWire(prefs.getString('gifSize')).wireValue;
+    _audioQuality = audioQualityFromWire(
+      prefs.getString('audioQuality'),
+    ).wireValue;
     notifyListeners();
   }
 
@@ -109,5 +115,25 @@ class ExportSettingsController extends ChangeNotifier {
 
   Future<void> updateGifSizeType(GifSizePreset value) async {
     await updateGifSize(value.wireValue);
+  }
+
+  Future<void> updateAudioQuality(String value) async {
+    final next = audioQualityFromWire(
+      value,
+      fallback: audioQualityType,
+    ).wireValue;
+    if (next == _audioQuality) return;
+    _audioQuality = next;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setString('audioQuality', next);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist export audio quality', e, st);
+    }
+  }
+
+  Future<void> updateAudioQualityType(AudioQuality value) async {
+    await updateAudioQuality(value.wireValue);
   }
 }

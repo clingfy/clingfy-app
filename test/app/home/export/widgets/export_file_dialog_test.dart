@@ -7,6 +7,7 @@ import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 void main() {
@@ -15,6 +16,7 @@ void main() {
   Widget buildDialog({
     ExportFormat initialExportFormat = ExportFormat.mov,
     GifSizePreset initialGifSize = GifSizePreset.large,
+    AudioQuality initialAudioQuality = AudioQuality.standard,
   }) {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -33,6 +35,7 @@ void main() {
             initialExportCodec: ExportCodec.hevc,
             initialExportBitrate: ExportBitratePreset.auto,
             initialGifSize: initialGifSize,
+            initialAudioQuality: initialAudioQuality,
             onPickFolder: () async => null,
           ),
         ),
@@ -137,6 +140,7 @@ void main() {
                     initialExportCodec: ExportCodec.hevc,
                     initialExportBitrate: ExportBitratePreset.auto,
                     initialGifSize: GifSizePreset.large,
+                    initialAudioQuality: AudioQuality.standard,
                     onPickFolder: () async => null,
                   );
                 },
@@ -219,5 +223,85 @@ void main() {
     );
 
     expect(dialogMaterial.color, expectedBackground);
+  });
+
+  // ---- Audio quality ----------------------------------------------------
+  //
+  // The picker is macOS-only on purpose. Windows resolves every tier to the
+  // same 192 kbps today, because the Media Foundation AAC encoder's accepted
+  // (rate, channels, bitrate) matrix has not been measured on Windows hardware
+  // and it refuses out-of-matrix values late, as an opaque HRESULT from
+  // AddStream. Three labels for one outcome is not a choice, so the control is
+  // hidden there — the same call Voice Cleanup made about its own unbuilt
+  // tier. The platform is pinned rather than inherited from the host so both
+  // branches are asserted deliberately.
+
+  tearDown(() => debugPlatformKindOverride = null);
+
+  testWidgets('macOS offers the three tiers, labelled with their bitrates', (
+    tester,
+  ) async {
+    debugPlatformKindOverride = PlatformKind.macos;
+    await tester.pumpWidget(buildDialog());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio quality'), findsOneWidget);
+    final dropdown = tester.widget<PlatformDropdown<AudioQuality>>(
+      find.byWidgetPredicate(
+        (widget) => widget is PlatformDropdown<AudioQuality>,
+      ),
+    );
+    // The kbps in each label comes off AudioQuality.targetKbps, so a label
+    // that disagrees with the native ceiling fails here rather than shipping.
+    expect(dropdown.items.map((i) => i.label).toList(), [
+      'Standard (192 kbps)',
+      'High (256 kbps)',
+      'Best (320 kbps)',
+    ]);
+    expect(dropdown.value, AudioQuality.standard);
+  });
+
+  testWidgets('Windows hides it rather than offering three identical tiers', (
+    tester,
+  ) async {
+    debugPlatformKindOverride = PlatformKind.windows;
+    await tester.pumpWidget(buildDialog());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio quality'), findsNothing);
+    expect(
+      find.byWidgetPredicate((w) => w is PlatformDropdown<AudioQuality>),
+      findsNothing,
+    );
+    // The video controls are still there — only the audio tier is gated.
+    expect(find.text('Bitrate'), findsOneWidget);
+  });
+
+  testWidgets('GIF hides it on macOS too, because GIF has no audio track', (
+    tester,
+  ) async {
+    debugPlatformKindOverride = PlatformKind.macos;
+    await tester.pumpWidget(buildDialog(initialExportFormat: ExportFormat.gif));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio quality'), findsNothing);
+    expect(find.text('Size'), findsOneWidget, reason: 'the GIF control shows');
+  });
+
+  testWidgets('the chosen tier comes back in the result', (tester) async {
+    debugPlatformKindOverride = PlatformKind.macos;
+    await tester.pumpWidget(
+      buildDialog(initialAudioQuality: AudioQuality.best),
+    );
+    await tester.pumpAndSettle();
+
+    final dropdown = tester.widget<PlatformDropdown<AudioQuality>>(
+      find.byWidgetPredicate((w) => w is PlatformDropdown<AudioQuality>),
+    );
+    expect(
+      dropdown.value,
+      AudioQuality.best,
+      reason: 'the dialog must open on the stored preference, not the default',
+    );
   });
 }

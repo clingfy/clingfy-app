@@ -2914,4 +2914,22 @@ class AppLocalizationsRo extends AppLocalizations {
   String storageDeleteCaptionModelSuccess(String value) {
     return 'S-au eliberat $value.';
   }
+
+  @override
+  String get audioQuality => 'Calitate audio';
+
+  @override
+  String audioQualityStandard(int kbps) {
+    return 'Standard ($kbps kbps)';
+  }
+
+  @override
+  String audioQualityHigh(int kbps) {
+    return 'Înaltă ($kbps kbps)';
+  }
+
+  @override
+  String audioQualityBest(int kbps) {
+    return 'Maximă ($kbps kbps)';
+  }
 }

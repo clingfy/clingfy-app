@@ -11,6 +11,24 @@ enum ExportBitratePreset { auto, low, medium, high }
 /// parity, so dimension is the size lever, not frame rate.
 enum GifSizePreset { small, medium, large }
 
+/// Export audio quality: the AAC bitrate ceiling for the exported mix.
+///
+/// A CEILING, not a fixed rate, and that distinction is the whole design.
+/// AAC-LC rejects a bitrate its sample rate cannot carry, and it rejects it
+/// late and opaquely — `AVAssetWriter.canAdd` and `startWriting()` both
+/// succeed and the encoder only fails on the first appended sample buffer, as
+/// `-11861 "Cannot Encode Media"`. So a recording made on a 16 kHz Bluetooth
+/// headset mic still encodes at what 16 kHz allows no matter which tier the
+/// user picks; the tier only raises the ceiling for sources that can use it.
+/// See `macos/Runner/Capture/Audio/AACEncoderSettings.swift`.
+///
+/// `standard` is what macOS has exported since the beginning, so taking the
+/// default never changes an existing user's output. The roadmap's original
+/// ladder (128/192/256) was written believing today's default was 128 kbps; it
+/// is 192 on macOS, and shipping that ladder with `standard` as the default
+/// would have quietly downgraded every Mac export.
+enum AudioQuality { standard, high, best }
+
 ExportFormat exportFormatFromWire(
   String? raw, {
   ExportFormat fallback = ExportFormat.mov,
@@ -22,6 +40,22 @@ ExportFormat exportFormatFromWire(
       return ExportFormat.mp4;
     case 'gif':
       return ExportFormat.gif;
+    default:
+      return fallback;
+  }
+}
+
+AudioQuality audioQualityFromWire(
+  String? raw, {
+  AudioQuality fallback = AudioQuality.standard,
+}) {
+  switch (raw?.toLowerCase().trim()) {
+    case 'standard':
+      return AudioQuality.standard;
+    case 'high':
+      return AudioQuality.high;
+    case 'best':
+      return AudioQuality.best;
     default:
       return fallback;
   }
@@ -142,6 +176,39 @@ extension GifSizePresetWire on GifSizePreset {
         return 720;
       case GifSizePreset.large:
         return 1080;
+    }
+  }
+}
+
+extension AudioQualityWire on AudioQuality {
+  String get wireValue {
+    switch (this) {
+      case AudioQuality.standard:
+        return 'standard';
+      case AudioQuality.high:
+        return 'high';
+      case AudioQuality.best:
+        return 'best';
+    }
+  }
+
+  /// Target stereo bitrate in kbps, for labelling the control.
+  ///
+  /// Display hint only, exactly like [GifSizePresetWire.longEdgePx]. The
+  /// authoritative ceilings live natively — `AACEncoderSettings.ceiling`
+  /// (macOS) and `ResolveAudioBitrateBps` (Windows) — and these must stay in
+  /// sync with them. What a given export actually gets can be LOWER than this:
+  /// a low-sample-rate source is clamped, and Windows' AAC encoder MFT accepts
+  /// a narrower set of rates than Apple's, so the upper tiers are not offered
+  /// there at all rather than shown as choices that do nothing.
+  int get targetKbps {
+    switch (this) {
+      case AudioQuality.standard:
+        return 192;
+      case AudioQuality.high:
+        return 256;
+      case AudioQuality.best:
+        return 320;
     }
   }
 }

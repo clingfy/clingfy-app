@@ -82,6 +82,12 @@ final class ExportEngine {
     /// pixel cap via `GifExportPolicy.maxLongEdge(forSizePreset:)`; unknown/older
     /// values fall back to "large" (today's output). Ignored for non-GIF formats.
     var gifSize: String = "large"
+    /// Deliberately NOT defaulted, unlike `gifSize` above. A defaulted field
+    /// here is how a value parsed by the DTO reaches the engine as the default
+    /// instead of the user's choice, with no error — the failure
+    /// `ScreenRecorderFacade` documents for caption burn-in. Omitting it is a
+    /// compile error, which is the point.
+    let audioQuality: String
     let audioGainDb: Double
     let audioVolumePercent: Double
     let autoNormalizeOnExport: Bool
@@ -343,6 +349,7 @@ final class ExportEngine {
       format: renderFormat,
       codec: input.codec,
       bitrate: input.bitrate,
+      audioQuality: input.audioQuality,
       fitMode: input.fit,
       audioGainDb: clampedGainDb,
       audioVolumePercent: clampedVolumePercent,

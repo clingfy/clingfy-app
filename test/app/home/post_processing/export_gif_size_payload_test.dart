@@ -6,6 +6,9 @@ import 'package:clingfy/app/settings/settings_controller.dart';
 import 'package:clingfy/core/bridges/native_bridge.dart';
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
+import 'package:clingfy/core/export/models/export_settings_types.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/core/preview/player_controller.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
@@ -272,6 +275,99 @@ void main() {
     if (raw == null) return null;
     return [for (final e in raw) e as Map<dynamic, dynamic>];
   }
+
+  testWidgets('exportVideo payload carries the persisted audio quality', (
+    tester,
+  ) async {
+    // The arg KEYS on this payload have no ratchet (PR-0d's test covers method
+    // NAMES only), and both platforms read every audio arg with a default. So
+    // a misspelled `audioQuality` key is silent: macOS falls back to
+    // "standard" and Windows' ReadString yields "", which its resolver also
+    // treats as standard. The user picks Best, the file is 192 kbps, and
+    // nothing reports anything. That is what this asserts against.
+    await settings.export.updateAudioQualityType(AudioQuality.best);
+
+    final args = await runExportAndCapture(tester);
+
+    expect(
+      args['audioQuality'],
+      'best',
+      reason:
+          'a misspelled key or a dropped persist branch silently exports at '
+          'the standard bitrate while the UI shows Best',
+    );
+  });
+
+  /// The persist branch, exercised the only way that can catch it: by changing
+  /// the tier IN the dialog rather than pre-setting the controller.
+  ///
+  /// Pre-setting it passes whether or not `exportCurrentRecording` ever writes
+  /// `dialogResult.audioQuality` back to the controller, because the args map
+  /// reads the controller and the controller was already right. Deleting that
+  /// branch left the whole suite green until this test existed — and the bug
+  /// it hides is the user picking Best, the dialog closing, and the export
+  /// going out at Standard.
+  testWidgets('a tier chosen in the dialog reaches the payload', (
+    tester,
+  ) async {
+    debugPlatformKindOverride = PlatformKind.macos;
+    addTearDown(() => debugPlatformKindOverride = null);
+    expect(settings.export.audioQualityType, AudioQuality.standard);
+
+    String? exportedTo;
+    await tester.pumpWidget(
+      hostFor((context) {
+        unawaited(
+          post.exportCurrentRecording(context).then((p) => exportedTo = p),
+        );
+      }),
+    );
+    await tester.tap(find.text('open-export'));
+    await tester.pumpAndSettle();
+
+    // Open the tier dropdown and pick Best.
+    await tester.tap(
+      find.byWidgetPredicate((w) => w is PlatformDropdown<AudioQuality>),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Best (320 kbps)').last);
+    await tester.pumpAndSettle();
+
+    calls.clear();
+    await tester.tap(find.text('Export'));
+    await tester.pumpAndSettle();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(exportCalls, isNotEmpty, reason: 'the export must have run');
+    final args = Map<String, dynamic>.from(
+      exportCalls.last.arguments as Map<dynamic, dynamic>,
+    );
+    expect(
+      args['audioQuality'],
+      'best',
+      reason:
+          'the dialog selection must be persisted before the args are built',
+    );
+    expect(
+      settings.export.audioQualityType,
+      AudioQuality.best,
+      reason: 'and it must stick, so the next export defaults to it',
+    );
+    expect(exportedTo, isNotNull);
+  });
+
+  testWidgets('the default audio quality crosses the wire as standard', (
+    tester,
+  ) async {
+    // Not an empty key: native defaults an ABSENT key to standard, but sending
+    // nothing when the user has touched nothing would also hide a persist
+    // branch that never fires.
+    final args = await runExportAndCapture(tester);
+    expect(args['audioQuality'], 'standard');
+  });
 
   testWidgets('exportVideo payload carries the persisted GIF size (small)', (
     tester,

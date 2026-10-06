@@ -951,5 +951,9 @@
   "storageDeleteCaptionModelConfirmTitle": "Ștergi modelul de vorbire?",
   "storageDeleteCaptionModelConfirmMessage": "Subtitrările generate deja rămân. Data viitoare când generezi subtitrări, Clingfy descarcă modelul din nou — este nevoie de conexiune la internet și de aproximativ {size}.",
   "storageDeleteCaptionModelConfirmAction": "Șterge",
-  "storageDeleteCaptionModelSuccess": "S-au eliberat {value}."
+  "storageDeleteCaptionModelSuccess": "S-au eliberat {value}.",
+  "audioQuality": "Calitate audio",
+  "audioQualityStandard": "Standard ({kbps} kbps)",
+  "audioQualityHigh": "Înaltă ({kbps} kbps)",
+  "audioQualityBest": "Maximă ({kbps} kbps)"
 }

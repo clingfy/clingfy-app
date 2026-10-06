@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' hide PlatformMenuItem;
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/export/models/export_settings_types.dart';
+import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/ui/platform/widgets/resolution_preset_menu_items.dart';
 
 class ExportFileDialogResult {
@@ -19,6 +20,7 @@ class ExportFileDialogResult {
     required this.exportCodec,
     required this.exportBitrate,
     required this.gifSize,
+    required this.audioQuality,
   });
 
   final String fileName;
@@ -31,6 +33,12 @@ class ExportFileDialogResult {
   /// Chosen GIF output size. Only meaningful when [exportFormat] is
   /// [ExportFormat.gif]; the picker is hidden for video formats.
   final GifSizePreset gifSize;
+
+  /// Chosen export audio tier. Carried on every platform so the preference
+  /// round-trips, but the PICKER is macOS-only — on Windows every tier
+  /// currently resolves to the same bitrate, and three names for one outcome
+  /// is not a choice. See `ResolveAudioBitrateBps`.
+  final AudioQuality audioQuality;
 }
 
 class ExportFileDialog extends StatefulWidget {
@@ -43,12 +51,14 @@ class ExportFileDialog extends StatefulWidget {
     required this.initialExportCodec,
     required this.initialExportBitrate,
     required this.initialGifSize,
+    required this.initialAudioQuality,
     required this.onPickFolder,
   });
 
   final String initialFileName;
   final String initialDirectory;
   final ResolutionPreset initialResolutionPreset;
+  final AudioQuality initialAudioQuality;
   final ExportFormat initialExportFormat;
   final ExportCodec initialExportCodec;
   final ExportBitratePreset initialExportBitrate;
@@ -64,6 +74,7 @@ class ExportFileDialog extends StatefulWidget {
     required ExportCodec initialExportCodec,
     required ExportBitratePreset initialExportBitrate,
     required GifSizePreset initialGifSize,
+    required AudioQuality initialAudioQuality,
     required Future<String?> Function() onPickFolder,
   }) {
     return showDialog<ExportFileDialogResult>(
@@ -77,6 +88,7 @@ class ExportFileDialog extends StatefulWidget {
         initialExportCodec: initialExportCodec,
         initialExportBitrate: initialExportBitrate,
         initialGifSize: initialGifSize,
+        initialAudioQuality: initialAudioQuality,
         onPickFolder: onPickFolder,
       ),
     );
@@ -99,6 +111,7 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
   late ExportCodec _exportCodec = widget.initialExportCodec;
   late ExportBitratePreset _exportBitrate = widget.initialExportBitrate;
   late GifSizePreset _gifSize = widget.initialGifSize;
+  late AudioQuality _audioQuality = widget.initialAudioQuality;
 
   @override
   void dispose() {
@@ -126,6 +139,7 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
         exportCodec: _exportCodec,
         exportBitrate: _exportBitrate,
         gifSize: _gifSize,
+        audioQuality: _audioQuality,
       ),
     );
   }
@@ -144,224 +158,278 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 560),
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            spacing.dialog,
-            spacing.panel + 2,
-            spacing.dialog,
-            spacing.panel,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(l10n.exportVideo, style: typography.pageTitle),
-                  ),
-                  SizedBox(width: spacing.md),
-                  AppIconButton(
-                    key: _closeButtonKey,
-                    tooltip: l10n.cancel,
-                    icon: CupertinoIcons.xmark,
-                    onPressed: () => Navigator.of(context).pop(),
-                    size: 16,
-                  ),
-                ],
-              ),
-              SizedBox(height: spacing.xxl),
+        // Scrolls rather than overflows. `MainAxisSize.min` on its own meant
+        // the dialog simply grew past the screen once there were enough
+        // controls: adding the audio-quality picker overflowed it by 10 px,
+        // which the widget tests caught as a RenderFlex overflow on a 800x600
+        // surface. A short laptop screen or a larger text scale would have
+        // done the same to the controls that were already here.
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              spacing.dialog,
+              spacing.panel + 2,
+              spacing.dialog,
+              spacing.panel,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        l10n.exportVideo,
+                        style: typography.pageTitle,
+                      ),
+                    ),
+                    SizedBox(width: spacing.md),
+                    AppIconButton(
+                      key: _closeButtonKey,
+                      tooltip: l10n.cancel,
+                      icon: CupertinoIcons.xmark,
+                      onPressed: () => Navigator.of(context).pop(),
+                      size: 16,
+                    ),
+                  ],
+                ),
+                SizedBox(height: spacing.xxl),
 
-              // ── Filename + format picker ──
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _nameController,
-                      autofocus: true,
-                      onSubmitted: (_) => _submit(),
-                      decoration: InputDecoration(
-                        labelText: l10n.filename,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
+                // ── Filename + format picker ──
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _nameController,
+                        autofocus: true,
+                        onSubmitted: (_) => _submit(),
+                        decoration: InputDecoration(
+                          labelText: l10n.filename,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                       ),
                     ),
+                    SizedBox(width: spacing.md),
+                    SizedBox(
+                      width: 100,
+                      child: PlatformDropdown<ExportFormat>(
+                        value: _exportFormat,
+                        items: const [
+                          PlatformMenuItem(
+                            value: ExportFormat.mov,
+                            label: '.mov',
+                          ),
+                          PlatformMenuItem(
+                            value: ExportFormat.gif,
+                            label: '.gif',
+                          ),
+                          PlatformMenuItem(
+                            value: ExportFormat.mp4,
+                            label: '.mp4',
+                          ),
+                        ],
+                        onChanged: (v) {
+                          if (v != null) {
+                            setState(() => _exportFormat = v);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: spacing.panel - 2),
+
+                // ── Resolution / Codec / Bitrate (video) OR Size (GIF) ──
+                // Video formats expose resolution/codec/bitrate. GIF exposes none
+                // of those — it always encodes at 15 fps and a full per-frame
+                // palette, so a 4K/8K GIF would be multiple GB. Instead GIF gets a
+                // single Small/Medium/Large size control that caps its long edge,
+                // the one lever that meaningfully trades file size for sharpness.
+                if (supportsVideoEncoding) ...[
+                  _SectionLabel(label: l10n.resolution),
+                  SizedBox(height: spacing.sm),
+                  PlatformDropdown<ResolutionPreset>(
+                    value: _resolutionPreset,
+                    expand: true,
+                    items: buildResolutionPresetMenuItems(l10n),
+                    onChanged: (v) {
+                      if (v != null) setState(() => _resolutionPreset = v);
+                    },
                   ),
-                  SizedBox(width: spacing.md),
-                  SizedBox(
-                    width: 100,
-                    child: PlatformDropdown<ExportFormat>(
-                      value: _exportFormat,
-                      items: const [
+
+                  SizedBox(height: spacing.md),
+                  _SectionLabel(label: l10n.codec),
+                  SizedBox(height: spacing.sm),
+                  PlatformDropdown<ExportCodec>(
+                    value: _exportCodec,
+                    expand: true,
+                    items: [
+                      PlatformMenuItem(
+                        value: ExportCodec.hevc,
+                        label: l10n.hevc,
+                      ),
+                      PlatformMenuItem(
+                        value: ExportCodec.h264,
+                        label: l10n.h264,
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _exportCodec = v);
+                    },
+                  ),
+
+                  SizedBox(height: spacing.md),
+                  _SectionLabel(label: l10n.bitrate),
+                  SizedBox(height: spacing.sm),
+                  PlatformDropdown<ExportBitratePreset>(
+                    value: _exportBitrate,
+                    expand: true,
+                    items: [
+                      PlatformMenuItem(
+                        value: ExportBitratePreset.auto,
+                        label: l10n.auto,
+                      ),
+                      PlatformMenuItem(
+                        value: ExportBitratePreset.low,
+                        label: l10n.low,
+                      ),
+                      PlatformMenuItem(
+                        value: ExportBitratePreset.medium,
+                        label: l10n.medium,
+                      ),
+                      PlatformMenuItem(
+                        value: ExportBitratePreset.high,
+                        label: l10n.high,
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _exportBitrate = v);
+                    },
+                  ),
+                  // macOS only, and inside the video branch so GIF (which has
+                  // no audio track) never shows it. On Windows every tier
+                  // resolves to 192 kbps today, so offering three would be
+                  // three labels for one outcome -- the same call Voice Cleanup
+                  // made about its own unbuilt tier.
+                  if (isMac()) ...[
+                    SizedBox(height: spacing.md),
+                    _SectionLabel(label: l10n.audioQuality),
+                    SizedBox(height: spacing.sm),
+                    PlatformDropdown<AudioQuality>(
+                      value: _audioQuality,
+                      expand: true,
+                      items: [
                         PlatformMenuItem(
-                          value: ExportFormat.mov,
-                          label: '.mov',
+                          value: AudioQuality.standard,
+                          label: l10n.audioQualityStandard(
+                            AudioQuality.standard.targetKbps,
+                          ),
                         ),
                         PlatformMenuItem(
-                          value: ExportFormat.gif,
-                          label: '.gif',
+                          value: AudioQuality.high,
+                          label: l10n.audioQualityHigh(
+                            AudioQuality.high.targetKbps,
+                          ),
                         ),
                         PlatformMenuItem(
-                          value: ExportFormat.mp4,
-                          label: '.mp4',
+                          value: AudioQuality.best,
+                          label: l10n.audioQualityBest(
+                            AudioQuality.best.targetKbps,
+                          ),
                         ),
                       ],
                       onChanged: (v) {
-                        if (v != null) {
-                          setState(() => _exportFormat = v);
-                        }
+                        if (v != null) setState(() => _audioQuality = v);
                       },
                     ),
+                  ],
+                ] else ...[
+                  _SectionLabel(label: l10n.gifSizeLabel),
+                  SizedBox(height: spacing.sm),
+                  PlatformDropdown<GifSizePreset>(
+                    value: _gifSize,
+                    expand: true,
+                    items: [
+                      PlatformMenuItem(
+                        value: GifSizePreset.small,
+                        label: l10n.gifSizeSmall,
+                      ),
+                      PlatformMenuItem(
+                        value: GifSizePreset.medium,
+                        label: l10n.gifSizeMedium,
+                      ),
+                      PlatformMenuItem(
+                        value: GifSizePreset.large,
+                        label: l10n.gifSizeLarge,
+                      ),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) setState(() => _gifSize = v);
+                    },
+                  ),
+                  SizedBox(height: spacing.sm),
+                  Text(
+                    l10n.gifSizeCaption,
+                    style: typography.caption.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                    ),
                   ),
                 ],
-              ),
-              SizedBox(height: spacing.panel - 2),
 
-              // ── Resolution / Codec / Bitrate (video) OR Size (GIF) ──
-              // Video formats expose resolution/codec/bitrate. GIF exposes none
-              // of those — it always encodes at 15 fps and a full per-frame
-              // palette, so a 4K/8K GIF would be multiple GB. Instead GIF gets a
-              // single Small/Medium/Large size control that caps its long edge,
-              // the one lever that meaningfully trades file size for sharpness.
-              if (supportsVideoEncoding) ...[
-                _SectionLabel(label: l10n.resolution),
-                SizedBox(height: spacing.sm),
-                PlatformDropdown<ResolutionPreset>(
-                  value: _resolutionPreset,
-                  expand: true,
-                  items: buildResolutionPresetMenuItems(l10n),
-                  onChanged: (v) {
-                    if (v != null) setState(() => _resolutionPreset = v);
-                  },
-                ),
+                SizedBox(height: spacing.panel - 2),
 
-                SizedBox(height: spacing.md),
-                _SectionLabel(label: l10n.codec),
+                // ── Location ──
+                _SectionLabel(label: l10n.locationLabel),
                 SizedBox(height: spacing.sm),
-                PlatformDropdown<ExportCodec>(
-                  value: _exportCodec,
-                  expand: true,
-                  items: [
-                    PlatformMenuItem(value: ExportCodec.hevc, label: l10n.hevc),
-                    PlatformMenuItem(value: ExportCodec.h264, label: l10n.h264),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _exportCodec = v);
-                  },
-                ),
-
-                SizedBox(height: spacing.md),
-                _SectionLabel(label: l10n.bitrate),
-                SizedBox(height: spacing.sm),
-                PlatformDropdown<ExportBitratePreset>(
-                  value: _exportBitrate,
-                  expand: true,
-                  items: [
-                    PlatformMenuItem(
-                      value: ExportBitratePreset.auto,
-                      label: l10n.auto,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Container(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: spacing.md,
+                          vertical: spacing.sm + 2,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: theme.colorScheme.outline.withValues(
+                              alpha: 0.45,
+                            ),
+                          ),
+                          color: theme.colorScheme.surface,
+                        ),
+                        child: Text(
+                          location,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: typography.mono,
+                        ),
+                      ),
                     ),
-                    PlatformMenuItem(
-                      value: ExportBitratePreset.low,
-                      label: l10n.low,
-                    ),
-                    PlatformMenuItem(
-                      value: ExportBitratePreset.medium,
-                      label: l10n.medium,
-                    ),
-                    PlatformMenuItem(
-                      value: ExportBitratePreset.high,
-                      label: l10n.high,
+                    SizedBox(width: spacing.md),
+                    AppButton(
+                      label: l10n.changeButtonLabel,
+                      icon: CupertinoIcons.folder,
+                      variant: AppButtonVariant.secondary,
+                      size: AppButtonSize.regular,
+                      onPressed: _pickFolder,
                     ),
                   ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _exportBitrate = v);
-                  },
                 ),
-              ] else ...[
-                _SectionLabel(label: l10n.gifSizeLabel),
-                SizedBox(height: spacing.sm),
-                PlatformDropdown<GifSizePreset>(
-                  value: _gifSize,
-                  expand: true,
-                  items: [
-                    PlatformMenuItem(
-                      value: GifSizePreset.small,
-                      label: l10n.gifSizeSmall,
-                    ),
-                    PlatformMenuItem(
-                      value: GifSizePreset.medium,
-                      label: l10n.gifSizeMedium,
-                    ),
-                    PlatformMenuItem(
-                      value: GifSizePreset.large,
-                      label: l10n.gifSizeLarge,
-                    ),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) setState(() => _gifSize = v);
-                  },
-                ),
-                SizedBox(height: spacing.sm),
-                Text(
-                  l10n.gifSizeCaption,
-                  style: typography.caption.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                  ),
+
+                SizedBox(height: spacing.panel + 2),
+
+                // ── Actions ──
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [AppButton(label: l10n.export, onPressed: _submit)],
                 ),
               ],
-
-              SizedBox(height: spacing.panel - 2),
-
-              // ── Location ──
-              _SectionLabel(label: l10n.locationLabel),
-              SizedBox(height: spacing.sm),
-              Row(
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: spacing.md,
-                        vertical: spacing.sm + 2,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
-                          color: theme.colorScheme.outline.withValues(
-                            alpha: 0.45,
-                          ),
-                        ),
-                        color: theme.colorScheme.surface,
-                      ),
-                      child: Text(
-                        location,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: typography.mono,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: spacing.md),
-                  AppButton(
-                    label: l10n.changeButtonLabel,
-                    icon: CupertinoIcons.folder,
-                    variant: AppButtonVariant.secondary,
-                    size: AppButtonSize.regular,
-                    onPressed: _pickFolder,
-                  ),
-                ],
-              ),
-
-              SizedBox(height: spacing.panel + 2),
-
-              // ── Actions ──
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [AppButton(label: l10n.export, onPressed: _submit)],
-              ),
-            ],
+            ),
           ),
         ),
       ),

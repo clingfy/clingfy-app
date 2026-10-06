@@ -784,6 +784,11 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     // (deselected) embedded stream — the output still needs its AAC track.
     if (has_audio || separated_audio) {
       audio_config = clingfy::encoding::AudioEncoderConfig{};
+      // Was the struct default of 128 kbps, which quietly differed from the
+      // 192 kbps macOS produces for the same project. Resolved rather than
+      // assigned so the tier the user picked is honoured where it can be.
+      audio_config->avg_bitrate_bps =
+          ResolveAudioBitrateBps(request.audio_quality);
     }
     if (auto err = encoder.Open(enc_config, device, audio_config)) {
       // The sink writer binds MF_SINK_WRITER_D3D_MANAGER to this device, so

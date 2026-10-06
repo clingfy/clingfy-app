@@ -15,6 +15,57 @@ EncoderConfig ValidConfig() {
   return c;
 }
 
+// ---- AudioEncoderConfig ----------------------------------------------------
+//
+// This struct had NO test coverage at all: this file did not contain the word
+// "Audio". Its Validate() also had no bitrate range check, so an out-of-matrix
+// value reached the AAC MFT and was refused at AddStream with an opaque
+// HRESULT instead of here.
+
+AudioEncoderConfig ValidAudioConfig() {
+  AudioEncoderConfig c;
+  c.avg_bitrate_bps = 192'000;
+  return c;
+}
+
+TEST(AudioEncoderConfigTest, TheDefaultsValidate) {
+  EXPECT_FALSE(ValidAudioConfig().Validate().has_value());
+}
+
+TEST(AudioEncoderConfigTest, RejectsARateTheAacMftDoesNotTake) {
+  AudioEncoderConfig c = ValidAudioConfig();
+  c.sample_rate_hz = 22'050;
+  EXPECT_TRUE(c.Validate().has_value());
+}
+
+TEST(AudioEncoderConfigTest, RejectsAZeroBitrate) {
+  AudioEncoderConfig c = ValidAudioConfig();
+  c.avg_bitrate_bps = 0;
+  EXPECT_TRUE(c.Validate().has_value());
+}
+
+TEST(AudioEncoderConfigTest, RejectsABitrateAboveTheMftMatrix) {
+  // 320 kbps is legal on macOS and measured there; it is NOT known-good for
+  // the MF AAC encoder, so it must be refused here rather than at AddStream.
+  AudioEncoderConfig c = ValidAudioConfig();
+  c.avg_bitrate_bps = 320'000;
+  EXPECT_TRUE(c.Validate().has_value());
+}
+
+TEST(AudioEncoderConfigTest, RejectsABitrateBelowTheMftMatrix) {
+  AudioEncoderConfig c = ValidAudioConfig();
+  c.avg_bitrate_bps = 32'000;
+  EXPECT_TRUE(c.Validate().has_value());
+}
+
+TEST(AudioEncoderConfigTest, RejectsABitrateNotDivisibleByEight) {
+  // bps / 8 is integer division at both encoder sites, so a remainder is lost
+  // silently rather than reported.
+  AudioEncoderConfig c = ValidAudioConfig();
+  c.avg_bitrate_bps = 192'001;
+  EXPECT_TRUE(c.Validate().has_value());
+}
+
 TEST(MfEncoderConfigTest, ValidConfigPasses) {
   EXPECT_FALSE(ValidConfig().Validate().has_value());
 }

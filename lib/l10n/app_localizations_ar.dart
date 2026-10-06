@@ -2862,4 +2862,22 @@ class AppLocalizationsAr extends AppLocalizations {
   String storageDeleteCaptionModelSuccess(String value) {
     return 'تم تحرير $value.';
   }
+
+  @override
+  String get audioQuality => 'جودة الصوت';
+
+  @override
+  String audioQualityStandard(int kbps) {
+    return 'عادية ($kbps كيلوبت/ث)';
+  }
+
+  @override
+  String audioQualityHigh(int kbps) {
+    return 'عالية ($kbps كيلوبت/ث)';
+  }
+
+  @override
+  String audioQualityBest(int kbps) {
+    return 'الأفضل ($kbps كيلوبت/ث)';
+  }
 }

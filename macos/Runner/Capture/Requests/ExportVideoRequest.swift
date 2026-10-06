@@ -46,6 +46,11 @@ struct ExportVideoRequest: Equatable {
   /// exports render exactly as before the control existed. Ignored for non-GIF
   /// formats.
   let gifSize: String
+  /// AAC bitrate tier for the exported mix: "standard" / "high" / "best".
+  /// A CEILING, not a fixed rate — see `AACEncoderSettings.exportBitRate`.
+  /// Absent in payloads from older Flutter builds, which default to
+  /// "standard", the rate macOS has always exported.
+  let audioQuality: String
   let audioGainDb: Double
   let audioVolumePercent: Double
   let autoNormalizeOnExport: Bool
@@ -113,6 +118,7 @@ struct ExportVideoRequest: Equatable {
       codec: (args["codec"] as? String) ?? "hevc",
       bitrate: (args["bitrate"] as? String) ?? "auto",
       gifSize: (args["gifSize"] as? String) ?? "large",
+      audioQuality: (args["audioQuality"] as? String) ?? "standard",
       audioGainDb: (args["audioGainDb"] as? Double) ?? 0.0,
       audioVolumePercent: (args["audioVolumePercent"] as? Double) ?? 100.0,
       autoNormalizeOnExport: (args["autoNormalizeOnExport"] as? Bool) ?? false,

@@ -131,4 +131,55 @@ void main() {
       );
     }
   });
+
+  group('AudioQuality', () {
+    test('wire values round-trip', () {
+      for (final q in AudioQuality.values) {
+        expect(audioQualityFromWire(q.wireValue), q);
+      }
+    });
+
+    /// An absent key, an older build's payload, or anything unrecognised must
+    /// read as `standard` — the rate macOS has always exported. Anything else
+    /// would change an existing user's output on upgrade.
+    test('unknown, empty and null all fall back to standard', () {
+      expect(audioQualityFromWire(null), AudioQuality.standard);
+      expect(audioQualityFromWire(''), AudioQuality.standard);
+      expect(audioQualityFromWire('ultra'), AudioQuality.standard);
+      expect(audioQualityFromWire('auto'), AudioQuality.standard);
+    });
+
+    test('parsing is case and whitespace insensitive, like its neighbours', () {
+      expect(audioQualityFromWire('  HIGH '), AudioQuality.high);
+      expect(audioQualityFromWire('Best'), AudioQuality.best);
+    });
+
+    test('an explicit fallback is honoured', () {
+      expect(
+        audioQualityFromWire('nonsense', fallback: AudioQuality.best),
+        AudioQuality.best,
+      );
+    });
+
+    /// These are the numbers the UI prints, and they must match the native
+    /// ceilings they describe: AACEncoderSettings.exportTargetPerChannel is
+    /// 96/128/160 kbps per channel, doubled for stereo. Pinned here because a
+    /// drift between the two would be a label that lies about the file.
+    test('target rates are the advertised stereo kbps', () {
+      expect(AudioQuality.standard.targetKbps, 192);
+      expect(AudioQuality.high.targetKbps, 256);
+      expect(AudioQuality.best.targetKbps, 320);
+    });
+
+    test('the ladder only goes up', () {
+      expect(
+        AudioQuality.standard.targetKbps,
+        lessThan(AudioQuality.high.targetKbps),
+      );
+      expect(
+        AudioQuality.high.targetKbps,
+        lessThan(AudioQuality.best.targetKbps),
+      );
+    });
+  });
 }
