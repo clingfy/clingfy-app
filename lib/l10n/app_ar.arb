@@ -951,5 +951,9 @@
   "storageDeleteCaptionModelConfirmTitle": "حذف نموذج الكلام؟",
   "storageDeleteCaptionModelConfirmMessage": "تبقى الترجمات التي أنشأتها كما هي. وعند إنشاء ترجمات جديدة، سينزّل Clingfy النموذج مرة أخرى — يتطلب ذلك اتصالًا بالإنترنت ونحو {size}.",
   "storageDeleteCaptionModelConfirmAction": "حذف",
-  "storageDeleteCaptionModelSuccess": "تم تحرير {value}."
+  "storageDeleteCaptionModelSuccess": "تم تحرير {value}.",
+  "audioQuality": "جودة الصوت",
+  "audioQualityStandard": "عادية ({kbps} كيلوبت/ث)",
+  "audioQualityHigh": "عالية ({kbps} كيلوبت/ث)",
+  "audioQualityBest": "الأفضل ({kbps} كيلوبت/ث)"
 }

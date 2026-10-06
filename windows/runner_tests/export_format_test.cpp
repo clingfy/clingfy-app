@@ -40,6 +40,48 @@ TEST(FormatWasDowngradedTest, NothingIsDowngradedNow) {
 
 // ---- ResolveVideoBitrateBps -------------------------------------------------
 
+// ---- ResolveAudioBitrateBps -------------------------------------------------
+
+TEST(ResolveAudioBitrateBpsTest, StandardIsOneNinetyTwoKbpsMatchingMacOS) {
+  // The parity fix. The struct default was 128 kbps while macOS has always
+  // exported 192 kbps for the same project, and nothing documented the gap.
+  EXPECT_EQ(ResolveAudioBitrateBps("standard"), 192'000u);
+}
+
+TEST(ResolveAudioBitrateBpsTest, AnEmptyOrUnknownTierIsStandard) {
+  // ReadString has no fallback parameter, so an absent `audioQuality` key
+  // arrives as the empty string. That must mean "standard", not zero.
+  EXPECT_EQ(ResolveAudioBitrateBps(""), 192'000u);
+  EXPECT_EQ(ResolveAudioBitrateBps("ultra"), 192'000u);
+  EXPECT_EQ(ResolveAudioBitrateBps("auto"), 192'000u);
+}
+
+TEST(ResolveAudioBitrateBpsTest, IsCaseInsensitiveLikeTheOtherResolvers) {
+  EXPECT_EQ(ResolveAudioBitrateBps("HIGH"), ResolveAudioBitrateBps("high"));
+  EXPECT_EQ(ResolveAudioBitrateBps("Best"), ResolveAudioBitrateBps("best"));
+}
+
+TEST(ResolveAudioBitrateBpsTest, UpperTiersClampUntilTheMftMatrixIsProbed) {
+  // Deliberate, and the reason the audio-quality control is macOS-only: the
+  // Media Foundation AAC encoder's accepted (rate, channels, bitrate) matrix
+  // has not been measured on Windows hardware, and it refuses late with an
+  // opaque HRESULT from AddStream. macOS measured its own ceiling (320 kbps
+  // accepted at 48 kHz stereo, 384 refused) and offers the full ladder.
+  //
+  // When somebody probes the MFT, raise kAudioBitrateCeilingBps and change
+  // the expectation here — that is the whole change.
+  EXPECT_EQ(ResolveAudioBitrateBps("high"), 192'000u);
+  EXPECT_EQ(ResolveAudioBitrateBps("best"), 192'000u);
+}
+
+TEST(ResolveAudioBitrateBpsTest, EveryTierIsDivisibleByEight) {
+  // MF_MT_AUDIO_AVG_BYTES_PER_SECOND is set as bps / 8 with integer
+  // arithmetic, so a remainder is silently truncated.
+  for (const char* tier : {"standard", "high", "best", ""}) {
+    EXPECT_EQ(ResolveAudioBitrateBps(tier) % 8u, 0u) << "tier: " << tier;
+  }
+}
+
 TEST(ResolveVideoBitrateBpsTest, PresetsAreOrderedLowMedHigh) {
   const std::uint32_t low = ResolveVideoBitrateBps("low", 1920, 1080, 30);
   const std::uint32_t med = ResolveVideoBitrateBps("medium", 1920, 1080, 30);

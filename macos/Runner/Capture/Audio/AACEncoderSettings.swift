@@ -48,6 +48,74 @@ enum AACEncoderSettings {
     return perChannel * max(1, channels)
   }
 
+  /// The highest per-channel bitrate AAC-LC will actually carry at
+  /// `sampleRate`, measured rather than looked up.
+  ///
+  /// `AACBitRateProbeTests` drives the real `AVAssetWriter` at 48 kHz stereo
+  /// and finds everything up to 320 kbps accepted and 384 kbps refused — so
+  /// 160 kbps per channel. The header's 16 kHz measurements put the boundary
+  /// there between 48 and 64 kbps per channel. Both land on roughly ten thirds
+  /// of the sample rate, which is the rule used here.
+  ///
+  /// Note how much slack this leaves over [bitRate]'s `* 2`: that function is
+  /// deliberately conservative because it also feeds CAPTURE, where a wrong
+  /// guess costs a recording. This one exists for export, where the source is
+  /// already on disk and a refused tuple costs a retry.
+  static func maxLegalBitRatePerChannel(sampleRate: Double) -> Int {
+    Int(sampleRate * 10.0 / 3.0)
+  }
+
+  /// Per-channel target for an export quality tier. Stereo doubles it, so
+  /// these are the 192 / 256 / 320 kbps the UI offers.
+  ///
+  /// Unknown values fall back to `standard`, which keeps an older or malformed
+  /// payload exporting exactly what it exports today.
+  static func exportTargetPerChannel(quality wire: String) -> Int {
+    switch wire.lowercased() {
+    case "high": return 128_000
+    case "best": return 160_000
+    default: return maxBitRatePerChannel
+    }
+  }
+
+  /// The AAC bitrate for an EXPORT at `quality`.
+  ///
+  /// Separate from [bitRate] rather than a parameter on it, and that is the
+  /// whole point: [bitRate] has two production callers, one of which is the
+  /// capture writer (`SourceAudioRecorder`). Adding a tier parameter there
+  /// would put a user-facing export control one defaulted argument away from
+  /// changing how every recording is captured. The `standard` case delegates,
+  /// so the default export is byte-identical to what shipped before this
+  /// existed.
+  ///
+  /// The tier is a CEILING. A 16 kHz Bluetooth headset mic still gets what
+  /// 16 kHz can carry whichever tier is selected, because asking for more is
+  /// the `-11861` failure this file exists to prevent.
+  static func exportBitRate(sampleRate: Double, channels: Int, quality: String) -> Int {
+    let target = exportTargetPerChannel(quality: quality)
+    // `standard` is the conservative rule verbatim, so the default export is
+    // byte-identical to what shipped before the tiers existed.
+    if target <= maxBitRatePerChannel {
+      return bitRate(sampleRate: sampleRate, channels: channels)
+    }
+    // Raise the ceiling ONLY at the rate whose ceiling was actually measured.
+    //
+    // `AACBitRateProbeTests` measured 48 kHz: up to 320 kbps accepted, 384
+    // refused. Below that, the only data points are the header's 16 kHz
+    // measurements — 96 kbps total accepted, 128 kbps refused — which leaves a
+    // band in between that nothing has tested. Interpolating into it would put
+    // a guess on the path whose failure mode is an export that dies on the
+    // first sample buffer with `-11861`, so a sub-48 kHz source keeps the
+    // conservative rate whichever tier is chosen. A 16 kHz headset recording
+    // simply cannot carry 320 kbps, and saying so costs nothing.
+    guard sampleRate >= defaultSampleRate else {
+      return bitRate(sampleRate: sampleRate, channels: channels)
+    }
+    let legal = maxLegalBitRatePerChannel(sampleRate: sampleRate)
+    let perChannel = min(target, max(minBitRatePerChannel, legal))
+    return perChannel * max(1, channels)
+  }
+
   /// Output sample rate for a mix of `tracks`: the **highest** supported rate
   /// among them, never simply the first.
   ///

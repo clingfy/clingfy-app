@@ -28,7 +28,7 @@ the shape this document specified, and one of its four PRs was abandoned midway.
 | **3.5 — audio format normalization** | 48 kHz float32 internal | **shipped**; Windows non-48 kHz inputs now work | 1.1.0 |
 | **4 — voice cleanup** | RNNoise, macOS then Windows | **shipped both platforms.** High Quality / DeepFilterNet still unbuilt | 1.0.6 |
 | **5 — subtitles** | ASR + translate | **transcription shipped** (macOS, Apple silicon). **Translation unbuilt. Windows ASR unbuilt.** | 1.1.0, refined 1.2.0 |
-| **Export audio presets** | Standard / High / Best | **unbuilt.** No bitrate preset exists in `lib/core/export/` | — |
+| **Export audio presets** | Standard 128 / High 192 / Best 256 | **shipped 2026-10-06 as 192 / 256 / 320**, macOS only. The plan's ladder was written believing today's default was 128 kbps; macOS has always exported 192. Windows was at 128 and is raised to 192 | 1.3.0 (unreleased) |
 | **`LocalModelManager`** | first-class, built early (§A.7) | **unbuilt as specified.** Only caption-specific `caption_model_info.dart` exists | — |
 
 **Release dates:** 1.0.5 (2026-07-01), 1.0.6 (2026-07-22), 1.0.7 (2026-08-01),
@@ -573,15 +573,50 @@ feature-sized task and not a schema migration.
 - `exportVideo` args gain `captions` + `subtitleMode` — **shipped**, with
   per-recording destination on top.
 
-## Export quality — UNBUILT
+## Export quality — AUDIO SHIPPED 2026-10-06
 
-No audio bitrate preset exists in `lib/core/export/`. The design stands:
+The ladder shipped, with different numbers than this section specified, because
+the premise was wrong. It said 128 kbps was "today's default, and today's only".
+It was not: `AACEncoderSettings.bitRate` yields 96 kbps per channel at 48 kHz,
+so **macOS has always exported 192 kbps**. Only Windows was at 128
+(`AudioEncoderConfig.avg_bitrate_bps`), which nobody had documented — the same
+project exported different audio quality per platform.
 
-| Preset | Audio |
-|---|---|
-| Standard | AAC 128 kbps stereo (today's default, and today's only) |
-| High | AAC 192 kbps stereo |
-| Best | AAC 256 kbps stereo |
+Shipping 128/192/256 with Standard as the default would therefore have
+**downgraded every existing macOS export** while looking like a new feature.
+
+| Preset | macOS | Windows |
+|---|---|---|
+| Standard | AAC 192 kbps stereo (unchanged from before the control existed) | 192 kbps (raised from 128 — the parity fix) |
+| High | AAC 256 kbps stereo | 192 kbps (clamped) |
+| Best | AAC 320 kbps stereo | 192 kbps (clamped) |
+
+**The tier is a ceiling, not a rate.** AAC-LC refuses a bitrate its sample rate
+cannot carry, and refuses it late — `canAdd` and `startWriting()` both succeed
+and the encoder fails on the first appended buffer as `-11861`. A recording from
+a 16 kHz Bluetooth headset mic keeps the conservative rate whichever tier is
+chosen, and `exportBitRate` only raises the ceiling at 48 kHz, the one rate
+whose ceiling was measured.
+
+**The ceilings are measured, not looked up.** `AACBitRateProbeTests` drives the
+real `AVAssetWriter`: at 48 kHz stereo everything up to 320 kbps is accepted and
+384 kbps is refused. That test is the evidence for the constants, and it asserts
+each tier individually so a regression names which one broke.
+
+**The control is macOS-only**, and that is the honest part. The Media Foundation
+AAC encoder's accepted (rate, channels, bitrate) matrix has not been measured on
+Windows hardware, and it refuses out-of-matrix values late as an opaque HRESULT
+from `AddStream`. So `ResolveAudioBitrateBps` clamps every tier to 192 kbps
+there, and offering three names for one outcome would be worse than offering
+one — the same call Voice Cleanup made about its own unbuilt `highQuality` tier.
+Raising it is a one-line change in `ResolveAudioBitrateBps` with a test already
+pinning each tier, once somebody probes the MFT.
+
+Two things fixed on the way past: `AudioEncoderConfig::Validate()` had no
+bitrate range check at all (it only rejected zero) while the MFT refuses
+out-of-range values late, and the export dialog had no height constraint, so
+adding one control overflowed it by 10 px — it now scrolls, which also protects
+the controls that were already there on a short screen.
 
 Video keeps the existing bitrate presets, with one rule: **when effects force a
 re-encode of text/UI/code-heavy screen video, default one step higher than the

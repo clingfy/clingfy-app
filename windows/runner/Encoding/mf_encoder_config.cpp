@@ -131,6 +131,23 @@ std::optional<std::string> AudioEncoderConfig::Validate() const {
     return std::string(
         "AudioEncoderConfig.avg_bitrate_bps must be > 0.");
   }
+  // The range check this struct never had. The AAC MFT accepts a narrow
+  // matrix of (rate, channels, bitrate) tuples and refuses the rest LATE, as
+  // an opaque HRESULT from AddStream, so an out-of-range value is far cheaper
+  // to catch here than to debug there.
+  if (avg_bitrate_bps < 64'000 || avg_bitrate_bps > 192'000) {
+    return std::string(
+        "AudioEncoderConfig.avg_bitrate_bps must be between 64000 and 192000; "
+        "the AAC MFT refuses rates outside its matrix, and it refuses them at "
+        "AddStream rather than here.");
+  }
+  // MF_MT_AUDIO_AVG_BYTES_PER_SECOND is set as avg_bitrate_bps / 8 with
+  // integer arithmetic, so a remainder would be silently dropped.
+  if (avg_bitrate_bps % 8 != 0) {
+    return std::string(
+        "AudioEncoderConfig.avg_bitrate_bps must be divisible by 8; the "
+        "encoder derives bytes-per-second by integer division.");
+  }
   return std::nullopt;
 }
 

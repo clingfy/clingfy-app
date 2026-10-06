@@ -5241,6 +5241,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Freed {value}.'**
   String storageDeleteCaptionModelSuccess(String value);
+
+  /// No description provided for @audioQuality.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio quality'**
+  String get audioQuality;
+
+  /// No description provided for @audioQualityStandard.
+  ///
+  /// In en, this message translates to:
+  /// **'Standard ({kbps} kbps)'**
+  String audioQualityStandard(int kbps);
+
+  /// No description provided for @audioQualityHigh.
+  ///
+  /// In en, this message translates to:
+  /// **'High ({kbps} kbps)'**
+  String audioQualityHigh(int kbps);
+
+  /// No description provided for @audioQualityBest.
+  ///
+  /// In en, this message translates to:
+  /// **'Best ({kbps} kbps)'**
+  String audioQualityBest(int kbps);
 }
 
 class _AppLocalizationsDelegate

@@ -1017,5 +1017,12 @@
         "type": "String"
       }
     }
-  }
+  },
+  "audioQuality": "Audio quality",
+  "audioQualityStandard": "Standard ({kbps} kbps)",
+  "@audioQualityStandard": {"placeholders": {"kbps": {"type": "int"}}},
+  "audioQualityHigh": "High ({kbps} kbps)",
+  "@audioQualityHigh": {"placeholders": {"kbps": {"type": "int"}}},
+  "audioQualityBest": "Best ({kbps} kbps)",
+  "@audioQualityBest": {"placeholders": {"kbps": {"type": "int"}}}
 }

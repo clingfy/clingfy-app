@@ -143,6 +143,12 @@ struct RenderRequest {
   // Requested video codec ("h264"/"hevc"). Resolved against what this machine
   // can actually encode; see EncoderConfig::codec.
   std::string codec;
+
+  // Requested export audio tier ("standard"/"high"/"best"), resolved by
+  // ResolveAudioBitrateBps. EMPTY on payloads from older Flutter builds, and
+  // the resolver treats empty as "standard" — ReadString has no fallback
+  // parameter, so the empty string is the only signal an absent key gives.
+  std::string audio_quality;
   std::function<void(double)> on_progress;
   std::function<bool()> is_cancelled;
 

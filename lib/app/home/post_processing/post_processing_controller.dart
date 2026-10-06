@@ -2583,6 +2583,7 @@ class PostProcessingController extends ChangeNotifier {
       initialExportCodec: _settings.export.exportCodecType,
       initialExportBitrate: _settings.export.exportBitrateType,
       initialGifSize: _settings.export.gifSizeType,
+      initialAudioQuality: _settings.export.audioQualityType,
       onPickFolder: _settings.workspace.chooseSaveFolderPath,
     );
 
@@ -2613,6 +2614,11 @@ class PostProcessingController extends ChangeNotifier {
 
     // Apply and persist the GIF size (only meaningful for GIF exports, but the
     // dialog always returns the current selection).
+    final chosenAudioQuality = dialogResult.audioQuality.wireValue;
+    if (chosenAudioQuality != _settings.export.audioQuality) {
+      await _settings.export.updateAudioQuality(chosenAudioQuality);
+    }
+
     final chosenGifSize = dialogResult.gifSize.wireValue;
     if (chosenGifSize != _settings.export.gifSize) {
       await _settings.export.updateGifSize(chosenGifSize);
@@ -2770,6 +2776,11 @@ class PostProcessingController extends ChangeNotifier {
         // GIF-only: long-edge size preset (small/medium/large). Native ignores
         // it for non-GIF formats. Older payloads that omit it default to large.
         'gifSize': _settings.export.gifSize,
+        // The AAC bitrate CEILING for the exported mix, not a fixed rate: a
+        // low-sample-rate source is still clamped to what it can legally
+        // carry. Older payloads that omit it default to `standard`, which is
+        // what macOS has always exported. GIF has no audio track at all.
+        'audioQuality': _settings.export.audioQuality,
         if (_cameraPath != null) 'cameraPath': _cameraPath,
         ...?_cameraState?.toMap(),
         // PR-3d: the kept clip ranges (split / cut / trim) so native bakes the
@@ -2843,6 +2854,7 @@ class PostProcessingController extends ChangeNotifier {
           'format': _settings.export.exportFormat,
           'codec': _settings.export.exportCodec,
           'bitrate': _settings.export.exportBitrate,
+          'audioQuality': _settings.export.audioQuality,
           'audioGainDb': _audioGainDb,
           'voiceCleanup': _voiceCleanup.enabled
               ? _voiceCleanup.mode.wire
@@ -2883,6 +2895,7 @@ class PostProcessingController extends ChangeNotifier {
           'format': _settings.export.exportFormat,
           'codec': _settings.export.exportCodec,
           'bitrate': _settings.export.exportBitrate,
+          'audioQuality': _settings.export.audioQuality,
           'audioGainDb': _audioGainDb,
           'voiceCleanup': _voiceCleanup.enabled
               ? _voiceCleanup.mode.wire
