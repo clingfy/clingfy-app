@@ -448,10 +448,27 @@ inconsistency.
 hardware) would be a safe reset target, which is the one thing that would make
 per-recording viable. It does not exist today, and building it is its own task.
 
-**Still open**, and the remaining product call: whether a transcript should
-record which model produced it. Nothing does today — `CaptionTrack` carries
-`language` and `sourceLanguage` but no variant — and translation will want to
-know, because the turbo caveat is a per-model capability rule.
+**Decided and shipped 2026-10-13: a transcript records which model produced
+it.** `CaptionTrack.transcribedBy`, written at generation time, null when
+unknown.
+
+Reported by NATIVE rather than chosen by Dart, and that is the load-bearing
+part: Dart sends no variant, so this side does not know what the engine loaded.
+Once the variant is selectable, "what was asked for" and "what was used" can
+differ — a requested variant that is absent, a fallback, a job that started
+before a preference changed — and the fact translation needs is what was used.
+The reply gained a third key beside `cues` and `language`, which is exactly how
+`language` itself arrived.
+
+Null is a real state and the common one: every transcript made before this has
+no record, and writing today's default into them would be the same lie
+`language` had to be fixed for. Additive, so no schema bump — a bundle without
+the key decodes to null.
+
+The subtle part is `copyWith`: a correction re-persists the same track and knows
+nothing about the model, so the field is set-only. Blanking it would mean a user
+editing one word erased the only record of what produced the transcript, and
+translation would lose its input. That case has its own test.
 
 ## B. Phased roadmap — outcome per phase
 
