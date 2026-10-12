@@ -416,11 +416,42 @@ variant. The hot-swap branch is therefore rare in production — which is good f
 risk and bad for confidence: it will not be exercised by ordinary use, so it has
 to be tested deliberately rather than trusted to show up in a smoke test.
 
-**Not yet decided**, and both are product calls rather than engineering ones:
-whether the variant is a persisted preference or per-recording (the language
-field beside it is deliberately per-recording, because a stale one "silently
-mis-transcribes the next video"), and whether a transcript should record which
-model produced it — nothing does today, and translation will want to know.
+**Decided 2026-10-13: the variant is a PERSISTED preference**, not per-recording.
+
+The obvious objection is that it sits next to `_captionsLanguage`, which is
+deliberately per-recording because "a stale one silently mis-transcribes the next
+video". That reasoning does not transfer, for three reasons.
+
+1. **Language has a safe reset target; the variant does not.** On attach,
+   `refreshCaptionsCapability` sets `_captionsLanguage = null`, and null means
+   Auto — detect it. Auto is correct for *every* recording, so resetting costs
+   the user nothing. There is no equivalent value for a model. Resetting would
+   mean reverting to one specific 626 MB variant, which silently undoes a
+   deliberate choice and can start a download the user picked a smaller model
+   precisely to avoid.
+2. **The stale-setting failure modes differ in kind.** A stale language produces
+   a GARBAGE transcript — Arabic decoding on an English video, which is the case
+   that comment was written about. A stale variant produces a worse but still
+   valid one. Degradation, not corruption, and the user can see and fix it.
+3. **Its real analogues are already persisted.** Voice cleanup mode and subtitle
+   mode both live in SharedPreferences, and both are "how I like my output"
+   rather than "what is in this recording". Model quality is that kind of
+   setting: it trades accuracy against time and disk on THIS machine. Spoken
+   language is a property of the recording's content; model size is not.
+
+Placement does not follow from this and is not forced: voice cleanup mode is
+persisted and still lives in the post-processing Audio panel, so a persisted
+variant picker can sit in the captions panel beside the language control without
+inconsistency.
+
+**Revisit if a real Auto is built.** The plan's "default **Auto**" (pick by
+hardware) would be a safe reset target, which is the one thing that would make
+per-recording viable. It does not exist today, and building it is its own task.
+
+**Still open**, and the remaining product call: whether a transcript should
+record which model produced it. Nothing does today — `CaptionTrack` carries
+`language` and `sourceLanguage` but no variant — and translation will want to
+know, because the turbo caveat is a per-model capability rule.
 
 ## B. Phased roadmap — outcome per phase
 
