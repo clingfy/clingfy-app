@@ -335,6 +335,93 @@ dead download weight. The plan's prose name `large-v3-turbo` maps to the string
 `openai_whisper-large-v3-v20240930_626MB`. A picker offering a `_turbo`-suffixed
 variant would ship the wrong thing while looking correct.
 
+### A.7.1 The runtime engine swap — design, 2026-10-07
+
+A picker has to change which model the engine uses, and the engine is built to
+make that impossible on purpose. `CaptionsService.transcriber` is a `private let`
+assigned in `init`, and the comment above it records why: a non-atomic `lazy var`
+let two threads run the initialiser twice and walk away with DIFFERENT engines,
+so a job transcribed on one while the delete gate asked the other whether the
+model was loaded and was told no — 730 MB removed with Core ML still mmapping it.
+
+**The design: the variant is job data, not engine identity.** Keep exactly one
+`WhisperKitTranscriber`, forever. Do not make `transcriber` a `var`, and do not
+cache one engine per variant: the first reintroduces the hazard the `let`
+prevents, the second multiplies a several-hundred-megabyte resident cost. The
+variant travels with the job instead, and the engine object never changes — so
+`isBusy`, `isModelLoaded`, `releaseModel`, `drain` and every `MODEL_IN_USE` gate
+keep working against one instance, unmodified.
+
+That structural claim was attacked and held. Four specific attacks do NOT land,
+recorded so nobody re-runs them:
+
+- **The export memory-pressure path cannot interleave with a switch.**
+  `transcribe` holds the ASR queue for the whole run (`queue.sync`, and
+  `runTranscription` then blocks that same thread on its semaphore poll), so
+  `releaseModel`'s `queue.async` cannot run in between.
+- **A switch requested while a cancelled job drains is handled.** `awaitDrain`
+  runs inside the queue before any pipeline work.
+- **Unload-then-load does not double peak memory.** `prewarm: true` manages peak
+  *within* one load, which is a different thing.
+- **`MODEL_IN_USE` and the delete gate still mean the right thing**, because both
+  bottom out at the one engine's `isBusy`.
+
+**Three things the first draft got wrong.** Written down because each is a trap
+the next person would re-enter.
+
+1. **`pipe` is NOT queue-confined, and a design that says "write the new state
+   beside the `pipe` writes, on `queue`" is incoherent.** `loadedPipeline` is
+   awaited from an unstructured `Task`, so its `pipe` read and write run on the
+   cooperative pool. What actually serialises them is that `queue` is HELD by the
+   blocked caller for that Task's entire life, plus `drain.claim` covering the
+   abandoned case. Any new state read by the UI therefore wants `busyLock`, the
+   way `modelResident` already does — not the queue.
+2. **Unloading inside `loadedPipeline`'s fast path creates an unrecoverable
+   state.** Unload the resident pipeline, then let the user cancel: the task is
+   abandoned via `drain.claim` and never reaches `pipe = created`, so `pipe`
+   points at a WhisperKit whose weights are gone while `modelResident` still says
+   they are there. The next job takes the fast path, gets a dead pipeline, and
+   fails as an engine error rather than a cancellation. The Delete prompt lies
+   about what is loaded. Same shape as the interrupted-download bug the strict
+   install check exists for.
+3. **Making the variant PURE job data deletes a fact three shipped consumers
+   need.** `CaptionsService.modelVariant` is a compile-time constant today, and
+   it is the only path by which any variant name reaches Dart. It feeds the
+   Storage card's "(in use)" marker, the delete dialog's download size, and
+   `loaded`. Leave it as-is and the card added in #593 starts marking the wrong
+   model the moment a job runs on another one.
+
+**So the corrected shape:**
+
+- `loadedPipeline(variant:)` takes the variant and uses it for all three things
+  that currently read `self.model`: the folder, `WhisperKit.download`, and
+  `WhisperKitConfig`. No field shadowing the parameter.
+- The service keeps `currentVariant` as instance state under `busyLock`, and
+  `modelVariant` reports THAT rather than the type default. This is what keeps
+  #593's card honest.
+- `residentVariant` likewise under `busyLock`, and exposed on the payload beside
+  `loaded` — which is variant-blind today and would otherwise answer "a model is
+  loaded" without saying which.
+- **Never unload until the new variant is known to be obtainable.** Resolve the
+  requested variant's folder first; if it is absent, download it FIRST, with the
+  resident pipeline untouched, and only then clear-and-load. Unloading first
+  costs the user a working model when the fetch fails offline; loading first
+  without clearing is the unrecoverable state above. Proving the target is on
+  disk before touching the resident one avoids both.
+
+**And the finding that makes this smaller than it looks:** `endRun` schedules
+`releaseModelWhenTheEngineWillGiveItBack()` after EVERY job, so between jobs
+`pipe` is normally nil and `loadedPipeline` takes the cold path regardless of
+variant. The hot-swap branch is therefore rare in production — which is good for
+risk and bad for confidence: it will not be exercised by ordinary use, so it has
+to be tested deliberately rather than trusted to show up in a smoke test.
+
+**Not yet decided**, and both are product calls rather than engineering ones:
+whether the variant is a persisted preference or per-recording (the language
+field beside it is deliberately per-recording, because a stale one "silently
+mis-transcribes the next video"), and whether a transcript should record which
+model produced it — nothing does today, and translation will want to know.
+
 ## B. Phased roadmap — outcome per phase
 
 The original order was (1) → (1.5) → (2) → (3) → (3.5) → (4) → (5). The delivered
