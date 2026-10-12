@@ -514,12 +514,20 @@ extension ScreenRecorderFacade {
             // A map, not the bare cue list this used to return. The detected
             // language is one fact about the run and there was nowhere to put
             // it in a list; every persisted track claimed English as a result.
-            // `NativeToFlutter`'s Dart half reads the same two keys.
+            // `NativeToFlutter`'s Dart half reads the same three keys.
             result([
               "cues": jobOutcome.captions.map { $0.toFlutter() },
               // Omitted rather than defaulted when the engine cannot say:
               // unknown and English must stay distinguishable.
               "language": jobOutcome.detectedLanguage as Any?,
+              // Which model produced these cues. Reported by NATIVE rather than
+              // recorded by Dart, because Dart does not choose it: it sends no
+              // variant, so the only side that knows what the engine loaded is
+              // this one. When the variant becomes selectable this keeps
+              // answering with what was actually used rather than what was
+              // asked for, which is the fact translation needs — the turbo
+              // caveat is a per-model capability rule.
+              "transcribedBy": CaptionsService.modelVariant,
             ])
           case .failure(let error):
             // Cancellation is a normal outcome, not a failure to report as one.

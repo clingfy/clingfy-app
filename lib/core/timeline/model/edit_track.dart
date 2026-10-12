@@ -345,6 +345,7 @@ final class CaptionTrack extends EditTrack {
     this.style = const CaptionStyle(),
     this.captions = const <Caption>[],
     this.destination,
+    this.transcribedBy,
   });
 
   /// Whisper language code ('en', 'ar', 'ro'), or null when nothing has
@@ -353,6 +354,21 @@ final class CaptionTrack extends EditTrack {
   final String? sourceLanguage;
   final CaptionStyle style;
   final List<Caption> captions;
+
+  /// The speech-model variant that produced these cues, or null when it is not
+  /// known.
+  ///
+  /// Null is a real state and the common one: every transcript made before this
+  /// field existed has no record of what decoded it, and guessing the current
+  /// default would be a lie of exactly the kind `language` already had to be
+  /// fixed for. Written by native rather than chosen by Dart, because Dart does
+  /// not pick the model.
+  ///
+  /// Recorded for translation. Whisper only translates to English and
+  /// `large-v3-turbo` cannot translate at all, so "can this transcript be
+  /// translated" is a question about the model that produced it — and without
+  /// this there is no way to answer it for a transcript made earlier.
+  final String? transcribedBy;
 
   /// Where THIS project's subtitles go, or null to follow the app preference.
   ///
@@ -386,6 +402,9 @@ final class CaptionTrack extends EditTrack {
     // resolved value here instead would silently freeze every existing project
     // to whatever the global happened to be on the day it was next saved.
     if (destination != null) 'destination': destination!.wireValue,
+    // Absent means "unknown", which is what every transcript made before this
+    // field existed genuinely is. Never defaulted to the current model.
+    if (transcribedBy != null) 'transcribedBy': transcribedBy,
     'captions': [for (final c in captions) c.toMap()],
   };
 
@@ -425,6 +444,7 @@ final class CaptionTrack extends EditTrack {
     destination: m['destination'] == null
         ? null
         : SubtitleMode.fromWire(m['destination'] as String?),
+    transcribedBy: m['transcribedBy'] as String?,
     captions: _decodeCues(m['captions']),
   );
 
@@ -468,6 +488,7 @@ final class CaptionTrack extends EditTrack {
     CaptionStyle? style,
     List<Caption>? captions,
     SubtitleMode? destination,
+    String? transcribedBy,
   }) => CaptionTrack(
     id: id ?? this.id,
     enabled: enabled ?? this.enabled,
@@ -478,6 +499,11 @@ final class CaptionTrack extends EditTrack {
     // Set-only, like every other field here: nothing clears an override back
     // to "follow the global", because no UI offers that.
     destination: destination ?? this.destination,
+    // Set-only for the same reason, and with one that matters more: a
+    // CORRECTION re-persists the same track and passes nothing here, so the
+    // model that produced the cues survives being edited. Only a fresh
+    // transcription supplies a new value.
+    transcribedBy: transcribedBy ?? this.transcribedBy,
   );
 }
 

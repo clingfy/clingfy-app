@@ -1005,20 +1005,32 @@ class NativeBridge {
           'useSystem': useSystem,
           if (language != null) 'language': language,
         });
-    if (raw == null) return const TranscriptionResult(cues: [], language: null);
+    if (raw == null) {
+      return const TranscriptionResult(
+        cues: [],
+        language: null,
+        transcribedBy: null,
+      );
+    }
 
     // A map since the language landed here; it used to be the bare cue list.
     // Keep this in sync with `PreviewSceneResolver`'s success branch on the
-    // Swift side, which writes exactly these two keys.
+    // Swift side, which writes exactly these three keys.
     final cues = (raw['cues'] as List<dynamic>? ?? const [])
         .whereType<Map<dynamic, dynamic>>()
         .toList();
     // Absent stays absent. Defaulting to 'en' here is the defect this closes:
     // every saved track claimed English regardless of what was spoken.
     final detected = raw['language'] as String?;
+    // Absent on a platform or an older binary that does not report it, and
+    // absent is the honest answer there: we do not know what produced these.
+    final transcribedBy = raw['transcribedBy'] as String?;
     return TranscriptionResult(
       cues: cues,
       language: (detected == null || detected.isEmpty) ? null : detected,
+      transcribedBy: (transcribedBy == null || transcribedBy.isEmpty)
+          ? null
+          : transcribedBy,
     );
   }
 
@@ -1380,18 +1392,26 @@ class NativeBridge {
   }
 }
 
-/// What one transcription returned: the cues, and the language they were
-/// decoded in.
+/// What one transcription returned: the cues, the language they were decoded
+/// in, and the model that decoded them.
 ///
-/// The language rides the result rather than each cue because it is one fact
-/// about the run. It stays null when the engine could not say -- absent and
-/// English must remain distinguishable, which is the defect that made every
-/// saved caption track claim English regardless of what was spoken.
+/// These ride the result rather than each cue because each is one fact about
+/// the run. Both stay null when nothing could say -- absent and English must
+/// remain distinguishable, which is the defect that made every saved caption
+/// track claim English regardless of what was spoken.
 class TranscriptionResult {
-  const TranscriptionResult({required this.cues, required this.language});
+  const TranscriptionResult({
+    required this.cues,
+    required this.language,
+    required this.transcribedBy,
+  });
 
   final List<Map<dynamic, dynamic>> cues;
 
   /// Whisper language code ('en', 'ar', 'ro'), or null when unknown.
   final String? language;
+
+  /// The speech-model variant that produced these cues, or null when the
+  /// platform did not report one.
+  final String? transcribedBy;
 }

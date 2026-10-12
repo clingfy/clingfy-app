@@ -755,6 +755,9 @@ class PostProcessingController extends ChangeNotifier {
       // What the engine actually decoded, which may be null when it could not
       // say. Not defaulted: see `CaptionTrack.language`.
       final detectedLanguage = raw.language;
+      // Which model decoded them. Native's answer, not a Dart guess — Dart
+      // sends no variant, so this side cannot know.
+      final transcribedBy = raw.transcribedBy;
       if (_captionsCancelOrigin != _CaptionsCancelOrigin.none) {
         // A run nobody is waiting for any more. Native cancellation is POLLED,
         // so a job already past its last check finishes normally and arrives
@@ -789,6 +792,7 @@ class PostProcessingController extends ChangeNotifier {
             cues,
             onlyWhenAbsent: true,
             detectedLanguage: detectedLanguage,
+            transcribedBy: transcribedBy,
           );
         }
         return;
@@ -803,7 +807,12 @@ class PostProcessingController extends ChangeNotifier {
       // Persisted against the CAPTURED project rather than the live one, which
       // is the invariant argued above; the flush below writes the same content
       // to the same path, so this is a duplicate write, not a second truth.
-      _persistCaptions(projectPath, cues, detectedLanguage: detectedLanguage);
+      _persistCaptions(
+        projectPath,
+        cues,
+        detectedLanguage: detectedLanguage,
+        transcribedBy: transcribedBy,
+      );
       // Through the session, so "Generate again" is one undo away. It is the
       // same button, in the same place, that said "Generate subtitles" before
       // cues existed, and pressing it replaces every hand correction with
@@ -994,6 +1003,14 @@ class PostProcessingController extends ChangeNotifier {
     /// a guess on every keystroke is how the wrong metadata got there in the
     /// first place.
     String? detectedLanguage,
+
+    /// The model native reported having used, when it reported one.
+    ///
+    /// Only written when non-null, for the same reason as [detectedLanguage]:
+    /// a correction re-persists the same cues and knows nothing about the
+    /// model, so passing nothing must leave the recorded one alone rather than
+    /// blank it.
+    String? transcribedBy,
   }) {
     // Mirrors the seed the store write below applies, so this session's
     // exportSubtitleMode matches what was just persisted without waiting for a
@@ -1029,6 +1046,7 @@ class PostProcessingController extends ChangeNotifier {
                 captions: captions,
                 language: detectedLanguage ?? stored.language,
                 destination: destination,
+                transcribedBy: transcribedBy,
               ) ??
               CaptionTrack(
                 captions: captions,
@@ -1036,6 +1054,10 @@ class PostProcessingController extends ChangeNotifier {
                 // absent rather than guessed.
                 language: detectedLanguage,
                 destination: destination,
+                // Same rule: absent means nothing reported a model, which is
+                // the truth for a platform that does not and for every
+                // transcript made before this was recorded.
+                transcribedBy: transcribedBy,
               ),
         );
       }),
