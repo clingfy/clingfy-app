@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:clingfy/core/captions/caption_reflow.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
@@ -56,6 +57,8 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onUseSystemChanged,
     required this.language,
     required this.onLanguageChanged,
+    required this.model,
+    required this.onModelChanged,
     required this.onGenerate,
     required this.onCancel,
     this.onRetryProbe,
@@ -65,6 +68,7 @@ class PostCaptionsSection extends StatelessWidget {
     required this.onSubtitleModeChanged,
     this.stageLabel,
     this.hasEverGenerated = false,
+    this.isDownloadingModel = false,
     this.failed = false,
   });
 
@@ -100,6 +104,11 @@ class PostCaptionsSection extends StatelessWidget {
   /// different messages to show someone.
   final bool hasEverGenerated;
 
+  /// The engine is fetching the chosen model right now, as reported by the
+  /// job's own progress stage. Not inferred from history: with a picker, a user
+  /// who has transcribed before still downloads each model the first time.
+  final bool isDownloadingModel;
+
   /// The last run failed rather than finding nothing. Both leave an empty cue
   /// list, so without this the two are indistinguishable here and a failure
   /// gets reported as silence.
@@ -109,6 +118,10 @@ class PostCaptionsSection extends StatelessWidget {
   final String? language;
 
   final ValueChanged<String?> onLanguageChanged;
+
+  /// The speech model. Persisted, unlike [language]: see `CaptionsModel`.
+  final CaptionsModel model;
+  final ValueChanged<CaptionsModel> onModelChanged;
 
   final ValueChanged<bool> onUseMicChanged;
   final ValueChanged<bool> onUseSystemChanged;
@@ -207,6 +220,40 @@ class PostCaptionsSection extends StatelessWidget {
               ),
               const SizedBox(height: AppSidebarTokens.rowGap),
             ],
+            // Locked while a job runs: the model is configured when the job
+            // starts, so changing it mid-run would only mislead — the running
+            // transcription would finish on the old one.
+            PlatformDropdown<CaptionsModel>(
+              key: const Key('captions_model'),
+              labelText: l10n.captionsModel,
+              value: model,
+              items: [
+                PlatformMenuItem<CaptionsModel>(
+                  value: CaptionsModel.best,
+                  label: l10n.captionsModelBest(
+                    CaptionsModel.best.approxMegabytes,
+                  ),
+                ),
+                PlatformMenuItem<CaptionsModel>(
+                  value: CaptionsModel.balanced,
+                  label: l10n.captionsModelBalanced(
+                    CaptionsModel.balanced.approxMegabytes,
+                  ),
+                ),
+                PlatformMenuItem<CaptionsModel>(
+                  value: CaptionsModel.fast,
+                  label: l10n.captionsModelFast(
+                    CaptionsModel.fast.approxMegabytes,
+                  ),
+                ),
+              ],
+              onChanged: isGenerating || isProcessing
+                  ? null
+                  : (v) {
+                      if (v != null) onModelChanged(v);
+                    },
+            ),
+            const SizedBox(height: AppSidebarTokens.rowGap),
             // Only worth showing when there is a choice to make. A picker with
             // one entry is noise.
             if (info.shouldOfferSourcePicker) ...[
@@ -280,11 +327,13 @@ class PostCaptionsSection extends StatelessWidget {
               ),
             ],
 
-            // Shown only while generating, and only the first time — the model
-            // download is a one-off and repeating the warning is noise.
-            if (isGenerating && !hasEverGenerated) ...[
+            // Shown only while the chosen model is actually downloading. It
+            // used to key off "never generated before", which was the same
+            // thing with one model and is not with three.
+            if (isGenerating && isDownloadingModel) ...[
               const SizedBox(height: AppSidebarTokens.compactGap),
               AppInlineNotice(
+                key: const Key('captions_download_notice'),
                 message: l10n.captionsFirstRunDownload,
                 variant: AppInlineNoticeVariant.info,
               ),

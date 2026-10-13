@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show listEquals;
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/app/config/build_config.dart';
@@ -687,6 +688,19 @@ class PostProcessingController extends ChangeNotifier {
   /// null value of its own.
   String? get captionsLanguage => _captionsLanguage;
 
+  /// The speech model the next transcription will use. Persisted — unlike the
+  /// language above it — because a model has no "Auto" that is safe to reset
+  /// to; see `CaptionsModel`.
+  CaptionsModel get captionsModel => _settings.post.postCaptionsModel;
+
+  void setCaptionsModel(CaptionsModel model) {
+    if (model == captionsModel) return;
+    unawaited(_settings.post.updatePostCaptionsModel(model));
+    // The Storage card marks the chosen model as in use, so let it re-ask.
+    unawaited(_settings.storage.refresh());
+    notifyListeners();
+  }
+
   void setCaptionsLanguage(String? code) {
     if (code == _captionsLanguage) return;
     _captionsLanguage = code;
@@ -750,13 +764,17 @@ class PostProcessingController extends ChangeNotifier {
         // Null means Auto, and the bridge omits the key entirely -- which is
         // what makes the engine detect rather than be forced.
         language: _captionsLanguage,
+        // The engine loads this one; if a different model is resident it is
+        // swapped out only after this one is proven to be on disk (§A.7.1).
+        variant: captionsModel.wire,
       );
       final cues = [for (final m in raw.cues) Caption.fromMap(m)];
       // What the engine actually decoded, which may be null when it could not
       // say. Not defaulted: see `CaptionTrack.language`.
       final detectedLanguage = raw.language;
-      // Which model decoded them. Native's answer, not a Dart guess — Dart
-      // sends no variant, so this side cannot know.
+      // Which model decoded them. Native's answer, not `captionsModel.wire`:
+      // native refuses a variant outside its plain-name guard and falls back to
+      // the default, so what Dart asked for and what was used can differ.
       final transcribedBy = raw.transcribedBy;
       if (_captionsCancelOrigin != _CaptionsCancelOrigin.none) {
         // A run nobody is waiting for any more. Native cancellation is POLLED,

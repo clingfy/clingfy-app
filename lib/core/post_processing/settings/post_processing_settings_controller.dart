@@ -1,3 +1,4 @@
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -15,6 +16,7 @@ class PostProcessingSettingsController extends ChangeNotifier {
   static const String _prefPostTargetLoudnessDbfs = 'postTargetLoudnessDbfs';
   static const String _prefPostVoiceCleanupEnabled = 'postVoiceCleanupEnabled';
   static const String _prefPostVoiceCleanupMode = 'postVoiceCleanupMode';
+  static const String _prefPostCaptionsModel = 'postCaptionsModel';
   static const String _prefPostZoomEffectEnabled = 'postZoomEffectEnabled';
   static const String _prefPostZoomFactor = 'postZoomFactor';
 
@@ -33,6 +35,7 @@ class PostProcessingSettingsController extends ChangeNotifier {
   // Voice cleanup ships opt-in and OFF by default: it is a lossy DSP pass on
   // the user's voice, so it only ever runs when explicitly asked for.
   VoiceCleanup _postVoiceCleanup = const VoiceCleanup();
+  CaptionsModel _postCaptionsModel = CaptionsModel.best;
   bool _postZoomEffectEnabled = true;
   double _postZoomFactor = 1.5;
 
@@ -45,6 +48,7 @@ class PostProcessingSettingsController extends ChangeNotifier {
   double get postTargetLoudnessDbfs => _postTargetLoudnessDbfs;
   SubtitleMode get postSubtitleMode => _postSubtitleMode;
   VoiceCleanup get postVoiceCleanup => _postVoiceCleanup;
+  CaptionsModel get postCaptionsModel => _postCaptionsModel;
   bool get postZoomEffectEnabled => _postZoomEffectEnabled;
   double get postZoomFactor => _postZoomFactor;
 
@@ -100,6 +104,9 @@ class PostProcessingSettingsController extends ChangeNotifier {
     // degrades to the safe destination instead of silently exporting nothing.
     _postSubtitleMode = SubtitleMode.fromWire(
       prefs.getString(_prefPostSubtitleMode),
+    );
+    _postCaptionsModel = CaptionsModel.fromWire(
+      prefs.getString(_prefPostCaptionsModel),
     );
     _postZoomEffectEnabled = prefs.getBool(_prefPostZoomEffectEnabled) ?? true;
     _postZoomFactor = _clampPostZoomFactor(
@@ -191,6 +198,18 @@ class PostProcessingSettingsController extends ChangeNotifier {
       await prefs.setBool(_prefPostAutoNormalizeEnabled, value);
     } catch (e, st) {
       Log.e('Settings', 'Failed to persist post auto-normalize setting', e, st);
+    }
+  }
+
+  Future<void> updatePostCaptionsModel(CaptionsModel value) async {
+    if (value == _postCaptionsModel) return;
+    _postCaptionsModel = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.setString(_prefPostCaptionsModel, value.wire);
+    } catch (e, st) {
+      Log.e('Settings', 'Failed to persist the speech model choice', e, st);
     }
   }
 

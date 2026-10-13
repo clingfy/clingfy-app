@@ -929,7 +929,7 @@
   "captionsUnavailableProbeFailed": "تعذّر التحقق ممّا إذا كانت الترجمات تعمل لهذا التسجيل.",
   "captionsRetryProbe": "أعد المحاولة",
   "captionsMicOnlyRecording": "هذا التسجيل يسبق التقاط الصوت المنفصل، لذا تم تسجيل الميكروفون فقط.",
-  "captionsFirstRunDownload": "يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.",
+  "captionsFirstRunDownload": "جارٍ تنزيل نموذج الكلام. يُنزَّل كل نموذج مرة واحدة.",
   "captionsFailed": "تعذّر إنشاء الترجمة.",
   "captionsCueCount": "{count} ترجمة",
   "captionsDestination": "الترجمة في التصدير",
@@ -957,5 +957,9 @@
   "audioQualityHigh": "عالية ({kbps} كيلوبت/ث)",
   "audioQualityBest": "الأفضل ({kbps} كيلوبت/ث)",
   "storageCaptionModelInUse": "قيد الاستخدام",
-  "storageCaptionModelIncomplete": "تنزيل غير مكتمل"
+  "storageCaptionModelIncomplete": "تنزيل غير مكتمل",
+  "captionsModel": "نموذج الكلام",
+  "captionsModelBest": "أعلى دقة (حوالي {mb} ميجابايت)",
+  "captionsModelBalanced": "متوازن (حوالي {mb} ميجابايت)",
+  "captionsModelFast": "الأسرع (حوالي {mb} ميجابايت)"
 }

@@ -929,7 +929,7 @@
   "captionsUnavailableProbeFailed": "Nu s-a putut verifica dacă subtitrările pot rula pentru această înregistrare.",
   "captionsRetryProbe": "Încearcă din nou",
   "captionsMicOnlyRecording": "Această înregistrare este anterioară capturii audio separate, deci s-a înregistrat doar microfonul.",
-  "captionsFirstRunDownload": "Prima rulare descarcă un model de vorbire. Se întâmplă o singură dată.",
+  "captionsFirstRunDownload": "Se descarcă modelul de vorbire. Fiecare model se descarcă o singură dată.",
   "captionsFailed": "Nu s-au putut genera subtitrările.",
   "captionsCueCount": "{count} subtitrări",
   "captionsDestination": "Subtitrări la export",
@@ -957,5 +957,9 @@
   "audioQualityHigh": "Înaltă ({kbps} kbps)",
   "audioQualityBest": "Maximă ({kbps} kbps)",
   "storageCaptionModelInUse": "în uz",
-  "storageCaptionModelIncomplete": "descărcare neterminată"
+  "storageCaptionModelIncomplete": "descărcare neterminată",
+  "captionsModel": "Model de vorbire",
+  "captionsModelBest": "Precizie maximă (circa {mb} MB)",
+  "captionsModelBalanced": "Echilibrat (circa {mb} MB)",
+  "captionsModelFast": "Cel mai rapid (circa {mb} MB)"
 }

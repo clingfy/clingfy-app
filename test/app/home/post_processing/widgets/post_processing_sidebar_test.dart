@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_processing_sidebar.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/core/timeline/model/color_grade.dart';
@@ -163,6 +164,8 @@ void main() {
       captionsUseMic: true,
       captionsLanguage: null,
       onCaptionsLanguageChanged: (_) {},
+      captionsModel: CaptionsModel.best,
+      onCaptionsModelChanged: (_) {},
       captionsUseSystem: true,
       isGeneratingCaptions: false,
       isCancellingCaptions: false,

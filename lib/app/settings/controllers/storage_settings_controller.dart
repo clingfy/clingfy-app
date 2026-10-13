@@ -18,6 +18,14 @@ class StorageSettingsController extends ChangeNotifier {
 
   CaptionModelInfo _captionModel = CaptionModelInfo.notInstalled;
 
+  /// The speech model the user has chosen, read when the page refreshes.
+  ///
+  /// A callback rather than a value because the preference lives in a sibling
+  /// controller that is constructed after this one; `SettingsController` wires
+  /// it in its body. Null — as in a test that builds this alone — sends no
+  /// variant, and native answers for its default.
+  String? Function()? preferredCaptionsModel;
+
   StorageSnapshot? get snapshot => _snapshot;
 
   /// The speech model's footprint. Fetched alongside the snapshot rather than
@@ -50,7 +58,9 @@ class StorageSettingsController extends ChangeNotifier {
       _snapshot = await _nativeBridge.getStorageSnapshot();
       // Never throws — it degrades to "nothing installed" — so it cannot take
       // the storage page down with it.
-      _captionModel = await _nativeBridge.getCaptionModelInfo();
+      _captionModel = await _nativeBridge.getCaptionModelInfo(
+        variant: preferredCaptionsModel?.call(),
+      );
       _hasLoadedOnce = true;
     } catch (e) {
       _error = e.toString();

@@ -2785,7 +2785,7 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get captionsFirstRunDownload =>
-      'يقوم التشغيل الأول بتنزيل نموذج الكلام. يحدث هذا مرة واحدة.';
+      'جارٍ تنزيل نموذج الكلام. يُنزَّل كل نموذج مرة واحدة.';
 
   @override
   String get captionsFailed => 'تعذّر إنشاء الترجمة.';
@@ -2886,4 +2886,22 @@ class AppLocalizationsAr extends AppLocalizations {
 
   @override
   String get storageCaptionModelIncomplete => 'تنزيل غير مكتمل';
+
+  @override
+  String get captionsModel => 'نموذج الكلام';
+
+  @override
+  String captionsModelBest(int mb) {
+    return 'أعلى دقة (حوالي $mb ميجابايت)';
+  }
+
+  @override
+  String captionsModelBalanced(int mb) {
+    return 'متوازن (حوالي $mb ميجابايت)';
+  }
+
+  @override
+  String captionsModelFast(int mb) {
+    return 'الأسرع (حوالي $mb ميجابايت)';
+  }
 }

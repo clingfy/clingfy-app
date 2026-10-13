@@ -464,6 +464,7 @@ extension ScreenRecorderFacade {
     useMic: Bool,
     useSystem: Bool,
     language: String?,
+    variant: String?,
     onProgress: @escaping (JobProgress) -> Void,
     result: @escaping FlutterResult
   ) {
@@ -504,6 +505,7 @@ extension ScreenRecorderFacade {
     captionsService.generateCaptions(
       sources: sources,
       language: language,
+      variant: variant,
       onProgress: { progress in
         DispatchQueue.main.async { onProgress(progress) }
       },
@@ -521,13 +523,17 @@ extension ScreenRecorderFacade {
               // unknown and English must stay distinguishable.
               "language": jobOutcome.detectedLanguage as Any?,
               // Which model produced these cues. Reported by NATIVE rather than
-              // recorded by Dart, because Dart does not choose it: it sends no
-              // variant, so the only side that knows what the engine loaded is
-              // this one. When the variant becomes selectable this keeps
-              // answering with what was actually used rather than what was
-              // asked for, which is the fact translation needs — the turbo
-              // caveat is a per-model capability rule.
-              "transcribedBy": CaptionsService.modelVariant,
+              // recorded by Dart: Dart sends the variant it WANTS, and
+              // `resolvedVariant` may refuse it and fall back to the default,
+              // so only this side knows what was used. That is the fact
+              // translation needs — the turbo caveat is a per-model rule.
+              //
+              // The variant this job was CONFIGURED with — resolved by the same
+              // function the service used, so it cannot disagree with what the
+              // engine was told to load. Not `modelVariant`, which is only the
+              // default and would mislabel every transcript made on another
+              // model the moment the picker existed.
+              "transcribedBy": CaptionsService.resolvedVariant(variant),
             ])
           case .failure(let error):
             // Cancellation is a normal outcome, not a failure to report as one.

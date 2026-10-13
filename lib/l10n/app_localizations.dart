@@ -5107,7 +5107,7 @@ abstract class AppLocalizations {
   /// No description provided for @captionsFirstRunDownload.
   ///
   /// In en, this message translates to:
-  /// **'The first run downloads a speech model. This happens once.'**
+  /// **'Downloading the speech model. Each model downloads once.'**
   String get captionsFirstRunDownload;
 
   /// No description provided for @captionsFailed.
@@ -5277,6 +5277,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'unfinished download'**
   String get storageCaptionModelIncomplete;
+
+  /// No description provided for @captionsModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech model'**
+  String get captionsModel;
+
+  /// No description provided for @captionsModelBest.
+  ///
+  /// In en, this message translates to:
+  /// **'Best accuracy (about {mb} MB)'**
+  String captionsModelBest(int mb);
+
+  /// No description provided for @captionsModelBalanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Balanced (about {mb} MB)'**
+  String captionsModelBalanced(int mb);
+
+  /// No description provided for @captionsModelFast.
+  ///
+  /// In en, this message translates to:
+  /// **'Fastest (about {mb} MB)'**
+  String captionsModelFast(int mb);
 }
 
 class _AppLocalizationsDelegate

@@ -35,8 +35,13 @@ extension ScreenRecorderFacade {
   /// on a timer, and it has nowhere to express installed / busy / loaded or a
   /// second byte bucket. This is asked for lazily, by the one page that shows
   /// it.
-  func getCaptionModelInfo(result: @escaping FlutterResult) {
-    let info = CaptionModelStore.info(variant: CaptionsService.modelVariant)
+  /// `variant` is the one the user has chosen, so the card marks THAT as in use
+  /// and the delete dialog quotes ITS size. Dart owns the preference (it is
+  /// persisted, see §A.7.1), so it passes it here rather than native keeping a
+  /// second copy that could disagree. Nil, as an older Flutter build sends,
+  /// means the default — which is what those builds always ran.
+  func getCaptionModelInfo(variant: String? = nil, result: @escaping FlutterResult) {
+    let info = CaptionModelStore.info(variant: CaptionsService.resolvedVariant(variant))
     result(
       info.toFlutter(
         busy: captionsService.isBusy,

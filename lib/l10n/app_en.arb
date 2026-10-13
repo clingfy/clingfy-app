@@ -944,7 +944,7 @@
   "captionsUnavailableProbeFailed": "Couldn't check whether subtitles can run for this recording.",
   "captionsRetryProbe": "Try again",
   "captionsMicOnlyRecording": "This recording predates separate audio capture, so only your microphone was recorded.",
-  "captionsFirstRunDownload": "The first run downloads a speech model. This happens once.",
+  "captionsFirstRunDownload": "Downloading the speech model. Each model downloads once.",
   "captionsFailed": "Couldn’t generate subtitles.",
   "captionsCueCount": "{count} subtitles",
   "@captionsCueCount": {
@@ -1026,5 +1026,12 @@
   "audioQualityBest": "Best ({kbps} kbps)",
   "@audioQualityBest": {"placeholders": {"kbps": {"type": "int"}}},
   "storageCaptionModelInUse": "in use",
-  "storageCaptionModelIncomplete": "unfinished download"
+  "storageCaptionModelIncomplete": "unfinished download",
+  "captionsModel": "Speech model",
+  "captionsModelBest": "Best accuracy (about {mb} MB)",
+  "@captionsModelBest": {"placeholders": {"mb": {"type": "int"}}},
+  "captionsModelBalanced": "Balanced (about {mb} MB)",
+  "@captionsModelBalanced": {"placeholders": {"mb": {"type": "int"}}},
+  "captionsModelFast": "Fastest (about {mb} MB)",
+  "@captionsModelFast": {"placeholders": {"mb": {"type": "int"}}}
 }

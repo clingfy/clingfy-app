@@ -416,6 +416,38 @@ variant. The hot-swap branch is therefore rare in production — which is good f
 risk and bad for confidence: it will not be exercised by ordinary use, so it has
 to be tested deliberately rather than trusted to show up in a smoke test.
 
+**Shipped 2026-10-13, with two deviations from the bullets above.**
+
+- **No `currentVariant` on the service.** The variant travels with each job:
+  Dart sends it as `variant` on `generateCaptions`, native resolves it once
+  (`CaptionsService.resolvedVariant`, which falls back to the default for
+  anything outside the plain-name pattern or carrying the `_turbo` suffix), and
+  the engine reads only `options.model` from then on. The Storage card asks
+  about the same preference through `getCaptionModelInfo(variant:)`. Instance
+  state would have been a second copy of a value Dart already persists.
+- **`residentVariant` stays internal**, not on the payload. Delete is global
+  (it removes every variant), so a "which one is loaded" key would have no
+  reader. It exists so the engine can tell a reusable pipeline from one to swap.
+
+The hot-swap branch is tested deliberately, as the paragraph above says it must
+be: `WhisperKitHotSwapTests` runs tiny → large → tiny on one never-released
+engine against the real models (opt-in with `TEST_RUNNER_CLINGFY_RUN_MODEL_SWAP=1`,
+skipped without both on disk, never downloads). Two mutations, reuse ignoring
+the variant and recording the default instead of the loaded variant, both fail
+it. Driven live through the dev app: the default produced the exact sentence in
+3m39s, Fastest downloaded 73 MB into its own folder beside the untouched large
+model and transcribed in 34s, `transcribedBy` recorded each, and the Storage
+card listed both with tiny marked in use.
+
+**Open follow-up, found by the review and older than this work:** two
+`releaseModel` callers can overlap. The first takes `pipe` and unloads off the
+queue; a second (Storage delete, or the export preamble) then sees `pipe == nil`
+and reports "released" while that unload is still running, so delete can remove
+files Core ML is still tearing down, and a new job can cold-load beside it. The
+window is the length of `unloadModels()` and macOS keeps an unlinked mmap valid,
+so it breaks the documented unload-then-remove order rather than crashing. Fix:
+keep the in-flight unload as a `Task` that later callers await.
+
 **Decided 2026-10-13: the variant is a PERSISTED preference**, not per-recording.
 
 The obvious objection is that it sits next to `_captionsLanguage`, which is

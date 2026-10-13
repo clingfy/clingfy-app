@@ -1,3 +1,4 @@
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/ui/platform/widgets/app_pane_header.dart';
@@ -151,6 +152,8 @@ class PostProcessingSidebar extends StatelessWidget {
 
   /// Null = Auto (let the engine detect).
   final String? captionsLanguage;
+  final CaptionsModel captionsModel;
+  final ValueChanged<CaptionsModel> onCaptionsModelChanged;
 
   final ValueChanged<String?> onCaptionsLanguageChanged;
   final bool captionsUseSystem;
@@ -162,6 +165,7 @@ class PostProcessingSidebar extends StatelessWidget {
   final bool isCaptionsEngineBusyOffScreen;
   final double? captionsProgress;
   final String? captionsStageLabel;
+  final bool isDownloadingCaptionsModel;
   final bool hasEverGeneratedCaptions;
   final bool captionsFailed;
   final SubtitleMode subtitleMode;
@@ -324,12 +328,15 @@ class PostProcessingSidebar extends StatelessWidget {
     required this.captionsUseMic,
     required this.captionsLanguage,
     required this.onCaptionsLanguageChanged,
+    required this.captionsModel,
+    required this.onCaptionsModelChanged,
     required this.captionsUseSystem,
     required this.isGeneratingCaptions,
     required this.isCancellingCaptions,
     required this.isCaptionsEngineBusyOffScreen,
     required this.captionsProgress,
     required this.captionsStageLabel,
+    this.isDownloadingCaptionsModel = false,
     required this.hasEverGeneratedCaptions,
     required this.captionsFailed,
     required this.subtitleMode,
@@ -550,12 +557,15 @@ class PostProcessingSidebar extends StatelessWidget {
         useMic: captionsUseMic,
         language: captionsLanguage,
         onLanguageChanged: onCaptionsLanguageChanged,
+        model: captionsModel,
+        onModelChanged: onCaptionsModelChanged,
         useSystem: captionsUseSystem,
         isGenerating: isGeneratingCaptions,
         isCancelling: isCancellingCaptions,
         engineBusyOffScreen: isCaptionsEngineBusyOffScreen,
         progress: captionsProgress,
         stageLabel: captionsStageLabel,
+        isDownloadingModel: isDownloadingCaptionsModel,
         isProcessing: isProcessing,
         hasEverGenerated: hasEverGeneratedCaptions,
         failed: captionsFailed,
