@@ -2836,7 +2836,7 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get captionsFirstRunDownload =>
-      'Prima rulare descarcă un model de vorbire. Se întâmplă o singură dată.';
+      'Se descarcă modelul de vorbire. Fiecare model se descarcă o singură dată.';
 
   @override
   String get captionsFailed => 'Nu s-au putut genera subtitrările.';
@@ -2938,4 +2938,22 @@ class AppLocalizationsRo extends AppLocalizations {
 
   @override
   String get storageCaptionModelIncomplete => 'descărcare neterminată';
+
+  @override
+  String get captionsModel => 'Model de vorbire';
+
+  @override
+  String captionsModelBest(int mb) {
+    return 'Precizie maximă (circa $mb MB)';
+  }
+
+  @override
+  String captionsModelBalanced(int mb) {
+    return 'Echilibrat (circa $mb MB)';
+  }
+
+  @override
+  String captionsModelFast(int mb) {
+    return 'Cel mai rapid (circa $mb MB)';
+  }
 }

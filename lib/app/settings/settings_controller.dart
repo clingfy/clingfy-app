@@ -22,6 +22,10 @@ class SettingsController extends ChangeNotifier {
       export = ExportSettingsController(),
       post = PostProcessingSettingsController(),
       shortcuts = ShortcutsSettingsController() {
+    // Assigned here, not in the initializer list: `storage` is built before
+    // `post`, and the Storage card has to mark the model the user CHOSE as the
+    // one in use.
+    storage.preferredCaptionsModel = () => post.postCaptionsModel.wire;
     for (final controller in [
       app,
       storage,

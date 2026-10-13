@@ -248,6 +248,25 @@ final class CaptionModelStoreTests: XCTestCase {
     XCTAssertGreaterThan(half.bytes, 0, "and its bytes are still reclaimable")
   }
 
+  /// The hub client keeps its download bookkeeping in `.cache/huggingface/`
+  /// beside the variant folders, on every install that has downloaded a model.
+  /// Listed as a variant, it shows as ".cache (unfinished download)": a model
+  /// row for something that is not a model. Found driving the live Storage card.
+  func testTheHubsHiddenCacheIsNotListedAsAVariant() throws {
+    try writeCompleteVariant("good-one", bytes: 2048)
+    let withoutCache = CaptionModelStore.directorySize(root)
+    try write(".cache/huggingface/download/good-one/meta", bytes: 64)
+
+    let found = CaptionModelStore.installedVariants(root: root)
+    XCTAssertEqual(found.map(\.variant), ["good-one"])
+    // Measured against the same tree without the cache, not a constant: the
+    // variant alone already exceeds any small bound, which would let a
+    // `directorySize` that skipped hidden files pass.
+    XCTAssertGreaterThan(
+      CaptionModelStore.directorySize(root), withoutCache,
+      "still counted in the total, since delete removes it too")
+  }
+
   /// The path the enumeration walks has to be the one WhisperKit downloads
   /// into, or it will always report nothing.
   func testVariantsRootMatchesWhereWhisperKitDownloads() {

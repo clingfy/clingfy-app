@@ -127,7 +127,51 @@ final class CaptionsService {
   }
 
   /// The variant the engine would download, for display.
-  static var modelVariant: String { WhisperKitTranscriber.defaultModel }
+  /// The variant a job will run on when none is named.
+  static var modelVariant: String { resolvedVariant(nil) }
+
+  /// The variant a job will actually use, given what was asked for.
+  ///
+  /// The single answer to "which model". The service uses it to configure the
+  /// job and `PreviewSceneResolver` reports it as `transcribedBy`, so what is
+  /// recorded on a transcript is by construction what the engine was told to
+  /// load — never a second, independently computed opinion.
+  ///
+  /// Guarded, because the variant becomes a PATH COMPONENT: it is the leaf of
+  /// `Models/models/argmaxinc/whisperkit-coreml/<variant>/`, and both the
+  /// download and `CaptionModelStore.delete` resolve paths from it. Dart only
+  /// ever sends values from its own fixed list, but a component like `../..`
+  /// would point the engine outside the models tree, so anything that is not a
+  /// plain WhisperKit variant name falls back to the default rather than being
+  /// trusted.
+  ///
+  /// Also refuses the `_turbo` SUFFIX. In WhisperKit that means an extra
+  /// context-prefill model, not OpenAI's turbo release, and those variants are
+  /// dead download weight; eight of the twenty-three on the hub carry it. A
+  /// picker bug that offered one would otherwise download hundreds of
+  /// megabytes the engine never reads.
+  static func resolvedVariant(_ requested: String?) -> String {
+    guard let requested, isAcceptableVariant(requested) else {
+      return WhisperKitTranscriber.defaultModel
+    }
+    return requested
+  }
+
+  static func isAcceptableVariant(_ name: String) -> Bool {
+    guard name.hasPrefix("openai_whisper-") else { return false }
+    // A plain name: no separators, no traversal, nothing that is not part of a
+    // hub variant id (ASCII letters, digits, '-', '_', '.').
+    if name.contains("/") || name.contains("\\") || name.contains("..") { return false }
+    // ASCII, spelled out. `CharacterSet.alphanumerics` is Unicode-aware and
+    // accepts 'ü' or 'ï' as letters, which no hub variant id contains — the
+    // first version of this guard used it and a test caught the difference.
+    let allowed = CharacterSet(
+      charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    guard name.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+    // The turbo SUFFIX, either bare or with a size after it.
+    let tail = name.dropFirst("openai_whisper-".count)
+    return !(tail.hasSuffix("_turbo") || tail.contains("_turbo_"))
+  }
 
   // MARK: - Cancellation
 
@@ -249,6 +293,9 @@ final class CaptionsService {
   func generateCaptions(
     sources: TranscriptionJob.Sources,
     language: String?,
+    // Which model to run, or nil for the default. Resolved once below, through
+    // the same function `PreviewSceneResolver` reports from.
+    variant: String? = nil,
     onProgress: @escaping (JobProgress) -> Void,
     completion: @escaping (Result<TranscriptionJob.Outcome, Error>) -> Void
   ) {
@@ -291,6 +338,13 @@ final class CaptionsService {
       var systemOptions = TranscriptionOptions.strict
       micOptions.language = language
       systemOptions.language = language
+      // Both passes of one job use the same model. A job that transcribed the
+      // mic on one variant and the system track on another would produce a
+      // single transcript no one model made, and `transcribedBy` could not
+      // name it.
+      let resolved = Self.resolvedVariant(variant)
+      micOptions.model = resolved
+      systemOptions.model = resolved
 
       let job = TranscriptionJob(transcriber: transcriber)
       do {

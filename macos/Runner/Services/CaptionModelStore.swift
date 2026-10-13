@@ -167,7 +167,11 @@ enum CaptionModelStore {
   ) -> [VariantInfo] {
     guard
       let entries = try? fileManager.contentsOfDirectory(
-        at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [])
+        // Hidden entries skipped: the hub client keeps its download bookkeeping
+        // in `.cache/` here, and it is not a model. Its bytes still count in the
+        // card's total, which `directorySize` measures without this filter.
+        at: root, includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles])
     else { return [] }
     return entries.compactMap { url in
       guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true

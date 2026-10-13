@@ -476,4 +476,206 @@ final class WhisperKitTranscriberTests: XCTestCase {
       "sorted by name, because the UI presents them in this order")
   }
 
+  // MARK: - The runtime engine swap (§A.7.1)
+  //
+  // The swap itself loads real Core ML models, so it cannot run here; it is
+  // exercised end to end in the running app. What CAN be pinned without a model
+  // is every rule the swap depends on — and each of these is a rule whose
+  // violation would be silent: the wrong model transcribing and reporting
+  // success, a variant string walking out of the models folder, or hundreds of
+  // megabytes of dead `_turbo` weight downloaded on a picker bug.
+
+  /// The fast path used to be `if let pipe { return pipe }`, which handed a job
+  /// whatever was loaded. A job naming a DIFFERENT variant must not reuse it.
+  func testTheResidentPipelineIsReusedOnlyForTheSameVariant() {
+    XCTAssertTrue(
+      WhisperKitTranscriber.canReuseResident(
+        residentVariant: "openai_whisper-tiny", requested: "openai_whisper-tiny"))
+    XCTAssertFalse(
+      WhisperKitTranscriber.canReuseResident(
+        residentVariant: "openai_whisper-tiny",
+        requested: "openai_whisper-large-v3-v20240930_626MB"),
+      "a different variant must load its own model, not run on the resident one")
+    XCTAssertFalse(
+      WhisperKitTranscriber.canReuseResident(
+        residentVariant: nil, requested: "openai_whisper-tiny"),
+      "nothing resident means nothing to reuse")
+  }
+
+  /// Several variants coexist on disk because the variant is the folder's LEAF.
+  func testEachVariantGetsItsOwnFolder() throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "openai_whisper-tiny", modelDirectory: root)
+    let tiny = transcriber.modelFolder(for: "openai_whisper-tiny")
+    let large = transcriber.modelFolder(for: "openai_whisper-large-v3-v20240930_626MB")
+
+    XCTAssertNotEqual(tiny, large)
+    XCTAssertEqual(tiny.deletingLastPathComponent(), large.deletingLastPathComponent(),
+      "siblings under one whisperkit-coreml root")
+    XCTAssertEqual(transcriber.localModelFolder, tiny,
+      "the legacy accessor is the DEFAULT variant's folder")
+  }
+
+  /// Readiness is per variant: one model on disk says nothing about another.
+  func testExistingModelFolderAnswersForTheVariantAsked() throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "openai_whisper-tiny", modelDirectory: root)
+    let tinyFolder = transcriber.modelFolder(for: "openai_whisper-tiny")
+    for bundle in CaptionModelStore.requiredModelBundles {
+      let f = tinyFolder.appendingPathComponent("\(bundle).mlmodelc")
+      try FileManager.default.createDirectory(at: f, withIntermediateDirectories: true)
+      try Data([1]).write(to: f.appendingPathComponent("w"))
+    }
+    try Data("{}".utf8).write(to: tinyFolder.appendingPathComponent("config.json"))
+
+    XCTAssertEqual(transcriber.existingModelFolder(for: "openai_whisper-tiny"), tinyFolder)
+    XCTAssertNil(
+      transcriber.existingModelFolder(for: "openai_whisper-small_216MB"),
+      "having tiny must not make small look installed — that is the readiness lie "
+        + "that would skip a needed download")
+  }
+
+  // MARK: - Resolving a requested variant
+
+  func testNilAndTheDefaultResolveToTheDefault() {
+    XCTAssertEqual(CaptionsService.resolvedVariant(nil), WhisperKitTranscriber.defaultModel)
+    XCTAssertEqual(
+      CaptionsService.resolvedVariant(WhisperKitTranscriber.defaultModel),
+      WhisperKitTranscriber.defaultModel)
+    XCTAssertEqual(CaptionsService.modelVariant, WhisperKitTranscriber.defaultModel)
+  }
+
+  func testARealVariantIsHonoured() {
+    for v in ["openai_whisper-tiny", "openai_whisper-small_216MB", "openai_whisper-base"] {
+      XCTAssertEqual(CaptionsService.resolvedVariant(v), v)
+    }
+  }
+
+  /// The variant becomes a path component. Anything that could walk out of the
+  /// models tree falls back to the default instead of being trusted.
+  func testAPathLikeVariantIsRefused() {
+    for bad in [
+      "../../etc", "openai_whisper-../x", "openai_whisper-a/b", "openai_whisper-a\\b",
+      "/abs", "", "openai_whisper- spaced", "openai_whisper-ünïcode",
+    ] {
+      XCTAssertEqual(
+        CaptionsService.resolvedVariant(bad), WhisperKitTranscriber.defaultModel,
+        "\(bad.debugDescription) must not be used as a folder name")
+    }
+  }
+
+  func testANonWhisperNameIsRefused() {
+    XCTAssertEqual(
+      CaptionsService.resolvedVariant("distil-whisper_distil-large-v3"),
+      WhisperKitTranscriber.defaultModel)
+  }
+
+  /// In WhisperKit a `_turbo` SUFFIX is an extra context-prefill model, not
+  /// OpenAI's turbo release, and it is dead weight. Eight of the twenty-three
+  /// hub variants carry it, so the guard is not hypothetical.
+  func testTheTurboSuffixIsRefusedButTheTurboReleaseIsNot() {
+    for dead in [
+      "openai_whisper-large-v3_turbo",
+      "openai_whisper-large-v3_turbo_954MB",
+      "openai_whisper-large-v3-v20240930_turbo",
+      "openai_whisper-large-v3-v20240930_turbo_632MB",
+    ] {
+      XCTAssertEqual(
+        CaptionsService.resolvedVariant(dead), WhisperKitTranscriber.defaultModel,
+        "\(dead) is the context-prefill build and must not be downloaded")
+    }
+    // The real turbo RELEASE — the default — has no `_turbo` suffix at all.
+    XCTAssertTrue(CaptionsService.isAcceptableVariant(WhisperKitTranscriber.defaultModel))
+  }
+
+  /// Every existing caller builds options without naming a model; that must
+  /// still mean "the default", not an empty or garbage variant.
+  func testOptionsNameNoModelByDefault() {
+    XCTAssertNil(TranscriptionOptions.default.model)
+    XCTAssertNil(TranscriptionOptions.strict.model)
+  }
+}
+
+
+/// The hot swap, on the real engine with the real models: tiny, then large,
+/// then tiny again, on ONE transcriber that is never released in between.
+///
+/// Production rarely reaches this branch, because `endRun` releases the model
+/// after every job, so a swap is usually a cold load. That is exactly why it
+/// needs a deliberate test: the code that unloads one pipeline and builds
+/// another runs almost never, and a branch that runs almost never is where a
+/// leaked pipeline or a stale `residentVariant` would live unnoticed.
+///
+/// Opt-in, and skipped without both models on disk. It loads two Core ML
+/// models and can take minutes on a cold ANE cache, which is not something the
+/// fast suite should pay for, and it never downloads (CI has no models):
+///
+///   TEST_RUNNER_CLINGFY_RUN_MODEL_SWAP=1 xcodebuild test ... \
+///     -only-testing:RunnerTests/WhisperKitHotSwapTests
+final class WhisperKitHotSwapTests: XCTestCase {
+
+  private let tiny = "openai_whisper-tiny"
+  private let large = WhisperKitTranscriber.defaultModel
+
+  func testSwapsBetweenRealModelsWithoutReleasingInBetween() throws {
+    try XCTSkipUnless(
+      ProcessInfo.processInfo.environment["CLINGFY_RUN_MODEL_SWAP"] == "1",
+      "opt-in: set TEST_RUNNER_CLINGFY_RUN_MODEL_SWAP=1")
+
+    let modelsRoot = AppPaths.captionModelsDirectoryURLIfPresent()
+    let transcriber = WhisperKitTranscriber(modelDirectory: modelsRoot)
+    for variant in [tiny, large] {
+      try XCTSkipIf(
+        transcriber.existingModelFolder(for: variant) == nil,
+        "\(variant) is not downloaded; generate subtitles with it once in the dev app")
+    }
+    let before = CaptionModelStore.installedVariants(
+      root: CaptionModelStore.variantsRootURL()
+    ).map(\.variant).sorted()
+
+    let audio = try spokenSentence()
+    defer { try? FileManager.default.removeItem(at: audio) }
+
+    for variant in [tiny, large, tiny] {
+      var options = TranscriptionOptions.default
+      options.model = variant
+      options.language = "en"
+      let outcome = try transcriber.transcribe(
+        url: audio, options: options, progress: { _ in }, isCancelled: { false })
+
+      XCTAssertEqual(
+        transcriber.residentModelVariant, variant,
+        "after a job the resident pipeline is the one that job asked for")
+      let text = outcome.segments.map(\.text).joined(separator: " ").lowercased()
+      XCTAssertTrue(
+        text.contains("fox"), "\(variant) produced \"\(text)\", not the spoken sentence")
+    }
+
+    XCTAssertEqual(
+      CaptionModelStore.installedVariants(root: CaptionModelStore.variantsRootURL())
+        .map(\.variant).sorted(),
+      before,
+      "a swap between two downloaded models must not download or remove anything")
+
+    let released = expectation(description: "released")
+    Task {
+      _ = await transcriber.releaseModel()
+      released.fulfill()
+    }
+    wait(for: [released], timeout: 30)
+    XCTAssertNil(transcriber.residentModelVariant, "release clears the record with the pipeline")
+  }
+
+  /// A known sentence from the system voice, so the test needs no fixture.
+  private func spokenSentence() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_swap_\(UUID().uuidString).aiff")
+    let say = Process()
+    say.executableURL = URL(fileURLWithPath: "/usr/bin/say")
+    say.arguments = ["-o", url.path, "The quick brown fox jumps over the lazy dog."]
+    try say.run()
+    say.waitUntilExit()
+    try XCTSkipIf(say.terminationStatus != 0, "the system voice is unavailable")
+    return url
+  }
 }

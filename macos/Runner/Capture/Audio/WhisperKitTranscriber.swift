@@ -34,7 +34,14 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// source — so those variants are pure dead download weight.
   static let defaultModel = "openai_whisper-large-v3-v20240930_626MB"
 
-  private let model: String
+  /// The variant used when a job names none.
+  ///
+  /// Renamed from `model` when the variant became job data, and the rename is
+  /// the point: `loadedPipeline` used to read this field in three places (the
+  /// folder, the download, the config), and a job asking for a DIFFERENT
+  /// variant must not have any of them silently answer with this one. Every
+  /// read now has to choose between this default and the job's variant.
+  private let defaultVariant: String
   private let modelDirectory: URL
   private let queue = DispatchQueue(label: "com.clingfy.captions.asr", qos: .userInitiated)
   private var pipe: WhisperKit?
@@ -75,6 +82,20 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// where `pipe` is written, so the two cannot drift.
   private var modelResident = false
 
+  /// Which variant the resident pipeline is, or nil when none is loaded.
+  ///
+  /// Under `busyLock`, beside `modelResident`, and NOT "on the queue". The
+  /// engine-swap design's first draft got this wrong (§A.7.1, trap 1): `pipe`
+  /// is not queue-confined. `loadedPipeline` is awaited from an unstructured
+  /// Task, so its `pipe` read and write run on the cooperative pool, and what
+  /// serialises them is that `queue` is HELD by the blocked caller for that
+  /// Task's whole life. This value is also read from the main thread, for the
+  /// same reason `modelResident` is lock-guarded rather than queue-hopped.
+  ///
+  /// Written only together with `pipe`, through `setModelResident`, so the two
+  /// facts cannot drift apart.
+  private var residentVariant: String?
+
   var isEngineBusy: Bool {
     busyLock.lock()
     let running = engineBusy
@@ -97,16 +118,40 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     return modelResident
   }
 
+  /// The variant held in memory right now, or nil.
+  var residentModelVariant: String? {
+    busyLock.lock()
+    defer { busyLock.unlock() }
+    return residentVariant
+  }
+
   private func setEngineBusy(_ value: Bool) {
     busyLock.lock()
     engineBusy = value
     busyLock.unlock()
   }
 
-  private func setModelResident(_ value: Bool) {
+  /// Records whether weights are in memory, and WHICH ones, in one locked step.
+  ///
+  /// The two are a single fact about `pipe`, so they are written together and
+  /// never one without the other: "resident but no variant" or "a variant but
+  /// nothing resident" would each let the fast path below reuse the wrong
+  /// pipeline.
+  private func setModelResident(_ value: Bool, variant: String?) {
     busyLock.lock()
     modelResident = value
+    residentVariant = value ? variant : nil
     busyLock.unlock()
+  }
+
+  /// Whether the resident pipeline can serve a job asking for `requested`.
+  ///
+  /// The whole reason the fast path is not simply `if let pipe`: that returned
+  /// whatever was loaded, so a job naming a different variant would have run on
+  /// the wrong model and reported success. Pure, so the rule is pinned by a test
+  /// without loading 626 MB.
+  static func canReuseResident(residentVariant: String?, requested: String) -> Bool {
+    residentVariant == requested
   }
 
   /// Unloads the pipeline so the weights on disk can actually be removed.
@@ -143,7 +188,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
         }
         let current = pipe
         pipe = nil
-        setModelResident(false)
+        setModelResident(false, variant: nil)
         continuation.resume(returning: (true, current))
       }
     }
@@ -155,7 +200,7 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   }
 
   init(model: String = WhisperKitTranscriber.defaultModel, modelDirectory: URL) {
-    self.model = model
+    self.defaultVariant = model
     self.modelDirectory = modelDirectory
     // After `queue`, which has its own initialiser expression and is therefore
     // already assigned here. See the `drain` declaration for why this is not a
@@ -297,9 +342,14 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     let semaphore = DispatchSemaphore(value: 0)
     var result: Result<TranscriptionOutcome, Error> = .failure(TranscriptionError.cancelled)
 
+    // Resolved here, once, so the engine never consults the default again for
+    // this job: every read inside `loadedPipeline` uses this value.
+    let variant = options.model ?? defaultVariant
+
     let work = Task { [self] in
       do {
         let pipeline = try await loadedPipeline(
+          variant: variant,
           report: { fraction, phase in
             switch phase {
             case .downloadingModel: progress(.downloadingModel(fraction))
@@ -374,12 +424,16 @@ final class WhisperKitTranscriber: CaptionTranscriber {
 
   /// Where `WhisperKit.download` puts this variant once it has run.
   /// Exposed for tests: the download-skip decision is the whole bug.
-  var localModelFolder: URL {
+  var localModelFolder: URL { modelFolder(for: defaultVariant) }
+
+  /// Where WhisperKit puts `variant`. The variant is the leaf, which is what
+  /// lets several coexist on disk.
+  func modelFolder(for variant: String) -> URL {
     modelDirectory
       .appendingPathComponent("models", isDirectory: true)
       .appendingPathComponent("argmaxinc", isDirectory: true)
       .appendingPathComponent("whisperkit-coreml", isDirectory: true)
-      .appendingPathComponent(model, isDirectory: true)
+      .appendingPathComponent(variant, isDirectory: true)
   }
 
   /// The model already on disk, or nil.
@@ -402,16 +456,65 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// and two copies of "is this model installed" would drift — invisibly, since
   /// the symptom is a picker claiming a variant is ready and the engine then
   /// refetching it. Behaviour is unchanged; the three tests below pin it.
-  func existingModelFolder() -> URL? {
-    let url = localModelFolder
+  func existingModelFolder() -> URL? { existingModelFolder(for: defaultVariant) }
+
+  /// `variant` already on disk and loadable, or nil.
+  func existingModelFolder(for variant: String) -> URL? {
+    let url = modelFolder(for: variant)
     return CaptionModelStore.isCompleteModel(at: url) ? url : nil
   }
 
+  /// The pipeline for `variant`, loading it — and swapping out a different one —
+  /// if it is not already resident.
+  ///
+  /// THE ORDERING IS THE DESIGN (docs/editing-platform-plan.md §A.7.1). A swap
+  /// does three things, and they run in exactly this order:
+  ///
+  ///   1. Make the TARGET obtainable — find it on disk, or download it — while
+  ///      the resident pipeline is left completely untouched.
+  ///   2. Only then clear the resident pipeline, if it is a different variant.
+  ///   3. Load the target.
+  ///
+  /// Both obvious orderings are wrong, and each was considered and refused:
+  ///
+  /// - Unload first, load second: a fetch that fails — offline, a cancelled
+  ///   download, a 404 — leaves the user with no model at all, having traded a
+  ///   working one for nothing.
+  /// - Load first, clear never: if the user cancels after the unload but before
+  ///   the new pipeline is assigned, the task is abandoned via `drain.claim`
+  ///   and never reaches `pipe = created`. `pipe` is left pointing at a
+  ///   WhisperKit whose weights are gone while `modelResident` still says they
+  ///   are there; the next job takes the fast path and gets a dead pipeline.
+  ///   That is trap 2 in §A.7.1, the same shape as the interrupted-download bug
+  ///   `CaptionModelStore.isCompleteModel` exists for.
+  ///
+  /// With the target proven on disk BEFORE anything is cleared, a cancel at any
+  /// point leaves a consistent state: either the old model is still fully
+  /// loaded and labelled, or nothing is loaded and nothing claims to be. The
+  /// worst a cancelled swap costs is a reload — never a re-download, and never
+  /// a user stranded offline with no model.
+  ///
+  /// Serialised the way the rest of this file is: `queue` is held by the
+  /// blocked caller for this Task's whole life, so no other job and no
+  /// `releaseModel` can interleave; a cancelled task is covered by the drain,
+  /// which makes the next job wait and makes `releaseModel` decline.
+  ///
+  /// Rare in production, which is why it is spelled out: `CaptionsService`
+  /// releases the model after every job, so between jobs `pipe` is normally nil
+  /// and this takes the cold path whatever the variant. The swap branch runs
+  /// only when a job starts while another variant is still resident.
   private func loadedPipeline(
+    variant: String,
     report: @escaping (Double?, PipelinePhase) -> Void,
     isCancelled: @escaping () -> Bool
   ) async throws -> WhisperKit {
-    if let pipe { return pipe }
+    // Variant-aware. This used to be `if let pipe { return pipe }`, which
+    // handed a job whatever happened to be loaded.
+    if let pipe,
+      Self.canReuseResident(residentVariant: residentModelVariant, requested: variant)
+    {
+      return pipe
+    }
 
     // Downloaded explicitly rather than letting `WhisperKit(download: true)` do
     // it internally, because only this form yields a progress fraction. The
@@ -427,13 +530,14 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     // unconditionally told every user after the first that a 600 MB download
     // was happening when nothing was being downloaded, and made transcription
     // fail offline with the model sitting on disk.
+    // STEP 1 — the target, with the resident pipeline untouched.
     let folder: URL
-    if let existing = existingModelFolder() {
+    if let existing = existingModelFolder(for: variant) {
       folder = existing
     } else {
       report(nil, .downloadingModel)
       folder = try await WhisperKit.download(
-        variant: model,
+        variant: variant,
         downloadBase: modelDirectory,
         progressCallback: { progress in
           // Best-effort abort. `HubApi.snapshot` never checks task
@@ -455,11 +559,27 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     // and spent tens of seconds loading 626 MB for a job nobody was waiting on.
     if isCancelled() { throw TranscriptionError.cancelled }
 
+    // STEP 2 — the target is on disk, so it is now safe to let go of what is
+    // resident. Cleared BEFORE the unload completes, not after: `pipe` and the
+    // flags must never describe weights that are already gone. If the user
+    // cancels from here on, nothing is loaded and nothing claims to be, and the
+    // next job simply loads the target from disk.
+    if let old = pipe {
+      pipe = nil
+      setModelResident(false, variant: nil)
+      await old.unloadModels()
+      NativeLogger.i(
+        "Captions", "Released the previous speech model to load another",
+        context: ["variant": variant])
+      if isCancelled() { throw TranscriptionError.cancelled }
+    }
+
     // Loading and Core ML specialisation. Genuinely indeterminate and not
     // interruptible, but it is tens of seconds rather than minutes.
     report(nil, .preparing)
+    // STEP 3 — load the target.
     let config = WhisperKitConfig(
-      model: model,
+      model: variant,
       // Never the default. WhisperKit's HubApi defaults downloadBase to
       // ~/Documents/huggingface, which for an unsandboxed Developer-ID app is
       // the user's real Documents folder — visible clutter in a paid app, and
@@ -477,8 +597,10 @@ final class WhisperKitTranscriber: CaptionTranscriber {
       download: false
     )
     let created = try await WhisperKit(config)
+    // Adjacent, with no suspension between them, so `pipe` and its label
+    // cannot split even for an abandoned task completing late.
     pipe = created
-    setModelResident(true)
+    setModelResident(true, variant: variant)
     return created
   }
 

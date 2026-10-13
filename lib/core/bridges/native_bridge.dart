@@ -997,6 +997,11 @@ class NativeBridge {
     bool useMic = true,
     bool useSystem = true,
     String? language,
+
+    /// The WhisperKit variant to run, or null for native's default. Omitted
+    /// from the payload when null, so an older native build sees exactly the
+    /// arguments it always did.
+    String? variant,
   }) async {
     final raw = await _nativeBridge
         .invokeMethod<Map<dynamic, dynamic>>(NativeMethod.generateCaptions, {
@@ -1004,6 +1009,7 @@ class NativeBridge {
           'useMic': useMic,
           'useSystem': useSystem,
           if (language != null) 'language': language,
+          if (variant != null) 'variant': variant,
         });
     if (raw == null) {
       return const TranscriptionResult(
@@ -1081,10 +1087,13 @@ class NativeBridge {
   /// malformed reply, like [captionsCapability] and unlike
   /// [getStorageSnapshot]: a settings card that cannot render is not worth
   /// throwing over, and Windows genuinely has no model.
-  Future<CaptionModelInfo> getCaptionModelInfo() async {
+  /// [variant] is the model the user has chosen, so native reports THAT one as
+  /// in use. Dart owns the preference; native does not keep a second copy.
+  Future<CaptionModelInfo> getCaptionModelInfo({String? variant}) async {
     try {
       final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(
         NativeMethod.getCaptionModelInfo,
+        variant == null ? null : {'variant': variant},
       );
       return CaptionModelInfo.fromMap(raw);
     } on MissingPluginException {

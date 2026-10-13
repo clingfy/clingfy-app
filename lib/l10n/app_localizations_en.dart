@@ -2800,7 +2800,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get captionsFirstRunDownload =>
-      'The first run downloads a speech model. This happens once.';
+      'Downloading the speech model. Each model downloads once.';
 
   @override
   String get captionsFailed => 'Couldn’t generate subtitles.';
@@ -2902,4 +2902,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get storageCaptionModelIncomplete => 'unfinished download';
+
+  @override
+  String get captionsModel => 'Speech model';
+
+  @override
+  String captionsModelBest(int mb) {
+    return 'Best accuracy (about $mb MB)';
+  }
+
+  @override
+  String captionsModelBalanced(int mb) {
+    return 'Balanced (about $mb MB)';
+  }
+
+  @override
+  String captionsModelFast(int mb) {
+    return 'Fastest (about $mb MB)';
+  }
 }

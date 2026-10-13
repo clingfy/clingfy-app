@@ -323,7 +323,9 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.getStorageSnapshot(result: result)
 
       case FlutterToNativeMethod.getCaptionModelInfo:
-        self.screenRecorder.getCaptionModelInfo(result: result)
+        self.screenRecorder.getCaptionModelInfo(
+          variant: (call.arguments as? [String: Any])?["variant"] as? String,
+          result: result)
 
       case FlutterToNativeMethod.deleteCaptionModel:
         // Refused here rather than inside the delete: the UI's copy of `busy`
@@ -885,6 +887,9 @@ class MainFlutterWindow: NSWindow {
             useMic: (args["useMic"] as? Bool) ?? true,
             useSystem: (args["useSystem"] as? Bool) ?? true,
             language: args["language"] as? String,
+            // Absent on payloads from before the picker, which run the default
+            // exactly as they always did. Validated in the service, not here.
+            variant: args["variant"] as? String,
             onProgress: { [weak self] progress in
               self?.channel?.invokeMethod(
                 "updateExportProgress", arguments: progress.toFlutter())

@@ -1,3 +1,4 @@
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:clingfy/app/config/build_config.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
 import 'package:clingfy/app/home/post_processing/post_processing_controller.dart';
@@ -83,6 +84,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         List<Caption> captions,
         bool captionsUseMic,
         String? captionsLanguage,
+        CaptionsModel captionsModel,
         bool captionsUseSystem,
         bool isGeneratingCaptions,
         bool isCancellingCaptions,
@@ -126,6 +128,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
         captions: p.captions,
         captionsUseMic: p.captionsUseMic,
         captionsLanguage: p.captionsLanguage,
+        captionsModel: p.captionsModel,
         captionsUseSystem: p.captionsUseSystem,
         isGeneratingCaptions: p.isGeneratingCaptions,
         isCancellingCaptions: p.isCancellingCaptions,
@@ -193,11 +196,14 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               captions: vm.captions,
               captionsUseMic: vm.captionsUseMic,
               captionsLanguage: vm.captionsLanguage,
+              captionsModel: vm.captionsModel,
               captionsUseSystem: vm.captionsUseSystem,
               isGeneratingCaptions: vm.isGeneratingCaptions,
               isCancellingCaptions: vm.isCancellingCaptions,
               isCaptionsEngineBusyOffScreen: vm.isCaptionsEngineBusyOffScreen,
               captionsProgress: vm.captionsProgress,
+              isDownloadingCaptionsModel:
+                  vm.captionsStage == ProgressStage.downloadingModel,
               captionsStageLabel: _captionsStageLabel(
                 context,
                 vm.captionsStage,
@@ -231,6 +237,7 @@ class PostProcessingSidebarContainer extends StatelessWidget {
               onVoiceCleanupChanged: post.setVoiceCleanup,
               onCaptionsUseMicChanged: post.setCaptionsUseMic,
               onCaptionsLanguageChanged: post.setCaptionsLanguage,
+              onCaptionsModelChanged: post.setCaptionsModel,
               onCaptionsUseSystemChanged: post.setCaptionsUseSystem,
               onGenerateCaptions: () => unawaited(post.generateCaptions()),
               onCancelCaptions: () => unawaited(post.cancelCaptions()),

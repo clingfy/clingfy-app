@@ -197,6 +197,19 @@ struct TranscriptionOptions: Equatable {
   var suppressRepeats: Bool
   var repetitionWindowMs: Int
 
+  /// Which speech model to run, or nil for the engine's default.
+  ///
+  /// Opaque above the engine on purpose. This file is the engine-agnostic seam
+  /// — the job and the service are testable with a fake — so the string is
+  /// never interpreted here; only the concrete engine knows what a variant
+  /// name means. It rides the options rather than a new protocol parameter so
+  /// every existing transcriber and test fake keeps compiling unchanged.
+  ///
+  /// This is the "variant as job data" half of the engine-swap design
+  /// (docs/editing-platform-plan.md §A.7.1): the model is a property of the
+  /// JOB, and the one engine instance loads whichever the job names.
+  var model: String? = nil
+
   static let `default` = TranscriptionOptions(
     language: nil,
     noSpeechThreshold: 0.6,

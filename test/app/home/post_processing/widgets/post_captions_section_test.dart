@@ -1,3 +1,4 @@
+import 'package:clingfy/core/captions/captions_model.dart';
 import 'package:clingfy/app/home/post_processing/widgets/post_captions_section.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
@@ -8,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/captions/caption_reflow.dart';
+import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 
 /// The captions panel: what it refuses to offer, when it offers it, and what
 /// an edit actually commits.
@@ -51,10 +53,13 @@ void main() {
     bool isProcessing = false,
     bool engineBusyOffScreen = false,
     bool hasEverGenerated = false,
+    bool isDownloadingModel = false,
     bool failed = false,
     ValueChanged<bool>? onUseMicChanged,
     String? language,
     ValueChanged<String?>? onLanguageChanged,
+    CaptionsModel model = CaptionsModel.best,
+    ValueChanged<CaptionsModel>? onModelChanged,
     VoidCallback? onGenerate,
     VoidCallback? onCancel,
     void Function(String, String)? onCueTextChanged,
@@ -74,9 +79,12 @@ void main() {
       isProcessing: isProcessing,
       engineBusyOffScreen: engineBusyOffScreen,
       hasEverGenerated: hasEverGenerated,
+      isDownloadingModel: isDownloadingModel,
       failed: failed,
       language: language,
       onLanguageChanged: onLanguageChanged ?? (_) {},
+      model: model,
+      onModelChanged: onModelChanged ?? (_) {},
       onUseMicChanged: onUseMicChanged ?? (_) {},
       onUseSystemChanged: (_) {},
       onGenerate: onGenerate ?? () {},
@@ -413,17 +421,39 @@ void main() {
     expect(bar.value, isNull);
   });
 
-  testWidgets('the first-run download notice is shown once, not forever', (
+  /// Keyed off the job's real stage, not history. With three models, someone
+  /// who has transcribed before still downloads each new one the first time,
+  /// and "never generated" stopped meaning "about to download".
+  testWidgets('the download notice follows the real download, not history', (
     tester,
   ) async {
-    final l10n = await AppLocalizations.delegate.load(const Locale('en'));
-    await tester.pumpWidget(host(section(isGenerating: true)));
-    expect(find.text(l10n.captionsFirstRunDownload), findsOneWidget);
+    const notice = Key('captions_download_notice');
+    await tester.pumpWidget(
+      host(section(isGenerating: true, isDownloadingModel: true)),
+    );
+    expect(find.byKey(notice), findsOneWidget);
 
     await tester.pumpWidget(
-      host(section(isGenerating: true, hasEverGenerated: true)),
+      host(
+        section(
+          isGenerating: true,
+          isDownloadingModel: true,
+          hasEverGenerated: true,
+        ),
+      ),
     );
-    expect(find.text(l10n.captionsFirstRunDownload), findsNothing);
+    expect(
+      find.byKey(notice),
+      findsOneWidget,
+      reason: 'a second model downloads even after a first transcript',
+    );
+
+    await tester.pumpWidget(host(section(isGenerating: true)));
+    expect(
+      find.byKey(notice),
+      findsNothing,
+      reason: 'a model already on disk is not downloading',
+    );
   });
 
   // ---- Results ---------------------------------------------------------
@@ -1038,6 +1068,62 @@ void main() {
         ),
       );
       expect(find.byKey(const Key('captions_language')), findsNothing);
+    });
+  });
+
+  group('speech model picker', () {
+    const modelKey = Key('captions_model');
+
+    testWidgets('choosing a model reports it', (tester) async {
+      final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+      CaptionsModel? reported;
+      await tester.pumpWidget(
+        host(section(onModelChanged: (m) => reported = m)),
+      );
+
+      await tester.tap(find.byKey(modelKey));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(l10n.captionsModelFast(75)).last);
+      await tester.pumpAndSettle();
+
+      expect(reported, CaptionsModel.fast);
+    });
+
+    testWidgets('every row is labelled with its own size', (tester) async {
+      final l10n = await AppLocalizations.delegate.load(const Locale('en'));
+      await tester.pumpWidget(host(section(model: CaptionsModel.balanced)));
+      expect(find.text(l10n.captionsModelBalanced(216)), findsOneWidget);
+
+      await tester.tap(find.byKey(modelKey));
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.captionsModelBest(626)), findsWidgets);
+      expect(find.text(l10n.captionsModelFast(75)), findsWidgets);
+    });
+
+    /// A change mid-run would leave the running job on the old model while the
+    /// picker shows the new one, and the transcript would then be recorded as
+    /// coming from a model the user can see was not used.
+    for (final (name, generating, processing) in [
+      ('generating', true, false),
+      ('processing', false, true),
+    ]) {
+      testWidgets('locked while $name', (tester) async {
+        await tester.pumpWidget(
+          host(section(isGenerating: generating, isProcessing: processing)),
+        );
+        final picker = tester.widget<PlatformDropdown<CaptionsModel>>(
+          find.byKey(modelKey),
+        );
+        expect(picker.onChanged, isNull);
+      });
+    }
+
+    testWidgets('live when idle', (tester) async {
+      await tester.pumpWidget(host(section()));
+      final picker = tester.widget<PlatformDropdown<CaptionsModel>>(
+        find.byKey(modelKey),
+      );
+      expect(picker.onChanged, isNotNull);
     });
   });
 }
