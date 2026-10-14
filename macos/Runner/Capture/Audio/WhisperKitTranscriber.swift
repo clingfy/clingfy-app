@@ -67,6 +67,20 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// model. Nothing outside this file writes it.
   let drain: EngineDrain
 
+  /// The unload `releaseModel` started, while it is still running.
+  ///
+  /// `releaseModel` takes `pipe` on the queue and unloads OFF it, so that a
+  /// slow teardown does not hold the queue. That left a window: a second
+  /// caller arriving mid-unload found `pipe == nil` and reported "released" at
+  /// once, and the delete path removed the model while Core ML was still
+  /// tearing it down — breaking the unload-then-remove order the delete is
+  /// built on. A job starting in that window could also cold-load a second
+  /// pipeline beside the one still going. Both now wait on this.
+  ///
+  /// Internal, not private, for the same reason as `drain`: a test can put an
+  /// unload in flight without a model.
+  let unloads = UnloadTracker()
+
   /// Guards `engineBusy`, which is read from the main thread by the delete path
   /// while the ASR queue writes it.
   private let busyLock = NSLock()
@@ -114,8 +128,12 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// moment the delete is refused anyway.
   var isModelResident: Bool {
     busyLock.lock()
-    defer { busyLock.unlock() }
-    return modelResident
+    let resident = modelResident
+    busyLock.unlock()
+    // Still true while an unload is tearing the weights down: they are in
+    // memory until it finishes, and saying otherwise is the same early answer
+    // the delete path used to act on.
+    return resident || unloads.isUnloading
   }
 
   /// The variant held in memory right now, or nil.
@@ -171,8 +189,8 @@ final class WhisperKitTranscriber: CaptionTranscriber {
   /// mmapped while an abandoned download was writing more of them.
   @discardableResult
   func releaseModel() async -> Bool {
-    let outcome: (released: Bool, pipeline: WhisperKit?) = await withCheckedContinuation {
-      continuation in
+    let outcome: (released: Bool, unload: Task<Void, Never>?, ownsUnload: Bool) =
+      await withCheckedContinuation { continuation in
       queue.async { [self] in
         // Skipped while a cancelled job unwinds. That task owns the engine and
         // may be assigning a freshly loaded pipeline into `pipe` right now;
@@ -183,20 +201,54 @@ final class WhisperKitTranscriber: CaptionTranscriber {
         if drain.isDraining {
           NativeLogger.i(
             "Captions", "Kept the speech model loaded: a cancelled job is still unwinding")
-          continuation.resume(returning: (false, nil))
+          continuation.resume(returning: (false, nil, false))
           return
         }
-        let current = pipe
+        guard let current = pipe else {
+          // Nothing resident, but an earlier release may still be tearing the
+          // weights down. "Released" must mean gone, so hand back THAT unload
+          // to wait on rather than answering now.
+          continuation.resume(returning: (true, unloads.inFlight, false))
+          return
+        }
+        // Registered BEFORE residency is cleared, so `isModelResident` never
+        // reads false while these weights are still in memory: it ORs the two.
+        // Started here, on the queue, so it is registered before the queue lets
+        // anyone else in, and a caller queued behind this block sees it.
+        let unload = unloads.start { await current.unloadModels() }
         pipe = nil
         setModelResident(false, variant: nil)
-        continuation.resume(returning: (true, current))
+        continuation.resume(returning: (true, unload, true))
       }
     }
     guard outcome.released else { return false }
-    guard let pipeline = outcome.pipeline else { return true }
-    await pipeline.unloadModels()
-    NativeLogger.i("Captions", "Released the speech model from memory")
+    if let unload = outcome.unload, !outcome.ownsUnload {
+      NativeLogger.i("Captions", "Waiting for the speech model to finish unloading")
+      await unload.value
+    } else {
+      await outcome.unload?.value
+    }
+    if outcome.ownsUnload {
+      NativeLogger.i("Captions", "Released the speech model from memory")
+    }
     return true
+  }
+
+  func removeModelFiles(_ remove: @escaping () -> Int64) async -> Int64? {
+    await withCheckedContinuation { continuation in
+      queue.async { [self] in
+        // On the queue, so this cannot interleave with a job's load. A job
+        // already past `setEngineBusy` is refused here; one that arrives later
+        // queues behind this block and then finds no files, so it downloads
+        // rather than loading a folder that is being removed. Busyness also
+        // covers a cancelled job's drain, which may still be writing files.
+        if isEngineBusy || unloads.isUnloading {
+          continuation.resume(returning: nil)
+          return
+        }
+        continuation.resume(returning: remove())
+      }
+    }
   }
 
   init(model: String = WhisperKitTranscriber.defaultModel, modelDirectory: URL) {
@@ -206,6 +258,13 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     // already assigned here. See the `drain` declaration for why this is not a
     // `lazy var`.
     self.drain = EngineDrain(queue: queue)
+  }
+
+  /// Test seam: puts an unload in flight, as `releaseModel` would after
+  /// taking a loaded pipeline, without needing one.
+  @discardableResult
+  func beginUnloadForTesting(_ work: @escaping () async -> Void) -> Task<Void, Never> {
+    unloads.start(work)
   }
 
   /// Test seam: takes the engine claim a cancelled job would have left behind.
@@ -565,12 +624,22 @@ final class WhisperKitTranscriber: CaptionTranscriber {
     // cancels from here on, nothing is loaded and nothing claims to be, and the
     // next job simply loads the target from disk.
     if let old = pipe {
+      // Through the tracker like any other unload, so residency stays true
+      // until these weights are actually gone.
+      let unload = unloads.start { await old.unloadModels() }
       pipe = nil
       setModelResident(false, variant: nil)
-      await old.unloadModels()
+      await unload.value
       NativeLogger.i(
         "Captions", "Released the previous speech model to load another",
         context: ["variant": variant])
+      if isCancelled() { throw TranscriptionError.cancelled }
+    }
+
+    // An earlier `releaseModel` may still be tearing a pipeline down off the
+    // queue. Loading now would hold two models at once, so let it finish.
+    if let inFlight = unloads.inFlight {
+      await inFlight.value
       if isCancelled() { throw TranscriptionError.cancelled }
     }
 
@@ -769,6 +838,57 @@ final class EngineDrain {
     lock.lock()
     // Only if no newer job has been abandoned on top of this one.
     if generation == self.generation { pending = nil }
+    lock.unlock()
+  }
+}
+
+/// The model unload `releaseModel` started, while it runs.
+///
+/// A separate type for the reason `EngineDrain` is one: the race lived in
+/// lines that cannot run without WhisperKit, so this is what a test can drive.
+///
+/// ## Why a generation number
+///
+/// An unload that finishes late must not clear the record of a newer one. Each
+/// start carries a number and only clears itself.
+final class UnloadTracker {
+
+  /// Read from the main thread (`isModelResident`) while the release path and
+  /// the unload itself write it.
+  private let lock = NSLock()
+  private var task: Task<Void, Never>?
+  private var generation = 0
+
+  /// The unload still running, or nil.
+  var inFlight: Task<Void, Never>? {
+    lock.lock()
+    defer { lock.unlock() }
+    return task
+  }
+
+  var isUnloading: Bool { inFlight != nil }
+
+  /// Runs `work` as the in-flight unload and returns its task.
+  ///
+  /// The lock is held across creating the task and recording it, so an unload
+  /// that completes instantly cannot clear itself before it was recorded and
+  /// leave a finished task looking live forever.
+  func start(_ work: @escaping () async -> Void) -> Task<Void, Never> {
+    lock.lock()
+    defer { lock.unlock() }
+    generation += 1
+    let mine = generation
+    let started = Task { [self] in
+      await work()
+      finish(mine)
+    }
+    task = started
+    return started
+  }
+
+  private func finish(_ generation: Int) {
+    lock.lock()
+    if generation == self.generation { task = nil }
     lock.unlock()
   }
 }

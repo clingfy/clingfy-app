@@ -72,6 +72,17 @@ protocol CaptionTranscriber {
   ///   entirely, and `deleteCaptionModel` removed 730 MB on the strength of it.
   @discardableResult
   func releaseModel() async -> Bool
+
+  /// Runs `remove` (which deletes the model files) only while nothing can be
+  /// reading them, and answers what it freed, or nil when it refused.
+  ///
+  /// Separate from `releaseModel` because a released model can be picked up
+  /// again before the files go: a job that started during the unload has
+  /// already seen the files on disk and is about to load them. The check and
+  /// the removal therefore happen in one step on the engine's own queue, where
+  /// a job either already holds the engine (refused) or has to wait for the
+  /// removal and then finds nothing to load (and downloads).
+  func removeModelFiles(_ remove: @escaping () -> Int64) async -> Int64?
 }
 
 extension CaptionTranscriber {
@@ -81,6 +92,7 @@ extension CaptionTranscriber {
   /// A double holds no weights, so it is trivially not resident.
   var isModelResident: Bool { false }
   func releaseModel() async -> Bool { true }
+  func removeModelFiles(_ remove: @escaping () -> Int64) async -> Int64? { remove() }
 }
 
 /// What a transcriber is doing, and how far in.

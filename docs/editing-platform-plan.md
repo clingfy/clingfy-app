@@ -439,14 +439,27 @@ it. Driven live through the dev app: the default produced the exact sentence in
 model and transcribed in 34s, `transcribedBy` recorded each, and the Storage
 card listed both with tiny marked in use.
 
-**Open follow-up, found by the review and older than this work:** two
-`releaseModel` callers can overlap. The first takes `pipe` and unloads off the
-queue; a second (Storage delete, or the export preamble) then sees `pipe == nil`
-and reports "released" while that unload is still running, so delete can remove
-files Core ML is still tearing down, and a new job can cold-load beside it. The
-window is the length of `unloadModels()` and macOS keeps an unlinked mmap valid,
-so it breaks the documented unload-then-remove order rather than crashing. Fix:
-keep the in-flight unload as a `Task` that later callers await.
+**Fixed 2026-10-14: overlapping `releaseModel` callers.** This was found by
+review and predates the swap. The first caller took `pipe` and unloaded off the
+queue. A second caller (the Storage delete, or the export preamble) then saw
+`pipe == nil` and reported "released" mid-unload, so the files were removed
+while Core ML was still tearing them down. The fix has four parts:
+
+- `UnloadTracker` records the in-flight unload. A later release waits for it,
+  and so does a cold load, so two pipelines are never held at once.
+- `isModelResident` stays true until the weights are gone.
+- The swap unload goes through the same tracker.
+- Waiting surfaced a second ordering. A job that starts during the unload has
+  already seen the files and is about to load them. So the delete no longer
+  removes as soon as "released" comes back. `removeModelFiles` checks
+  busyness and removes in one step on the engine's queue, behind a
+  service-level `isBusy` check that sees a job from `beginRun` onwards. Either
+  the job holds the engine and the delete is refused, or the job queues behind
+  the removal and then downloads.
+
+Tests cover each part without a model. These mutations all fail them: the
+original early answer, the missing cold-load wait, the removal ignoring
+busyness, the generation check, and residency ignoring the unload.
 
 **Decided 2026-10-13: the variant is a PERSISTED preference**, not per-recording.
 
