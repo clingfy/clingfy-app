@@ -1211,10 +1211,10 @@ struct CompositionParams: Equatable {
   /// `zoomSegments`) so existing `CompositionParams(...)` call sites that
   /// predate the preset feature compile unchanged.
   var backgroundPreset: CanvasBackgroundPreset?
-  /// Canvas-wide color grade baked into the screen content. Defaulted `var`
-  /// (like `zoomSegments` / `backgroundPreset`) so existing call sites compile
-  /// unchanged. `nil` or identity = no color pass.
-  var colorGrade: ColorGrade?
+  // No `colorGrade` here. It used to sit on this struct with a writer and no
+  // reader: the grade is applied in the export writer loop and handed to the
+  // validator as its own argument, so a field here only made it look as if the
+  // composition carried it.
 }
 
 private enum AudioTapSampleType {

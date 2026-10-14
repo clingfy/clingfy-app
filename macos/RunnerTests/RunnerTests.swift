@@ -4358,9 +4358,9 @@ final class LetterboxExporterTests: XCTestCase {
   /// A colour-graded export must survive the final-export validator.
   ///
   /// The grade is applied in the WRITER LOOP (`ColorGradeRenderer.apply`),
-  /// never in the composition -- `CompositionParams.colorGrade` has never been
-  /// read by anything. So the validator renders an UNGRADED reference and
-  /// compares it against a GRADED file, charging the whole difference the user
+  /// never in the composition (which carries no grade at all). So the
+  /// validator used to render an UNGRADED reference and compare it against a
+  /// GRADED file, charging the whole difference the user
   /// deliberately asked for to a budget sized for pipeline transfer error. The
   /// validator deletes what it rejects, so this destroyed finished exports;
   /// measured on light-mode screen content, exposure -0.25 -- a quarter of one
@@ -10859,8 +10859,8 @@ final class SourceAudioBitRateTests: XCTestCase {
 /// AFTER column proves nothing. AFTER declares the grade, and must land near
 /// the identity floor.
 ///
-/// The question: `CompositionParams.colorGrade` (CompositionBuilder.swift:1217)
-/// is never read, so the export composition is UNGRADED, while the final file
+/// The question: the export composition carries no grade (the grade is applied
+/// in the writer loop instead), so the composition is UNGRADED, while the final file
 /// IS graded in the writer loop (LetterboxExporter.swift:2765). The
 /// final-export validator then compares the two and DELETES the file when the
 /// whole-frame average channel delta exceeds 0.10. This measures how big that
@@ -11024,7 +11024,7 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
 
     // The reference composition, built exactly as production builds it — and
     // note that it is built WITHOUT any grade, because there is no way to give
-    // it one: `CompositionParams.colorGrade` is declared and never read.
+    // it one: the composition carries no grade.
     let composition = try XCTUnwrap(
       CompositionBuilder().buildExport(
         asset: AVAsset(url: sourceURL),

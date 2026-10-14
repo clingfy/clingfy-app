@@ -174,12 +174,13 @@ if [[ "$http_code" != "200" ]]; then
   log_error "Telegram Response: $body"
   # Deliberately NOT fatal.
   #
-  # On the success path this runs AFTER "Step 5: Publish Release" and BEFORE
-  # "Step 6: Create Git Tag" (azure-pipelines/release-prod.yml). Exiting non-zero
-  # here therefore leaves a release that is fully built, notarized, published to
-  # the CDN and live on the appcast — but untagged, because the pipeline stops.
-  # That happened on 1.0.7: users were being offered the update while the repo
-  # had no v1.0.7 tag.
+  # In the old Azure lane (removed 2026-10-14) this ran AFTER "Step 5: Publish
+  # Release" and BEFORE "Step 6: Create Git Tag", so exiting non-zero left a
+  # release fully built, notarized, published to the CDN and live on the appcast
+  # — but untagged, because the pipeline stopped. That happened on 1.0.7: users
+  # were offered the update while the repo had no v1.0.7 tag. The GitHub lane
+  # tags before it notifies, but a notification failing a release that already
+  # shipped is still wrong, so this stays non-fatal.
   #
   # A chat notification is not a release gate. Telegram being down, a rotated
   # token, or an over-long message must never cost the tag. The failure is

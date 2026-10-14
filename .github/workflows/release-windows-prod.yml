@@ -1,7 +1,8 @@
 name: Release - Windows production
 
 # PHASE C of the Azure Pipelines -> GitHub Actions release migration.
-# GitHub counterpart of azure-pipelines/windows-release-prod.yml.
+# Replaced azure-pipelines/windows-release-prod.yml, which was removed on 2026-10-14 with the
+# rest of the Azure setup (decommissioned 2026-09-15).
 #
 # Manual dispatch from a release/* branch only. The branch restriction is the job-level
 # `if: startsWith(github.ref, 'refs/heads/release/')` below, and the AWS role's own
@@ -9,12 +10,12 @@ name: Release - Windows production
 # time at the credentials step, so a run from any other branch cannot publish even if that
 # `if:` is edited away.
 #
-# There is NO required reviewer. This header used to claim one; measured 2026-09-19 the
-# `production` environment has protection_rules: [] and deployment_branch_policy: null.
-# Nothing stands between clicking "Run workflow" and an immutable publish to clingfy.com/updates
-# — and the role deliberately has no s3:DeleteObject, so a mistaken publish cannot be deleted,
-# only superseded by a higher version. Add a required reviewer in
-# Settings → Environments → production if that gap matters.
+# A required reviewer (nabil-hfz) gates the `production` environment since 2026-10-14.
+# Before that it had protection_rules: [] (measured 2026-09-19), and nothing stood between
+# clicking "Run workflow" and an immutable publish to clingfy.com/updates. That matters
+# because the role deliberately has no s3:DeleteObject: a mistaken publish cannot be
+# deleted, only superseded by a higher version. Admin bypass is still allowed, and there is
+# no deployment branch policy; the AWS role's trust policy is what pins release/*.
 #
 # Ships UNSIGNED (decision D3): 03_sign.ps1
 # skips with a loud warning when no WIN_SIGN_* material is present, so users see

@@ -166,7 +166,10 @@ The seams as they now stand:
   tree); `windows/runner/preview/preview_compositor.cpp`.
 - **Export bake:** `CompositionBuilder.swift`
   (`AVMutableVideoComposition` + `AVVideoCompositionCoreAnimationTool`) /
-  the Windows MF encoder.
+  the Windows MF encoder. **The colour grade is the exception:** it is applied
+  in `LetterboxExporter`'s writer loop (`ColorGradeRenderer.apply`), not in the
+  composition, which carries no grade. The final-export validator receives the
+  grade as its own argument and grades its reference to match.
 - **Durable artifact:** the `.clingfyproj` bundle.
 
 ## A. The foundation (Phase 0) — what was actually built

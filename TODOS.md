@@ -119,11 +119,12 @@ The inline path explicitly does not grade it; the pre-styled path grades it as p
 the whole canvas. Those disagree today, and that is a product question, not a
 validator one.
 
-**Also still open:** `CompositionParams.colorGrade` (`CompositionBuilder.swift:1217`)
-is still declared and never read. Deleting it is behaviourally inert — nothing compares
-two `CompositionParams` — but `docs/editing-platform-plan.md:369-375` still names
-`CompositionBuilder` as the export-bake seat. Decide whether the composition will ever
-be grade-aware before removing the field.
+**Resolved 2026-10-14:** the dead `CompositionParams.colorGrade` field is gone. It had
+one writer and no reader. The decision it was waiting on is settled by what shipped: the
+grade is applied in the export writer loop (`LetterboxExporter`), and the validator
+receives it as its own argument. If the composition ever becomes grade-aware, add the
+field back together with the code that reads it. `docs/editing-platform-plan.md` now names
+the writer loop as the colour exception to the `CompositionBuilder` bake seat.
 
 ### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 

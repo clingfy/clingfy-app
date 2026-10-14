@@ -1,7 +1,8 @@
 name: Release - Windows dev channel
 
 # PHASE A of the Azure Pipelines -> GitHub Actions release migration.
-# GitHub counterpart of azure-pipelines/windows-dev-channel.yml.
+# Replaced azure-pipelines/windows-dev-channel.yml, which was removed on 2026-10-14 with the
+# rest of the Azure setup (decommissioned 2026-09-15).
 #
 # No Apple signing anywhere in this lane, which is why it migrates first: it
 # isolates the one genuinely hard problem, the build number.
@@ -16,7 +17,7 @@ name: Release - Windows dev channel
 #
 #   1. Run "Release plumbing check" for dev, with write_probe on. Green?
 #   2. Comment out the `trigger:` block in azure-pipelines/windows-dev-channel.yml
-#      (or disable that pipeline in the ADO UI).
+#      (or disable that pipeline in the ADO UI). Historical: that lane is gone.
 #   3. Set GH_RELEASE_LANES_ENABLED=true.
 #   4. Push to develop and confirm a tester box still sees the update.
 #
