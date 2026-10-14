@@ -332,6 +332,197 @@ final class WhisperKitTranscriberTests: XCTestCase {
     XCTAssertTrue(afterDrain, "and once the abandoned task is gone, releasing works again")
   }
 
+  // MARK: - An unload already in flight
+
+  /// The race this exists for. `releaseModel` takes `pipe` on the queue and
+  /// unloads off it; a second caller arriving mid-unload found `pipe == nil` and
+  /// answered "released" at once. The second caller that matters is the
+  /// Storage delete, which then removed the model while Core ML was still
+  /// tearing it down. "Released" has to mean the weights are gone.
+  func testASecondReleaseWaitsForTheUnloadAlreadyRunning() async throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    let unloading = TestFlag()
+    transcriber.beginUnloadForTesting { await unloading.waitUntilSet() }
+
+    XCTAssertTrue(
+      transcriber.isModelResident,
+      "the weights are in memory until the unload finishes, so say so")
+
+    let returned = TestFlag()
+    let second = Task {
+      let released = await transcriber.releaseModel()
+      returned.set()
+      return released
+    }
+    // Long enough for the old early answer to land if it is going to.
+    try await Task.sleep(nanoseconds: 300_000_000)
+    XCTAssertFalse(
+      returned.isSet, "reported released while the previous unload was still running")
+
+    unloading.set()
+    let released = await second.value
+    XCTAssertTrue(released)
+    XCTAssertFalse(transcriber.isModelResident)
+  }
+
+  /// The other half of the race: a job cold-loading while an earlier release
+  /// is still tearing a pipeline down would hold two models at once. The load
+  /// must wait for that unload.
+  ///
+  /// Reached with no real model: an empty but complete-looking install skips
+  /// the download, and `report(nil, .preparing)` is the first thing after the
+  /// wait, so a second `.preparing` (the first is the audio decode) is the
+  /// signal the load went ahead. The fake weights then fail to load, which is
+  /// the expected end once the gate opens.
+  func testAColdLoadWaitsForAnUnloadStillRunning() throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    try installModel(Self.completeInstall, for: transcriber)
+    let audio = try writeTone(in: root, named: "tone.m4a", seconds: 1)
+
+    let unloading = TestFlag()
+    transcriber.beginUnloadForTesting { await unloading.waitUntilSet() }
+
+    let lock = NSLock()
+    var preparing = 0
+    let finished = expectation(description: "transcribe returned")
+    DispatchQueue.global().async {
+      _ = try? transcriber.transcribe(
+        url: audio, options: .default,
+        progress: { p in
+          guard p.phase == .preparing else { return }
+          lock.lock()
+          preparing += 1
+          lock.unlock()
+        },
+        isCancelled: { false })
+      finished.fulfill()
+    }
+    func preparingCount() -> Int {
+      lock.lock()
+      defer { lock.unlock() }
+      return preparing
+    }
+
+    XCTAssertTrue(waitUntil { preparingCount() >= 1 }, "the decode never reported")
+    Thread.sleep(forTimeInterval: 0.5)
+    XCTAssertEqual(
+      preparingCount(), 1, "the load started while the previous model was still unloading")
+
+    unloading.set()
+    XCTAssertTrue(waitUntil { preparingCount() >= 2 }, "and once it finished, the load went ahead")
+    wait(for: [finished], timeout: 30)
+  }
+
+  /// The removal is refused while anything holds the engine, in the same step
+  /// that would remove: a job that picked the model up must not have its files
+  /// deleted under it.
+  func testModelFilesAreNotRemovedWhileTheEngineIsHeld() async throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    let lock = NSLock()
+    var removals = 0
+    let remove: () -> Int64 = {
+      lock.lock()
+      removals += 1
+      lock.unlock()
+      return 42
+    }
+
+    let held = TestFlag()
+    transcriber.claimEngineForTesting(Task { await held.waitUntilSet() })
+    let refused = await transcriber.removeModelFiles(remove)
+    XCTAssertNil(refused)
+    XCTAssertEqual(removals, 0, "removed files the engine still holds")
+
+    held.set()
+    XCTAssertTrue(waitUntil { !transcriber.isEngineBusy })
+    let freed = await transcriber.removeModelFiles(remove)
+    XCTAssertEqual(freed, 42)
+    XCTAssertEqual(removals, 1)
+  }
+
+  /// The live-job half of the refusal: a job decoding its audio has not
+  /// reached the engine's queue yet, so only `engineBusy` says it is coming to
+  /// load the model. The drain-claim tests above never set that half.
+  ///
+  /// Asked from inside the decode's own cancellation poll, which runs between
+  /// sample buffers while `engineBusy` is set and the queue is still free.
+  func testModelFilesAreNotRemovedWhileAJobIsDecoding() throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    let audio = try writeTone(in: root, named: "tone.m4a", seconds: 5)
+    var removals = 0
+    var answer: Int64?? = .none
+    var asked = false
+
+    XCTAssertThrowsError(
+      try transcriber.transcribe(
+        url: audio, options: .default, progress: { _ in },
+        isCancelled: {
+          if asked { return true }
+          asked = true
+          let done = DispatchSemaphore(value: 0)
+          Task {
+            answer = .some(await transcriber.removeModelFiles {
+              removals += 1
+              return 1
+            })
+            done.signal()
+          }
+          done.wait()
+          return true
+        }))
+    XCTAssertTrue(asked, "the decode never polled for cancellation")
+    XCTAssertEqual(answer, .some(nil), "removal must be refused while a job is decoding")
+    XCTAssertEqual(removals, 0)
+  }
+
+  func testWithNothingInFlightReleasingAnswersAtOnce() async throws {
+    let root = try temporaryDirectory()
+    let transcriber = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    let released = await transcriber.releaseModel()
+    XCTAssertTrue(released)
+    XCTAssertFalse(transcriber.unloads.isUnloading)
+  }
+
+  func testAnUnloadStopsCountingOnceItFinishes() {
+    let tracker = UnloadTracker()
+    let flag = TestFlag()
+    _ = tracker.start { await flag.waitUntilSet() }
+    XCTAssertTrue(tracker.isUnloading)
+
+    flag.set()
+    XCTAssertTrue(waitUntil { !tracker.isUnloading })
+  }
+
+  /// One that finishes instantly must still clear itself. The record is
+  /// written under the same lock the finish takes, so it cannot be cleared
+  /// before it was recorded and then look live forever.
+  func testAnInstantUnloadDoesNotStayRecorded() {
+    let tracker = UnloadTracker()
+    for _ in 0..<200 { _ = tracker.start {} }
+    XCTAssertTrue(waitUntil { !tracker.isUnloading })
+  }
+
+  /// A late finish must not clear a newer unload, or a waiter would be told the
+  /// weights are gone while the newer teardown is still running.
+  func testALateUnloadDoesNotClearANewerOne() {
+    let tracker = UnloadTracker()
+    let first = TestFlag()
+    let second = TestFlag()
+    _ = tracker.start { await first.waitUntilSet() }
+    _ = tracker.start { await second.waitUntilSet() }
+
+    first.set()
+    Thread.sleep(forTimeInterval: 0.3)
+    XCTAssertTrue(tracker.isUnloading, "the newer unload is still running")
+
+    second.set()
+    XCTAssertTrue(waitUntil { !tracker.isUnloading })
+  }
+
   // MARK: - Special tokens
 
   /// The bug this exists for, from a first real run: cues came back reading

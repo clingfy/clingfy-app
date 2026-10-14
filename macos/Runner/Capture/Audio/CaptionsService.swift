@@ -126,6 +126,25 @@ final class CaptionsService {
     }
   }
 
+  /// Removes the model files if, and only if, nothing can be about to read
+  /// them. `completion` receives what was freed, or nil for a refusal.
+  ///
+  /// Checks the SERVICE first: a job counts as running from `beginRun`, before
+  /// its audio decode, which is earlier than the engine learns of it. The
+  /// engine then checks again on its own queue, which is what makes the check
+  /// and the removal a single step.
+  func removeModelFiles(
+    _ remove: @escaping () -> Int64, completion: @escaping (Int64?) -> Void
+  ) {
+    Task {
+      if isBusy {
+        completion(nil)
+        return
+      }
+      completion(await transcriber.removeModelFiles(remove))
+    }
+  }
+
   /// The variant the engine would download, for display.
   /// The variant a job will run on when none is named.
   static var modelVariant: String { resolvedVariant(nil) }

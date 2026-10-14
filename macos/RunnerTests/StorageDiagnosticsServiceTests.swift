@@ -107,6 +107,109 @@ final class StorageDiagnosticsServiceTests: XCTestCase {
     return reply
   }
 
+  /// The user-visible half of the unload race, through the real engine.
+  ///
+  /// A release already tearing the model down (the one `endRun` schedules after
+  /// every job, or the export preamble's) used to make this one answer
+  /// "released" at once, and the files were removed while Core ML was still
+  /// unloading them. The delete must wait for that unload, then remove.
+  func testDeletingWaitsForAnUnloadAlreadyInFlight() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_delete_race_\(UUID().uuidString)")
+    let engine = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    let facade = ScreenRecorderFacade()
+    facade.useCaptionsServiceForTesting(CaptionsService(transcriber: engine))
+
+    let lock = NSLock()
+    var unloadFinished = false
+    var unloadDoneBeforeRemove: Bool?
+    let gate = DispatchSemaphore(value: 0)
+    engine.beginUnloadForTesting {
+      await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+        DispatchQueue.global().async {
+          gate.wait()
+          lock.lock()
+          unloadFinished = true
+          lock.unlock()
+          c.resume()
+        }
+      }
+    }
+
+    let spy = DeleteSpy()
+    let done = expectation(description: "deleteCaptionModel replied")
+    facade.deleteCaptionModel(
+      removeModel: {
+        lock.lock()
+        unloadDoneBeforeRemove = unloadFinished
+        lock.unlock()
+        return spy.remove()
+      },
+      result: { _ in done.fulfill() })
+
+    // Long enough for the old early answer to remove the files.
+    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    XCTAssertEqual(spy.callCount, 0, "removed while the model was still being unloaded")
+
+    gate.signal()
+    wait(for: [done], timeout: 5)
+    XCTAssertEqual(spy.callCount, 1)
+    XCTAssertEqual(unloadDoneBeforeRemove, true, "unload, then remove, always")
+  }
+
+  /// The case the unload wait itself created: a job that takes the engine
+  /// while the unload is still running has already seen the files and is about
+  /// to load them, so the delete must refuse rather than remove once the unload
+  /// finishes.
+  func testDeletingIsRefusedWhenAJobTookTheEngineDuringTheUnload() throws {
+    let root = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_delete_race_\(UUID().uuidString)")
+    let engine = WhisperKitTranscriber(model: "test-variant", modelDirectory: root)
+    let facade = ScreenRecorderFacade()
+    facade.useCaptionsServiceForTesting(CaptionsService(transcriber: engine))
+
+    let unloadGate = DispatchSemaphore(value: 0)
+    engine.beginUnloadForTesting {
+      await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+        DispatchQueue.global().async {
+          unloadGate.wait()
+          c.resume()
+        }
+      }
+    }
+
+    let spy = DeleteSpy()
+    var reply: Any?
+    let done = expectation(description: "deleteCaptionModel replied")
+    facade.deleteCaptionModel(
+      removeModel: { spy.remove() },
+      result: { value in
+        reply = value
+        done.fulfill()
+      })
+    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+
+    // A job takes the engine now, mid-unload.
+    let jobGate = DispatchSemaphore(value: 0)
+    let job = Task {
+      await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+        DispatchQueue.global().async {
+          jobGate.wait()
+          c.resume()
+        }
+      }
+    }
+    engine.claimEngineForTesting(job)
+
+    unloadGate.signal()
+    wait(for: [done], timeout: 5)
+    jobGate.signal()
+
+    XCTAssertEqual(spy.callCount, 0, "removed the files a job had just picked up")
+    let error = try XCTUnwrap(reply as? FlutterError, "got \(String(describing: reply))")
+    XCTAssertEqual(error.code, "MODEL_IN_USE")
+  }
+
   /// The refusal has to ACT, not merely be reported one layer down.
   ///
   /// `CaptionsService.releaseModel` propagating `false` and the engine answering

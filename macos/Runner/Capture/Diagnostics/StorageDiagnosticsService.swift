@@ -91,7 +91,10 @@ extension ScreenRecorderFacade {
     removeModel: @escaping () -> Int64 = CaptionModelStore.delete,
     result: @escaping FlutterResult
   ) {
-    captionsService.releaseModel { [weak self] released in
+    // Held strongly for the length of the call: a weak capture that went nil
+    // between the release and the removal would never answer Flutter.
+    let service = captionsService
+    service.releaseModel { released in
       guard released else {
         NativeLogger.i(
           "Captions", "Refused to remove the speech model: the engine still holds it")
@@ -100,13 +103,25 @@ extension ScreenRecorderFacade {
         }
         return
       }
-      let freed = removeModel()
-      NativeLogger.i(
-        "Captions", "Removed the speech model",
-        context: ["freedBytes": Int(freed)])
-      _ = self
-      DispatchQueue.main.async {
-        result(["freedBytes": Int(freed)])
+      // Not `removeModel()` directly. A job started while the unload above was
+      // running has already seen the files on disk and is about to load them,
+      // so released is not enough: the removal has to be refused if anything
+      // holds the engine, and checked in the same step that removes.
+      service.removeModelFiles(removeModel) { freed in
+        guard let freed else {
+          NativeLogger.i(
+            "Captions", "Refused to remove the speech model: a job picked it up")
+          DispatchQueue.main.async {
+            result(ScreenRecorderFacade.captionModelInUseError())
+          }
+          return
+        }
+        NativeLogger.i(
+          "Captions", "Removed the speech model",
+          context: ["freedBytes": Int(freed)])
+        DispatchQueue.main.async {
+          result(["freedBytes": Int(freed)])
+        }
       }
     }
   }
