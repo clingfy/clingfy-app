@@ -1492,9 +1492,9 @@ final class LetterboxExporter {
     colorGrade: ColorGrade = .identity
   ) -> FinalExportReferenceEvaluation {
     // A colour grade is applied in the WRITER LOOP (`ColorGradeRenderer.apply`,
-    // this file), never in the composition: `CompositionParams.colorGrade`
-    // (CompositionBuilder.swift) was added as forward plumbing for an export
-    // bake that went somewhere else, and has never been read by anything. So
+    // this file), never in the composition. `CompositionParams` once carried a
+    // `colorGrade` field as forward plumbing for an export bake that went
+    // somewhere else; nothing ever read it, and it has been removed. So
     // the reference render below is UNGRADED while the file it is compared
     // against IS graded, and the entire difference the user deliberately asked
     // for is charged to a budget sized for pipeline transfer error -- by a
@@ -1676,7 +1676,7 @@ final class LetterboxExporter {
       // Grade the reference the way the writer graded the file.
       //
       // The grade lives in the writer loop, never in the composition
-      // (`CompositionParams.colorGrade` has never been read), so without this
+      // (`CompositionParams` carries no grade), so without this
       // the whole difference the user asked for is charged to a budget sized
       // for transfer error -- by a validator that deletes what it rejects.
       //
@@ -3270,7 +3270,6 @@ final class LetterboxExporter {
     )
     params.zoomSegments = effectiveSegments
     params.backgroundPreset = backgroundPreset
-    params.colorGrade = colorGrade.isIdentity ? nil : colorGrade
 
     // Separated sources (Phase 1.5 bundles): validated once here; every
     // consumer below falls back to the legacy embedded-audio path when nil.

@@ -1,7 +1,8 @@
 name: Release - macOS production
 
 # PHASE C of the Azure Pipelines -> GitHub Actions release migration.
-# GitHub counterpart of azure-pipelines/release-prod.yml.
+# Replaced azure-pipelines/release-prod.yml, which was removed on 2026-10-14 with the
+# rest of the Azure setup (decommissioned 2026-09-15).
 #
 # This is the lane that ships to real users. Three independent gates stand in
 # front of it, matching the Azure lane and adding one:
@@ -12,15 +13,13 @@ name: Release - macOS production
 #   3. The `production` GitHub Environment, which scopes the AWS OIDC token's
 #      `sub` and holds ENV_PROD_B64 plus the Apple secrets.
 #
-#      WARNING: it is NOT currently a reviewer gate. Verified 2026-09-15,
-#      `gh api repos/clingfy/clingfy-app/environments` returns NOTHING -- this
-#      repo has no environments at all, so GitHub auto-creates `production`
-#      unprotected on first use. An earlier version of this comment claimed a
-#      "required reviewer must approve the run" and called that "what keeps a
-#      public repo's release lane safe". That was never true. Required reviewers
-#      ARE free on a public repo, so turning one on is worth doing; until then
-#      the real restrictions are (1), (2), and the AWS role's trust policy, which
-#      pins this workflow file AND a release/* ref and grants no delete.
+#      It IS a reviewer gate since 2026-10-14: a required reviewer (nabil-hfz)
+#      must approve each run. Before that it was not, whatever an earlier version
+#      of this comment claimed: verified 2026-09-15 the environment did not even
+#      exist, and GitHub auto-created it unprotected on first use. Admin bypass
+#      is still allowed, so the other restrictions still matter: (1), (2), and
+#      the AWS role's trust policy, which pins this workflow file AND a
+#      release/* ref and grants no delete.
 #
 # Do not enable this before the dev lanes (Phases A and B) have run green
 # repeatedly and a GitHub-built app has been compared against an Azure-built one.

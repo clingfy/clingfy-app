@@ -1,7 +1,8 @@
 name: Release - macOS dev channel
 
 # PHASE B of the Azure Pipelines -> GitHub Actions release migration.
-# GitHub counterpart of azure-pipelines/dev-channel.yml.
+# Replaced azure-pipelines/dev-channel.yml, which was removed on 2026-10-14 with the
+# rest of the Azure setup (decommissioned 2026-09-15).
 #
 # This lane produces a signed, notarized, stapled build against the DEV
 # certificate and publishes it to the dev appcast, so it exercises the whole

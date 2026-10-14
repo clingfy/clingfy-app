@@ -1,5 +1,8 @@
 # Release lanes on GitHub Actions — cutover runbook
 
+> **Status, 2026-10-14: complete.** Every lane runs on GitHub Actions and `azure-pipelines/`
+> has been deleted. The runbook below is kept as the record of how the cutover went.
+
 The four release lanes in `azure-pipelines/` now have GitHub Actions
 counterparts in `.github/workflows/`. Both sets exist side by side. **Nothing
 has been cut over**: the new dev lanes are switched off, the new prod lanes are
@@ -119,13 +122,12 @@ step 4 has never run, step 5 is partly done — see each step.
    and `release-windows-prod.yml` as of 2026-09-20; 1.1.0 will be the first real
    run for both. Steps 2 and 3 have now run green repeatedly, so the precondition
    is met. Dry-run against a throwaway version number first.
-5. **Decommission.** ◑ Partly done. The money part is finished: purchased
-   parallel jobs were set to zero on 2026-08-08 (see the header of
-   `azure-pipelines/dev-channel.yml`), and Azure itself was decommissioned on
-   2026-09-15. What remains is cosmetic — delete `azure-pipelines/` and repoint
-   `test/tooling/flutter_pin_consistency_test.dart`, which still treats
-   `azure-pipelines/flutter-version.yml` as the canonical Flutter pin and is the
-   only reason that directory cannot simply be removed.
+5. **Decommission.** ✅ Done. Purchased parallel jobs were set to zero on
+   2026-08-08, and Azure itself was decommissioned on 2026-09-15. On 2026-10-14
+   `azure-pipelines/` was deleted. `test/tooling/flutter_pin_consistency_test.dart`
+   had treated `azure-pipelines/flutter-version.yml` as the canonical Flutter pin;
+   it now requires every pin in `.github/workflows` to agree, including the CMake
+   `-DFLUTTER_VERSION` defines the Windows native-test configure passes by hand.
 
 During the cutover the rule was: never run an Azure lane and its GitHub
 counterpart against the same channel at once. They would not have silently
