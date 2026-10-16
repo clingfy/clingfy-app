@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
+import 'package:crypto/crypto.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,6 +38,35 @@ void main() {
         Caption(id: id, startMs: 0, endMs: 1000, text: text);
 
     const size = Size(1920, 1080);
+
+    /// The cache reuses any file with the right name, so a fix that changes
+    /// pixels for the same inputs must also change the name. Otherwise a line
+    /// rasterised in the wrong order by an older build keeps being shown.
+    test('a bitmap cached before the direction fix is not reused', () {
+      final current = CaptionRasterizer.bitmapName(
+        text: 'مرحبا Clingfy',
+        videoSize: size,
+        style: const CaptionStyle(),
+        fontFamily: CaptionRasterizer.bundledCaptionFontFamily,
+        maxWidthFraction: 0.8,
+        referenceHeight: 1080,
+      );
+      // The key exactly as it was built before `renderRevision` existed.
+      final legacyKey = [
+        'مرحبا Clingfy',
+        size.width.round(),
+        size.height.round(),
+        const CaptionStyle().fontSizePx,
+        const CaptionStyle().textColorArgb,
+        const CaptionStyle().backgroundColorArgb,
+        CaptionRasterizer.bundledCaptionFontFamily,
+        0.8,
+        1080.0,
+      ].join('\u0000');
+      final legacy = '${sha1.convert(utf8.encode(legacyKey))}.png';
+      expect(current, isNot(legacy));
+      expect(CaptionRasterizer.renderRevision, greaterThanOrEqualTo(3));
+    });
 
     test('an unchanged cue is not re-rendered', () async {
       const rasterizer = CaptionRasterizer();
@@ -356,6 +387,112 @@ void main() {
       expect(mixed.width, greaterThan(arabicOnly.width));
       mixed.dispose();
       arabicOnly.dispose();
+    });
+
+    // ---- Run order -------------------------------------------------------
+    //
+    // Width cannot see word order, and word order is what was wrong: the
+    // paragraph used to be laid out LTR whatever the text, so an Arabic-first
+    // line burned in with its runs in English reading order while the editor
+    // above it showed them RTL. Measured from where each run actually lands.
+
+    /// The horizontal extent of `text.substring(start, end)` in [painter].
+    ({double left, double right}) extentOf(
+      TextPainter painter,
+      int start,
+      int end,
+    ) {
+      final boxes = painter.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: end),
+      );
+      expect(boxes, isNotEmpty, reason: 'nothing laid out for $start..$end');
+      return (
+        left: boxes.map((b) => b.left).reduce((a, b) => a < b ? a : b),
+        right: boxes.map((b) => b.right).reduce((a, b) => a > b ? a : b),
+      );
+    }
+
+    test('an Arabic-first line reads right to left, Latin after it', () {
+      const r = CaptionRasterizer();
+      const text = 'مرحبا Clingfy';
+      final painter = r.layOut(text: text, videoSize: const Size(1920, 1080));
+      final arabic = extentOf(painter, 0, 5);
+      final latin = extentOf(painter, 6, text.length);
+      expect(
+        latin.right,
+        lessThanOrEqualTo(arabic.left + 0.5),
+        reason:
+            'the Arabic word comes first, so in an RTL line it sits on the '
+            'right and "Clingfy" follows it to the LEFT',
+      );
+      painter.dispose();
+    });
+
+    test('trailing punctuation lands at the end of an Arabic line', () {
+      const r = CaptionRasterizer();
+      const text = 'مرحبا!';
+      final painter = r.layOut(text: text, videoSize: const Size(1920, 1080));
+      final arabic = extentOf(painter, 0, 5);
+      final bang = extentOf(painter, 5, 6);
+      expect(
+        bang.right,
+        lessThanOrEqualTo(arabic.left + 0.5),
+        reason: 'the end of an RTL line is its left edge',
+      );
+      painter.dispose();
+    });
+
+    /// Found in the final review: one direction for every line of a cue. A
+    /// newline is a paragraph break in UAX #9, so each line has its own.
+    test('each line of a multi-line cue reads in its own direction', () {
+      const r = CaptionRasterizer();
+      const text = 'Hello everyone\nمرحبا Clingfy';
+      final painter = r.layOut(text: text, videoSize: const Size(1920, 1080));
+      // Offsets are in the laid-out string, which carries the isolates.
+      final laid = painter.text!.toPlainText();
+      int at(String word) => laid.indexOf(word);
+      final hello = extentOf(painter, at('Hello'), at('Hello') + 5);
+      final everyone = extentOf(painter, at('everyone'), at('everyone') + 8);
+      final arabic = extentOf(painter, at('مرحبا'), at('مرحبا') + 5);
+      final latin = extentOf(painter, at('Clingfy'), at('Clingfy') + 7);
+      expect(
+        hello.right,
+        lessThanOrEqualTo(everyone.left + 0.5),
+        reason: 'the English line stays left to right',
+      );
+      expect(
+        latin.right,
+        lessThanOrEqualTo(arabic.left + 0.5),
+        reason: 'the Arabic line reads right to left on its own',
+      );
+      painter.dispose();
+    });
+
+    test('the isolates added around lines are invisible', () {
+      const r = CaptionRasterizer();
+      final painter = r.layOut(
+        text: 'Hello\nWorld',
+        videoSize: const Size(1920, 1080),
+      );
+      final plain = TextPainter(
+        text: TextSpan(text: 'Hello\nWorld', style: painter.text!.style),
+        textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: 1920 * 0.9);
+      expect(painter.width, closeTo(plain.width, 0.5));
+      expect(painter.height, closeTo(plain.height, 0.5));
+      painter.dispose();
+      plain.dispose();
+    });
+
+    test('a Latin-first line still reads left to right', () {
+      const r = CaptionRasterizer();
+      const text = 'Clingfy مرحبا';
+      final painter = r.layOut(text: text, videoSize: const Size(1920, 1080));
+      final latin = extentOf(painter, 0, 7);
+      final arabic = extentOf(painter, 8, text.length);
+      expect(latin.right, lessThanOrEqualTo(arabic.left + 0.5));
+      painter.dispose();
     });
   });
 
