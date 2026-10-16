@@ -17,9 +17,9 @@ name: Release - macOS production
 #      must approve each run. Before that it was not, whatever an earlier version
 #      of this comment claimed: verified 2026-09-15 the environment did not even
 #      exist, and GitHub auto-created it unprotected on first use. Admin bypass
-#      is still allowed, so the other restrictions still matter: (1), (2), and
-#      the AWS role's trust policy, which pins this workflow file AND a
-#      release/* ref and grants no delete.
+#      is OFF (2026-10-16), so admins wait for approval too. The other
+#      restrictions still stand: (1), (2), and the AWS role's trust policy,
+#      which pins this workflow file AND a release/* ref and grants no delete.
 #
 # Do not enable this before the dev lanes (Phases A and B) have run green
 # repeatedly and a GitHub-built app has been compared against an Azure-built one.

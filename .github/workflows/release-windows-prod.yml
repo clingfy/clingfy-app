@@ -14,8 +14,9 @@ name: Release - Windows production
 # Before that it had protection_rules: [] (measured 2026-09-19), and nothing stood between
 # clicking "Run workflow" and an immutable publish to clingfy.com/updates. That matters
 # because the role deliberately has no s3:DeleteObject: a mistaken publish cannot be
-# deleted, only superseded by a higher version. Admin bypass is still allowed, and there is
-# no deployment branch policy; the AWS role's trust policy is what pins release/*.
+# deleted, only superseded by a higher version. Admin bypass is OFF (2026-10-16), so admins
+# wait for approval too. There is no deployment branch policy; the AWS role's trust policy
+# is what pins release/*.
 #
 # Ships UNSIGNED (decision D3): 03_sign.ps1
 # skips with a loud warning when no WIN_SIGN_* material is present, so users see
