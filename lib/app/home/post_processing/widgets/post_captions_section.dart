@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:clingfy/core/captions/captions_model.dart';
+import 'package:clingfy/core/captions/caption_direction.dart';
 import 'package:clingfy/core/captions/caption_reflow.dart';
 import 'package:clingfy/core/captions/captions_capability.dart';
 import 'package:clingfy/core/captions/subtitle_serializer.dart';
@@ -663,8 +664,14 @@ class _CueRowState extends State<_CueRow> {
             // Arabic cue would otherwise lay out against its own script. Letting
             // the field resolve direction from the text itself is what makes a
             // mixed transcript readable.
+            //
+            // Known limit: a TextField has one direction for all its lines, so
+            // a cue typed as two lines of DIFFERENT scripts shows its second
+            // line in the first line's order while being edited. The export
+            // and preview do not share the limit (`isolateCaptionLines` gives
+            // each line its own), and the cue text itself is never altered.
             child: Directionality(
-              textDirection: _directionOf(widget.caption.text),
+              textDirection: captionTextDirection(widget.caption.text),
               child: TextField(
                 controller: _controller,
                 focusNode: _focusNode,
@@ -687,25 +694,6 @@ class _CueRowState extends State<_CueRow> {
         ],
       ),
     );
-  }
-
-  /// First strong character wins, which is the Unicode bidi rule for a
-  /// paragraph's base direction. Empty or symbol-only text stays LTR.
-  static TextDirection _directionOf(String text) {
-    for (final rune in text.runes) {
-      // Hebrew, Arabic, Arabic Supplement/Extended, and their presentation forms.
-      final isRtl =
-          (rune >= 0x0590 && rune <= 0x08FF) ||
-          (rune >= 0xFB1D && rune <= 0xFDFF) ||
-          (rune >= 0xFE70 && rune <= 0xFEFF);
-      if (isRtl) return TextDirection.rtl;
-      final isLtr =
-          (rune >= 0x0041 && rune <= 0x005A) ||
-          (rune >= 0x0061 && rune <= 0x007A) ||
-          (rune >= 0x00C0 && rune <= 0x024F);
-      if (isLtr) return TextDirection.ltr;
-    }
-    return TextDirection.ltr;
   }
 }
 

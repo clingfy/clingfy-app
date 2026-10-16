@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 
+import 'package:clingfy/core/captions/caption_direction.dart';
 import 'package:clingfy/core/logging/logger_service.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'dart:convert';
@@ -300,14 +301,20 @@ class CaptionRasterizer {
 
   /// Lays the text out at the export's scale, wrapped to [maxWidthFraction].
   ///
-  /// Direction is left to Flutter: `TextDirection.ltr` here is the *layout*
-  /// direction of the paragraph box, and Flutter's shaper still reorders and
-  /// joins RTL runs inside it correctly. Forcing `rtl` for Arabic would flip
-  /// alignment of a mixed line rather than fix anything.
+  /// The paragraph's base direction comes from the text, by the same rule the
+  /// editor uses (`captionTextDirection`). It is not cosmetic: with centred
+  /// text it does not move the line, it decides the ORDER of its runs. Laid
+  /// out LTR, "مرحبا Clingfy" burned in with the Arabic word on the left and
+  /// "مرحبا!" with its "!" on the wrong end, while the editor showed both RTL.
+  /// Flutter's shaper still joins the letters either way; only the order was
+  /// wrong.
   TextPainter layOut({required String text, required Size videoSize}) {
     final painter = TextPainter(
       text: TextSpan(
-        text: text,
+        // Each hard line resolves its own direction; see
+        // `isolateCaptionLines`. The base direction below still comes from the
+        // raw text, so the isolates added here cannot hide what decides it.
+        text: isolateCaptionLines(text),
         style: TextStyle(
           fontSize: scaledFontSize(videoSize.height),
           color: Color(style.textColorArgb),
@@ -318,13 +325,17 @@ class CaptionRasterizer {
         ),
       ),
       textAlign: TextAlign.center,
-      textDirection: TextDirection.ltr,
+      textDirection: captionTextDirection(text),
       maxLines: 3,
       ellipsis: '…',
     );
     painter.layout(maxWidth: videoSize.width * maxWidthFraction);
     return painter;
   }
+
+  /// Bumped whenever the same inputs start producing different pixels; part of
+  /// the [bitmapName] key. See the comment there.
+  static const int renderRevision = 3;
 
   /// The file name for a cue's bitmap: a hash of everything the pixels depend
   /// on.
@@ -352,6 +363,13 @@ class CaptionRasterizer {
     required double referenceHeight,
   }) {
     final key = [
+      // Bumped whenever the same inputs start producing different pixels, so a
+      // bitmap cached by an older build is not reused. The cache trusts any
+      // existing file with the right name, so without this an RTL line already
+      // rasterised in the wrong order would keep showing in the preview and the
+      // export after the fix. 2: base direction from the text, not always LTR.
+      // 3: each line of a multi-line cue resolves its own direction.
+      'r$renderRevision',
       text,
       videoSize.width.round(),
       videoSize.height.round(),
