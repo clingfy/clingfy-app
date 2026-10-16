@@ -9907,6 +9907,192 @@ final class ClipPlaybackPlannerTests: XCTestCase {
   }
 }
 
+/// The pause/resume merge. A paused recording leaves one screen segment per
+/// stretch, and they are stitched on Stop. That path runs only when someone
+/// paused, so ordinary use rarely exercises it, and its fallback used to
+/// re-encode HEVC as H.264 without a word. These merge real segments, written
+/// with the colour tags ScreenCaptureKit writes.
+final class RecordingSegmentMergerTests: XCTestCase {
+  private var dir: URL!
+
+  override func setUpWithError() throws {
+    dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_segment_merge_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  }
+
+  override func tearDownWithError() throws {
+    try? FileManager.default.removeItem(at: dir)
+  }
+
+  /// A short HEVC .mov with an AAC track, BT.709-tagged like SCRecordingOutput.
+  private func makeSegment(_ name: String, seconds: Double = 0.5) throws -> URL {
+    let url = dir.appendingPathComponent(name)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let width = 320
+    let height = 180
+    let video = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: width, AVVideoHeightKey: height,
+        AVVideoColorPropertiesKey: [
+          AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+          AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+          AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+        ],
+      ])
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: video,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+      ])
+    let audio = AVAssetWriterInput(
+      mediaType: .audio,
+      outputSettings: [
+        AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000,
+        AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000,
+      ])
+    writer.add(video)
+    writer.add(audio)
+    XCTAssertTrue(writer.startWriting())
+    writer.startSession(atSourceTime: .zero)
+
+    let fps = 30
+    for frame in 0..<Int(seconds * Double(fps)) {
+      while !video.isReadyForMoreMediaData { usleep(1000) }
+      var buffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+      let pixels = try XCTUnwrap(buffer)
+      CVPixelBufferLockBaseAddress(pixels, [])
+      memset(
+        CVPixelBufferGetBaseAddress(pixels), Int32(40 + frame % 100),
+        CVPixelBufferGetDataSize(pixels))
+      CVPixelBufferUnlockBaseAddress(pixels, [])
+      adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
+    }
+
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: 48000, mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 4,
+      mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1, mBitsPerChannel: 32,
+      mReserved: 0)
+    var format: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(
+      allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
+      magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+    var written = 0
+    let total = Int(seconds * 48000)
+    while written < total {
+      while !audio.isReadyForMoreMediaData { usleep(1000) }
+      let count = 1024
+      let samples = [Float](repeating: 0.05, count: count)
+      var block: CMBlockBuffer?
+      CMBlockBufferCreateWithMemoryBlock(
+        allocator: nil, memoryBlock: nil, blockLength: count * 4, blockAllocator: nil,
+        customBlockSource: nil, offsetToData: 0, dataLength: count * 4, flags: 0,
+        blockBufferOut: &block)
+      _ = samples.withUnsafeBytes {
+        CMBlockBufferReplaceDataBytes(
+          with: $0.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0,
+          dataLength: count * 4)
+      }
+      var sample: CMSampleBuffer?
+      CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: nil, dataBuffer: block!, formatDescription: format!, sampleCount: count,
+        presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: 48000),
+        packetDescriptions: nil, sampleBufferOut: &sample)
+      audio.append(sample!)
+      written += count
+    }
+    video.markAsFinished()
+    audio.markAsFinished()
+    let done = expectation(description: "segment written")
+    writer.finishWriting { done.fulfill() }
+    wait(for: [done], timeout: 30)
+    XCTAssertEqual(writer.status, .completed, "\(String(describing: writer.error))")
+    return url
+  }
+
+  private func videoFormat(_ url: URL) throws -> CMFormatDescription {
+    let track = try XCTUnwrap(AVURLAsset(url: url).tracks(withMediaType: .video).first)
+    return try XCTUnwrap(track.formatDescriptions.first) as! CMFormatDescription
+  }
+
+  private func assertHEVCWith709Tags(_ url: URL, file: StaticString = #filePath, line: UInt = #line) throws {
+    let format = try videoFormat(url)
+    XCTAssertEqual(
+      CMFormatDescriptionGetMediaSubType(format), kCMVideoCodecType_HEVC,
+      "the merged file is \(RecordingSegmentMerger.fourCC(CMFormatDescriptionGetMediaSubType(format))), not HEVC",
+      file: file, line: line)
+    let extensions = CMFormatDescriptionGetExtensions(format) as? [String: Any] ?? [:]
+    XCTAssertEqual(
+      extensions[kCVImageBufferColorPrimariesKey as String] as? String,
+      kCVImageBufferColorPrimaries_ITU_R_709_2 as String, file: file, line: line)
+    XCTAssertEqual(
+      extensions[kCVImageBufferTransferFunctionKey as String] as? String,
+      kCVImageBufferTransferFunction_ITU_R_709_2 as String, file: file, line: line)
+    XCTAssertEqual(
+      extensions[kCVImageBufferYCbCrMatrixKey as String] as? String,
+      kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String, file: file, line: line)
+  }
+
+  func testTwoSegmentsMergeByPassthroughAndStayHEVC() async throws {
+    let a = try makeSegment("a.segment-000.mov")
+    let b = try makeSegment("b.segment-001.mov")
+    let out = dir.appendingPathComponent("screen.mov")
+    let outcome = try await RecordingSegmentMerger.mergeSegments([a, b], to: out)
+
+    XCTAssertEqual(outcome.preset, AVAssetExportPresetPassthrough, "matching segments must not re-encode")
+    try assertHEVCWith709Tags(out)
+    XCTAssertEqual(AVURLAsset(url: out).duration.seconds, 1.0, accuracy: 0.1)
+    XCTAssertEqual(AVURLAsset(url: out).tracks(withMediaType: .audio).count, 1)
+  }
+
+  /// The fallback itself, forced. Before, it was AVAssetExportPresetHighestQuality,
+  /// which writes H.264: a paused take could come back in another codec at about
+  /// half the bitrate with nothing in any log.
+  func testTheFallbackKeepsHEVCAndTheColourTags() async throws {
+    let a = try makeSegment("a.segment-000.mov")
+    let b = try makeSegment("b.segment-001.mov")
+    let out = dir.appendingPathComponent("screen.mov")
+    let fallback = try XCTUnwrap(RecordingSegmentMerger.presetOrder.last)
+    let outcome = try await RecordingSegmentMerger.mergeSegments(
+      [a, b], to: out, presets: [fallback])
+
+    XCTAssertEqual(outcome.preset, fallback)
+    try assertHEVCWith709Tags(out)
+    XCTAssertEqual(AVURLAsset(url: out).duration.seconds, 1.0, accuracy: 0.1)
+  }
+
+  func testThePresetOrderTriesPassthroughFirstAndNeverChangesCodec() {
+    XCTAssertEqual(RecordingSegmentMerger.presetOrder.first, AVAssetExportPresetPassthrough)
+    XCTAssertFalse(
+      RecordingSegmentMerger.presetOrder.contains(AVAssetExportPresetHighestQuality),
+      "HighestQuality is H.264; the capture is HEVC")
+    for preset in RecordingSegmentMerger.presetOrder.dropFirst() {
+      XCTAssertTrue(preset.contains("HEVC"), "\(preset) would change the codec")
+    }
+  }
+
+  func testASingleSegmentIsMovedNotExported() async throws {
+    let a = try makeSegment("a.segment-000.mov")
+    let out = dir.appendingPathComponent("screen.mov")
+    let outcome = try await RecordingSegmentMerger.mergeSegments([a], to: out)
+    XCTAssertNil(outcome.preset)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: a.path), "moved, not copied")
+  }
+
+  func testTheSegmentSummaryNamesTheCodecAndSize() throws {
+    let a = try makeSegment("a.segment-000.mov")
+    let summary = RecordingSegmentMerger.segmentSummary(a)
+    XCTAssertEqual(summary["codec"] as? String, "hvc1")
+    XCTAssertEqual(summary["size"] as? String, "320x180")
+    XCTAssertEqual(summary["audioTracks"] as? Int, 1)
+  }
+}
+
 /// Native log lines are written to disk by native code when they are logged.
 ///
 /// The case this exists for: on 2026-07-30 an exception aborted the app on the

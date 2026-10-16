@@ -348,12 +348,32 @@ enum ScreenCaptureKitOverlayFilterPolicy {
   }
 }
 
-private enum RecordingSegmentMerger {
+/// Stitches the screen segments a paused recording leaves behind into one file.
+///
+/// Internal, not private, so a test can merge real segments: this path runs
+/// only when a recording was paused, so ordinary use rarely exercises it.
+enum RecordingSegmentMerger {
+  /// Passthrough first: copies the segments' samples untouched. The fallback
+  /// re-encodes, so it must at least keep the codec. It used to be
+  /// `AVAssetExportPresetHighestQuality`, which is H.264: a paused take could
+  /// silently come back as H.264 at about half the bitrate, generational loss
+  /// on text-heavy screen video. Measured 2026-10-17: the HEVC preset keeps
+  /// HEVC, the BT.709 tags ScreenCaptureKit writes, and the pixel values.
+  static let presetOrder = [AVAssetExportPresetPassthrough, AVAssetExportPresetHEVCHighestQuality]
+
+  /// The merged file, and the export preset that produced it (nil when a
+  /// single segment was simply moved).
+  struct Outcome {
+    let url: URL
+    let preset: String?
+  }
+
   static func mergeSegments(
     _ segmentURLs: [URL],
     to outputURL: URL,
-    fileManager: FileManager = .default
-  ) async throws -> URL {
+    fileManager: FileManager = .default,
+    presets: [String] = presetOrder
+  ) async throws -> Outcome {
     guard !segmentURLs.isEmpty else {
       throw flutterError(NativeErrorCode.videoFileMissing, "No recording segments to merge")
     }
@@ -364,8 +384,14 @@ private enum RecordingSegmentMerger {
 
     if segmentURLs.count == 1 {
       try fileManager.moveItem(at: segmentURLs[0], to: outputURL)
-      return outputURL
+      return Outcome(url: outputURL, preset: nil)
     }
+
+    // What went in, so a log can say WHY passthrough refused: it fails when
+    // the segments' formats do not line up.
+    NativeLogger.i(
+      "SCKBackend", "Segment merge inputs",
+      context: ["segments": segmentURLs.map(segmentSummary)])
 
     let composition = AVMutableComposition()
     var cursorTime = CMTime.zero
@@ -403,13 +429,15 @@ private enum RecordingSegmentMerger {
       cursorTime = cursorTime + duration
     }
 
-    let presetNames = [AVAssetExportPresetPassthrough, AVAssetExportPresetHighestQuality]
     var lastError: Error?
 
-    for presetName in presetNames {
+    for presetName in presets {
       guard let export = AVAssetExportSession(asset: composition, presetName: presetName) else {
+        NativeLogger.w(
+          "SCKBackend", "Segment merge preset unavailable", context: ["preset": presetName])
         continue
       }
+      let started = Date()
       let exportBox = AssetExportSessionBox(export)
 
       export.outputURL = outputURL
@@ -440,8 +468,29 @@ private enum RecordingSegmentMerger {
             }
           }
         }
-        return outputURL
+        let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+        if presetName == AVAssetExportPresetPassthrough {
+          NativeLogger.i(
+            "SCKBackend", "Segment merge completed",
+            context: ["preset": presetName, "elapsedMs": elapsedMs])
+        } else {
+          // Never silent again: a re-encode costs quality and Stop time, and
+          // nobody could tell from the field whether it ever happened.
+          NativeLogger.w(
+            "SCKBackend", "Segment merge re-encoded the recording",
+            context: [
+              "preset": presetName, "elapsedMs": elapsedMs,
+              "passthroughError": lastError.map { "\($0)" } ?? "",
+            ])
+        }
+        return Outcome(url: outputURL, preset: presetName)
       } catch {
+        NativeLogger.w(
+          "SCKBackend", "Segment merge preset failed",
+          context: [
+            "preset": presetName, "error": "\(error)",
+            "elapsedMs": Int(Date().timeIntervalSince(started) * 1000),
+          ])
         lastError = error
         if fileManager.fileExists(atPath: outputURL.path) {
           try? fileManager.removeItem(at: outputURL)
@@ -451,6 +500,31 @@ private enum RecordingSegmentMerger {
 
     throw lastError
       ?? flutterError(NativeErrorCode.recordingError, "Unable to create export session for merged recording")
+  }
+
+  /// One segment's format, for the merge log: codec, size and tracks.
+  static func segmentSummary(_ url: URL) -> [String: Any] {
+    let asset = AVURLAsset(url: url)
+    let video = asset.tracks(withMediaType: .video)
+    var summary: [String: Any] = [
+      "file": url.lastPathComponent,
+      "seconds": (asset.duration.seconds * 1000).rounded() / 1000,
+      "videoTracks": video.count,
+      "audioTracks": asset.tracks(withMediaType: .audio).count,
+    ]
+    if let description = video.first?.formatDescriptions.first {
+      let format = description as! CMFormatDescription
+      summary["codec"] = fourCC(CMFormatDescriptionGetMediaSubType(format))
+      let dims = CMVideoFormatDescriptionGetDimensions(format)
+      summary["size"] = "\(dims.width)x\(dims.height)"
+    }
+    return summary
+  }
+
+  /// "hvc1", "avc1": readable in a log, unlike the raw integer.
+  static func fourCC(_ code: FourCharCode) -> String {
+    let bytes = [24, 16, 8, 0].map { UInt8((code >> $0) & 0xFF) }
+    return String(bytes: bytes, encoding: .ascii) ?? "\(code)"
   }
 }
 
@@ -1396,7 +1470,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     let mergedURL = try await RecordingSegmentMerger.mergeSegments(
       orderedSegments.map(\.rawURL),
       to: session.primaryInProgressRawURL
-    )
+    ).url
 
     try CursorSegmentMerger.mergeSegments(
       orderedSegments,
@@ -2440,6 +2514,10 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         "h": h,
         "nominalFps": track.nominalFrameRate,
         "estimatedDataRate_bps": track.estimatedDataRate,
+        // A re-encode would otherwise show only as a bitrate shift.
+        "codec": track.formatDescriptions.first.map {
+          RecordingSegmentMerger.fourCC(CMFormatDescriptionGetMediaSubType($0 as! CMFormatDescription))
+        } ?? "unknown",
       ])
     let baseRectPoints = dbg_sourceRect ?? dbg_filterContentRect
     let expectedW = (baseRectPoints.width * dbg_pointPixelScale).rounded()
