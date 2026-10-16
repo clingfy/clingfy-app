@@ -261,23 +261,82 @@ display with `.best` against `.automatic`/`.nominal`. Then either make it
 conditional on quality, or keep `.best` and record why. Either way, update that
 test comment.
 
-### Pause/resume segment merge may silently re-encode — verify + code
+### ~~Pause/resume segment merge may silently re-encode~~ — DONE 2026-10-17
 
-*Found on 2026-10-16 while revising the loose ends. Not raised in the original session.*
+The fallback was `AVAssetExportPresetHighestQuality`, which writes **H.264**.
+The capture is HEVC, so a paused take that hit the fallback came back as H.264
+at about half the bitrate, with nothing in any log. Measured on synthetic
+segments tagged like ScreenCaptureKit's output: colour was never at risk.
+`screen.mov` is BT.709-tagged, never sRGB-tagged; the old wording here was
+wrong. Both presets kept the 709 tags and the pixel values, so the cost was
+codec and quality, not colour. The fallback is now
+`AVAssetExportPresetHEVCHighestQuality`, which keeps HEVC, the tags and the
+pixels. Every attempt is logged: the preset, a failed passthrough's error, the
+time taken, and a per-segment codec/size/track summary. A re-encode is logged
+at WARNING, and the final-video log names the codec.
+`RecordingSegmentMergerTests` merges real segments and pins the parts that
+matter most: passthrough first, HEVC on both paths, the three BT.709 tags, the
+duration, and a preset order that cannot fall back to another codec. The
+unchanged pixels were measured once, on flat test patches, and are not pinned.
+The log lines are not pinned either.
 
-The final export has one render path, and it always applies the colour encode
-(#395, #403; `LetterboxExporter.swift:3653-3672`). But at capture time, merging
-paused/resumed screen segments still uses `AVAssetExportSession`. It tries
-`Passthrough` first and falls back to `HighestQuality`
-(`CaptureBackendScreenCaptureKit.swift:406-410`). If that fallback ever runs,
-the screen file is re-encoded before the editor sees it, and nobody has checked
-what that does to its colour tags or quality. The fallback is also silent: no log
-line says which preset ran, so there is no way to tell from the field whether it
-ever happens.
+Still unknown: how often passthrough fails in the field. The code found
+nothing that changes segment format mid-recording, since the stream's size is
+fixed at start. Segments of different sizes even pass through: AVFoundation
+reads the result, scaling the odd segment, though ffmpeg chokes on it. The new
+warning line is how to find out.
 
-**To close:** log which preset completed the merge. If the fallback turns out to
-be reachable, check that a re-encoded segment keeps its sRGB tagging. Or remove
-the fallback if passthrough is the only acceptable outcome.
+### Both segment-merge presets failing makes a paused recording unreachable — code
+
+*Found 2026-10-17 while fixing the item above.*
+
+If passthrough and the HEVC fallback both fail, `stopAsync` finishes with no
+file (`CaptureBackendScreenCaptureKit.swift` `finishWithFailure`). The screen
+segments stay in `<project>/capture/*.segment-NNN.mov`, but `resetState` drops
+the session that lists them, and nothing in the app can open them. The mic and
+system sidecar segments are actively deleted (`SourceAudioRecorder.cancelAndCleanup`).
+The user is told the recording failed, while every frame is still on disk.
+
+**To close:** never finish a multi-segment take with no file. Either keep the
+first or longest segment as `screen.mov` with a loud warning, or mark the
+project merge-failed, keep every segment plus the list, and offer a retry. Keep
+the sidecar segments in either case.
+
+### A cursor-merge failure throws away a screen merge that succeeded — code
+
+*Found 2026-10-17.* `mergeSegmentArtifacts` merges the screen, then the cursor
+sidecars with a throwing call, then the audio as best effort. A cursor problem
+therefore fails the whole Stop after `screen.mov` was already written, and a
+good recording is reported as lost.
+
+**To close:** make the cursor merge best effort like the audio merge: log it,
+and finish without cursor effects rather than without the recording.
+
+### The screen merger matches audio tracks by position, and inserts the whole segment length — code
+
+*Found 2026-10-17.* `RecordingSegmentMerger` keys composition tracks by each
+segment's track index (`audio-0`, `audio-1`), and inserts
+`[0, asset.duration]` of every track. If one segment lacks a track (a very short
+segment where no system audio arrived), later tracks shift and the mic and
+system audio can land in the wrong track. A track shorter than its segment is
+also over-read. `AudioSegmentMerger` already guards both cases: it clamps to
+`track.timeRange` and fills gaps.
+
+**To close:** match tracks by role or format rather than index, clamp each
+insert to the track's own time range, and skip segments with no video or zero
+duration. Add segments with a missing track to `RecordingSegmentMergerTests`.
+
+### Camera segments have no merge fallback, and are orphaned on failure — code
+
+*Found 2026-10-17.* `CameraMergeUtility` uses passthrough only. On a failure the
+camera track is dropped with a warning (the screen recording is salvaged), and
+its segment files stay on disk with nothing pointing at them.
+`CameraCaptureCoordinator.acquirePreview` can also swap the camera input during
+a pause with no guard against an active recording, which is the likeliest way
+to get segments that cannot pass through.
+
+**To close:** guard device swaps while recording, add the same HEVC fallback,
+and keep or clean up the segments explicitly.
 
 ### Smaller capture follow-ups
 
