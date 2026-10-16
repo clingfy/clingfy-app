@@ -116,6 +116,61 @@ void main() {
     );
   });
 
+  /// macOS native writes its own `.native.jsonl` companion; retention has to
+  /// cover it too, or those files would pile up forever.
+  test('pruning covers the native companion files', () async {
+    await logsDir.create(recursive: true);
+    final old = File.fromUri(
+      logsDir.uri.resolve('logs_2026-01-01.native.jsonl'),
+    );
+    final recent = File.fromUri(
+      logsDir.uri.resolve('logs_2026-05-20.native.jsonl'),
+    );
+    final lookalike = File.fromUri(
+      logsDir.uri.resolve('logs_2026-01-01.other.jsonl'),
+    );
+    await old.writeAsString('{}\n');
+    await recent.writeAsString('{}\n');
+    await lookalike.writeAsString('{}\n');
+
+    await FileLogSink().initForTest(
+      logsDir: logsDir,
+      clock: () => fakeNow,
+      retentionDays: 30,
+    );
+
+    expect(await old.exists(), isFalse);
+    expect(await recent.exists(), isTrue);
+    expect(await lookalike.exists(), isTrue, reason: 'only .native is known');
+  });
+
+  /// Found in review: the held file handle kept writing into a deleted file
+  /// until midnight. Deleting the file, or the whole folder, while the app
+  /// runs must not lose later lines.
+  test('a log file deleted while held is recreated', () async {
+    await FileLogSink().initForTest(logsDir: logsDir, clock: () => fakeNow);
+    FileLogSink().append(eventAt(fakeNow, 'before'));
+    await logsDir.delete(recursive: true);
+    FileLogSink().append(eventAt(fakeNow, 'after'));
+    final contents = FileLogSink().currentFile!.readAsStringSync();
+    expect(contents, contains('after'));
+    expect(contents, isNot(contains('before')));
+  });
+
+  /// The sink never writes the native companion: it is native's alone, and
+  /// two writers on one file overwrite each other (append seeks once).
+  test('the sink writes only its own file, never the native one', () async {
+    await FileLogSink().initForTest(logsDir: logsDir, clock: () => fakeNow);
+    FileLogSink().append(eventAt(fakeNow, 'dart line'));
+    expect(FileLogSink().currentFile!.path, endsWith('logs_2026-05-23.jsonl'));
+    expect(
+      File.fromUri(
+        logsDir.uri.resolve('logs_2026-05-23.native.jsonl'),
+      ).existsSync(),
+      isFalse,
+    );
+  });
+
   test('retentionDays = 0 disables pruning', () async {
     await logsDir.create(recursive: true);
     final ancient = File.fromUri(logsDir.uri.resolve('logs_2020-01-01.jsonl'));

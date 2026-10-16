@@ -8,11 +8,19 @@ import 'package:clingfy/core/logging/logger_service.dart';
 /// Appends [LogEvent]s as JSONL to a daily file under the app-support `Logs/`
 /// directory.
 ///
-/// The previous implementation captured the file name once at app launch, so a
-/// session that crossed midnight kept writing to the previous day's file. This
-/// sink instead recomputes the daily file name on every flush and rolls over
-/// when the local calendar date changes. It also prunes files older than
-/// [retentionDays] on initialization.
+/// Every line is written synchronously when it is logged, so nothing waits in
+/// memory to be lost if the app goes down: the line that explains a crash is
+/// usually the last one before it. Within the app, this sink is the only
+/// writer of its file. That matters, because Dart's `FileMode.append` seeks to
+/// the end once rather than appending atomically, so a second writer's lines
+/// would be overwritten. macOS native code therefore writes its own
+/// companion, `logs_<date>.native.jsonl`, which pruning below also manages.
+/// A second running instance of the same app would share the file; the
+/// re-seek before each write narrows that to a window of microseconds.
+///
+/// The daily file name is checked on every line, so a session that crosses
+/// midnight rolls over to the new day's file. Files older than
+/// [retentionDays] are pruned on initialization.
 class FileLogSink {
   static final FileLogSink _instance = FileLogSink._internal();
 
@@ -26,7 +34,7 @@ class FileLogSink {
   static const int defaultRetentionDays = 30;
 
   static final RegExp _logFileNamePattern = RegExp(
-    r'^logs_(\d{4})-(\d{2})-(\d{2})\.jsonl$',
+    r'^logs_(\d{4})-(\d{2})-(\d{2})(?:\.native)?\.jsonl$',
   );
 
   Directory? _logsDir;
@@ -35,8 +43,8 @@ class FileLogSink {
   DateTime Function() _clock = DateTime.now;
   int _retentionDays = defaultRetentionDays;
 
-  final _writeQueue = <String>[];
-  bool _isWriting = false;
+  /// Held open for the current day; reopened on rollover.
+  RandomAccessFile? _handle;
 
   Future<void> init() async {
     try {
@@ -75,13 +83,11 @@ class FileLogSink {
     await _pruneOldLogs();
   }
 
-  /// Test-only hook: drain any in-flight writes before assertions.
+  /// Test-only hook, kept for callers written when writes were asynchronous.
+  /// Every line is on disk once [append] returns, so there is nothing to wait
+  /// for.
   @visibleForTesting
-  Future<void> flushForTest() async {
-    while (_isWriting || _writeQueue.isNotEmpty) {
-      await Future<void>.delayed(const Duration(milliseconds: 1));
-    }
-  }
+  Future<void> flushForTest() async {}
 
   /// Test-only hook: return the file the sink would write to right now.
   @visibleForTesting
@@ -93,8 +99,7 @@ class FileLogSink {
     _logsDir = null;
     _logFile = null;
     _currentDateStamp = null;
-    _writeQueue.clear();
-    _isWriting = false;
+    _closeHandle();
     _clock = DateTime.now;
     _retentionDays = defaultRetentionDays;
   }
@@ -102,36 +107,37 @@ class FileLogSink {
   void append(LogEvent event) {
     if (_logsDir == null) return;
     try {
-      final jsonStr = jsonEncode(event.toJson());
-      _writeQueue.add(jsonStr);
-      _processQueue();
+      final line = '${jsonEncode(event.toJson())}\n';
+      _rollIfDateChanged();
+      final handle = _openHandle();
+      if (handle == null) return;
+      // Re-seek before every write: append mode positions once, at open, so a
+      // second app instance writing the same file would otherwise be
+      // overwritten from a stale position.
+      handle.setPositionSync(handle.lengthSync());
+      handle.writeStringSync(line);
     } catch (e) {
-      debugPrint("Error encoding log event: $e");
+      debugPrint("Error writing log line: $e");
     }
   }
 
-  Future<void> _processQueue() async {
-    if (_isWriting || _writeQueue.isEmpty || _logsDir == null) return;
-    _isWriting = true;
+  RandomAccessFile? _openHandle() {
+    final file = _logFile;
+    if (file == null) return null;
+    final existing = _handle;
+    // A file deleted or trashed while held would swallow every later line
+    // until midnight, silently. Reopen (and recreate the folder) instead.
+    if (existing != null && file.existsSync()) return existing;
+    _closeHandle();
+    _logsDir?.createSync(recursive: true);
+    return _handle = file.openSync(mode: FileMode.append);
+  }
 
+  void _closeHandle() {
     try {
-      _rollIfDateChanged();
-      final file = _logFile;
-      if (file == null) return;
-
-      final batch = List<String>.from(_writeQueue);
-      _writeQueue.clear();
-      final content = '${batch.join('\n')}\n';
-      await file.writeAsString(content, mode: FileMode.append);
-    } catch (e) {
-      debugPrint("Error writing logs to file: $e");
-      // If write fails, maybe put back in queue? Avoiding for now to prevent loops.
-    } finally {
-      _isWriting = false;
-      if (_writeQueue.isNotEmpty) {
-        _processQueue();
-      }
-    }
+      _handle?.closeSync();
+    } catch (_) {}
+    _handle = null;
   }
 
   void _rollIfDateChanged() {
@@ -144,6 +150,7 @@ class FileLogSink {
     final dir = _logsDir;
     if (dir == null) return;
     final stamp = _dateStamp(_clock());
+    _closeHandle();
     _currentDateStamp = stamp;
     _logFile = File.fromUri(dir.uri.resolve('logs_$stamp.jsonl'));
   }

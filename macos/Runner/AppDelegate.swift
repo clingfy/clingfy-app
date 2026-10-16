@@ -12,6 +12,8 @@ class AppDelegate: FlutterAppDelegate {
   }
 
   override func applicationDidFinishLaunching(_ notification: Notification) {
+    // First, before Dart starts Sentry: see NativeLogger.installLifecycleHooks.
+    NativeLogger.installLifecycleHooks()
     _ = UpdaterController.shared
     super.applicationDidFinishLaunching(notification)
   }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:clingfy/core/bridges/native_method_channel.dart';
@@ -119,14 +120,43 @@ class NativeBridge {
       },
     );
 
+    startNativeLogHandshake();
+  }
+
+  /// Tells native that Dart's 'log' handler is ready. Called once from the
+  /// constructor; exposed so a test can run it against a mock channel, since
+  /// the singleton's constructor runs only once per process.
+  @visibleForTesting
+  void startNativeLogHandshake() {
     // The Dart 'log' handler is installed now — tell native to drain any log
     // lines it buffered during startup (before the channel/handler existed),
     // so early native diagnostics land in the unified log file instead of
     // being dropped. Fire-and-forget: legacy natives without the method and
     // test environments without a platform side must never fail construction.
+    //
+    // macOS first gets the session and recording ids every line carries, so it
+    // can write its own lines to the log file the moment they are logged (see
+    // NativeLogger). Sent before the drain: the platform handles calls in
+    // order, so the held lines are written with the session. Windows has no
+    // such writer and is not sent it.
+    if (Platform.isMacOS) {
+      _sendLogContext();
+      Log.onContextChanged = _sendLogContext;
+    }
     unawaited(
       _nativeBridge
           .invokeMethod<void>(NativeMethod.flushPendingNativeLogs)
+          .catchError((_) {}),
+    );
+  }
+
+  void _sendLogContext() {
+    unawaited(
+      _nativeBridge
+          .invokeMethod<void>(NativeMethod.setNativeLogContext, {
+            'sessionId': Log.sessionId,
+            'recordingId': Log.recordingId,
+          })
           .catchError((_) {}),
     );
   }

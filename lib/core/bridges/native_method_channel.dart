@@ -233,6 +233,7 @@ abstract class NativeMethod {
   // --- Logging ---
   static const String flushPendingNativeLogs = 'flushPendingNativeLogs';
   static const String setNativeLogLevel = 'setNativeLogLevel';
+  static const String setNativeLogContext = 'setNativeLogContext';
 
   // --- Localization ---
   static const String cacheLocalizedStrings = 'cacheLocalizedStrings';

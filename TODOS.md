@@ -288,25 +288,17 @@ the fallback if passthrough is the only acceptable outcome.
 
 ## Logging — macOS
 
-### Logs written just before a crash or quit can be lost — code
+### ~~Logs written just before a crash or quit can be lost~~ — DONE 2026-10-16
 
-*From the 2026-07-30 camera/colour session (it was task #12). A crash's explaining log line never
-reached disk.*
+macOS native now writes each line to disk when it is logged, into a daily
+`logs_<date>.native.jsonl` companion. Dart writes its own file synchronously,
+with no queue. On quit native writes an `App terminating` line, and an
+uncaught exception leaves its name, reason and stack. See `docs/logging.md`.
 
-macOS has no flush on terminate or abort. `AppDelegate.swift` has no
-`applicationWillTerminate`, and nothing under `macos/Runner` installs an
-uncaught-exception or signal handler. Native log lines travel through
-`DispatchQueue.main.async` into the method channel and wait in memory when the
-channel is gone (`NativeLogger.swift:241-249`). On the Dart side,
-`FileLogSink._processQueue` writes asynchronously (`file_log_sink.dart:113-125`).
-`NativeLogger.flushPending()` is the startup handshake, not a terminate flush.
-(TODOS.md's "Log files lose their beginning" is a different, Windows-side
-problem.)
-
-**To close:** on terminate, and optionally on an uncaught exception or fatal
-signal, drain NativeLogger's pending lines and the Dart sink's queue
-synchronously, or write straight to the log file. Add a test that the queue is
-empty after the terminate path runs.
+The proposed fix, a flush on terminate, would not have saved the 2026-07-30
+line: it was in an unrun main-queue block, not in the pending buffer. Sharing
+one file was ruled out too. Dart's append mode seeks once instead of appending
+atomically, and was measured overwriting another writer's line.
 
 ## Editor - layout
 

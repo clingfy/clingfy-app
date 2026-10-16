@@ -9907,6 +9907,329 @@ final class ClipPlaybackPlannerTests: XCTestCase {
   }
 }
 
+/// Native log lines are written to disk by native code when they are logged.
+///
+/// The case this exists for: on 2026-07-30 an exception aborted the app on the
+/// main thread, and the line logged just before the crashing call was still in
+/// an unrun `DispatchQueue.main.async` block. It never reached disk. Every test
+/// here writes into a temporary folder, never the developer's real logs.
+final class NativeLogPersistenceTests: XCTestCase {
+  private var dir: URL!
+  private var saved: (NativeLogFileWriter?, String?, String?)!
+
+  override func setUp() {
+    super.setUp()
+    dir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_native_log_\(UUID().uuidString)")
+    NativeLogger.setMinLevel("debug")
+    // The host app's own startup would otherwise attach a channel or send
+    // its real session id while a test is waiting on the main queue.
+    NativeLogger.stayDetachedForTest()
+  }
+
+  override func tearDown() {
+    if let saved { NativeLogger.restoreFileStateForTest(saved) }
+    NativeLogger.resetForTest()
+    try? FileManager.default.removeItem(at: dir)
+    super.tearDown()
+  }
+
+  private func install(sessionId: String?, recordingId: String? = nil) -> NativeLogFileWriter {
+    let writer = NativeLogFileWriter(directory: dir)
+    saved = NativeLogger.installFileStateForTest(
+      writer: writer, sessionId: sessionId, recordingId: recordingId)
+    return writer
+  }
+
+  /// The lines in today's file under [category], parsed.
+  private func lines(_ writer: NativeLogFileWriter, category: String) -> [[String: Any]] {
+    let url = writer.fileURL(for: Date())
+    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+    return text.split(separator: "\n").compactMap { raw in
+      guard
+        let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
+        object["category"] as? String == category
+      else { return nil }
+      return object
+    }
+  }
+
+  private func drainMainQueue() {
+    let drained = expectation(description: "main queue drained")
+    DispatchQueue.main.async { drained.fulfill() }
+    wait(for: [drained], timeout: 2.0)
+  }
+
+  /// THE ONE THAT MATTERS. The test runs on the main thread and does not yield
+  /// before reading, so any main-queue hop is still unrun: the line must
+  /// already be in the file, exactly as it must be when the next instruction
+  /// aborts.
+  func testALineIsOnDiskBeforeTheMainQueueRuns() {
+    let writer = install(sessionId: "session-1")
+    NativeLogger.i("PersistBeforeMain", "Starting camera segment", context: ["n": 1])
+
+    let found = lines(writer, category: "PersistBeforeMain")
+    XCTAssertEqual(found.count, 1, "the line was not on disk when the call returned")
+    XCTAssertEqual(found.first?["message"] as? String, "Starting camera segment")
+    XCTAssertEqual(found.first?["sessionId"] as? String, "session-1")
+  }
+
+  /// The line is forwarded too, flagged, so Dart does not write it a second
+  /// time but still shows it and sends it to Sentry.
+  func testAWrittenLineIsForwardedFlaggedAsPersisted() {
+    _ = install(sessionId: "session-1")
+    NativeLogger.stayDetachedForTest()
+    NativeLogger.i("PersistFlag", "hello")
+    drainMainQueue()
+    let held = NativeLogger.pendingLinesForTest(category: "PersistFlag")
+    XCTAssertEqual(held.count, 1)
+    XCTAssertEqual(held.first?["persisted"] as? Bool, true)
+  }
+
+  /// Found in review: holding a line until Dart sent its session meant a
+  /// startup crash still lost it, the 2026-07-30 failure moved earlier. A line
+  /// is written at once, under Dart's fallback session name.
+  func testBeforeTheSessionIsKnownALineIsStillWrittenAtOnce() {
+    let writer = install(sessionId: nil)
+    NativeLogger.i("PersistEarly", "early")
+    let found = lines(writer, category: "PersistEarly")
+    XCTAssertEqual(found.count, 1, "on disk before anything else runs")
+    XCTAssertEqual(found.first?["sessionId"] as? String, NativeLogger.unknownSessionId)
+  }
+
+  /// The startup lines written before the session arrived are tied to it by
+  /// one line, written when the session first arrives.
+  func testTheFirstSessionIsAnnouncedOnce() {
+    let writer = install(sessionId: nil)
+    NativeLogger.setLogContextForTest(sessionId: "session-5", recordingId: nil)
+    NativeLogger.setLogContextForTest(sessionId: "session-5", recordingId: "rec-1")
+    let announced = lines(writer, category: "Log").filter {
+      ($0["message"] as? String) == "Native log session started"
+    }
+    XCTAssertEqual(announced.count, 1)
+    XCTAssertEqual(announced.first?["sessionId"] as? String, "session-5")
+  }
+
+  /// A held line that could not be written when it was logged (no writable
+  /// folder at the time) is written on the handshake, with the session.
+  func testTheHandshakeWritesHeldLinesWithTheSession() {
+    let writer = install(sessionId: nil)
+    NativeLogger.stayDetachedForTest()
+    NativeLogger.appendPendingForTest(
+      NativeLogger.buildPayload(
+        level: "INFO", category: "PersistHeld", message: "held", context: nil))
+    NativeLogger.setLogContextForTest(sessionId: "session-2", recordingId: nil)
+    NativeLogger.flushPending()
+    drainMainQueue()
+
+    let found = lines(writer, category: "PersistHeld")
+    XCTAssertEqual(found.count, 1)
+    XCTAssertEqual(found.first?["sessionId"] as? String, "session-2")
+    XCTAssertEqual(
+      NativeLogger.pendingLinesForTest(category: "PersistHeld").first?["persisted"] as? Bool,
+      true, "and is flagged, so delivering it later does not write it twice")
+  }
+
+  /// A quit before the handshake still leaves the held lines on disk, under
+  /// Dart's own fallback session name, and says the app was terminating.
+  func testTerminateWritesHeldLinesAndAFinalLine() {
+    let writer = install(sessionId: nil)
+    NativeLogger.appendPendingForTest(
+      NativeLogger.buildPayload(
+        level: "INFO", category: "PersistQuit", message: "never delivered", context: nil))
+    NativeLogger.handleTerminate()
+
+    let held = lines(writer, category: "PersistQuit")
+    XCTAssertEqual(held.count, 1)
+    XCTAssertEqual(held.first?["sessionId"] as? String, NativeLogger.unknownSessionId)
+    XCTAssertEqual(lines(writer, category: "App").last?["message"] as? String, "App terminating")
+
+    // Found in review: the marker was written before the older held lines.
+    let text = (try? String(contentsOf: writer.fileURL(for: Date()), encoding: .utf8)) ?? ""
+    let heldAt = text.range(of: "never delivered")?.lowerBound
+    let markerAt = text.range(of: "App terminating")?.lowerBound
+    XCTAssertNotNil(heldAt)
+    XCTAssertNotNil(markerAt)
+    if let heldAt, let markerAt { XCTAssertLessThan(heldAt, markerAt, "held lines first") }
+  }
+
+  /// Found in review: a log file trashed while open swallowed every later
+  /// line until midnight. The writer notices and recreates it.
+  func testAFileDeletedWhileOpenIsRecreated() throws {
+    let writer = NativeLogFileWriter(directory: dir)
+    XCTAssertTrue(writer.write(line: "{\"n\":1}"))
+    try FileManager.default.removeItem(at: dir)
+    XCTAssertTrue(writer.write(line: "{\"n\":2}"))
+    XCTAssertEqual(
+      try String(contentsOf: writer.fileURL(for: Date()), encoding: .utf8), "{\"n\":2}\n")
+  }
+
+  func testTheRecordingIdIsCarriedWhileSet() {
+    let writer = install(sessionId: "session-3", recordingId: "rec-9")
+    NativeLogger.i("PersistRec", "during")
+    XCTAssertEqual(lines(writer, category: "PersistRec").first?["recordingId"] as? String, "rec-9")
+  }
+
+  /// Found in review. Resolving the log folder used to go through
+  /// `AppPaths.logsRoot()`, whose failure path logs, from inside the logger
+  /// while it held its non-recursive lock: an unwritable folder would hang
+  /// whichever thread logged first. A factory that logs must now just work.
+  func testAWriterFactoryThatLogsDoesNotDeadlock() {
+    saved = NativeLogger.installFileStateForTest(
+      writer: nil, sessionId: "session-4", recordingId: nil)
+    let originalFactory = NativeLogger.makeFileWriter
+    defer { NativeLogger.makeFileWriter = originalFactory }
+    let directory = dir!
+    NativeLogger.makeFileWriter = {
+      NativeLogger.e("PersistFactory", "logged while making the writer")
+      return NativeLogFileWriter(directory: directory)
+    }
+
+    let returned = expectation(description: "logging returned")
+    DispatchQueue.global().async {
+      NativeLogger.i("PersistReentry", "first line")
+      returned.fulfill()
+    }
+    wait(for: [returned], timeout: 5)
+
+    let writer = NativeLogFileWriter(directory: directory)
+    XCTAssertEqual(lines(writer, category: "PersistReentry").count, 1)
+  }
+
+  /// The production factory resolves the folder without touching AppPaths'
+  /// logging path.
+  func testTheLogFolderIsResolvedWithoutSideEffects() {
+    XCTAssertEqual(
+      AppPaths.logsRootURLIfPresent().standardizedFileURL,
+      AppPaths.logsRoot().standardizedFileURL)
+  }
+
+  // MARK: - The line's shape
+
+  /// The same shape Dart's LogEvent.toJson writes for a native event, keys
+  /// in the same order, so a file reads the same whoever wrote each line.
+  func testTheLineMatchesDartsShape() throws {
+    let payload = NativeLogger.buildPayload(
+      level: "WARNING", category: "Shape", message: "a/b",
+      context: ["error": "boom", "path": "/tmp/x"], file: "/src/File.swift", line: 7)
+    let line = try XCTUnwrap(
+      NativeLogLine.encode(payload: payload, sessionId: "s", recordingId: "r"))
+
+    let keys = [
+      "ts", "level", "origin", "category", "message", "file", "line", "sessionId",
+      "recordingId", "context", "error",
+    ]
+    var cursor = line.startIndex
+    for key in keys {
+      let range = try XCTUnwrap(
+        line.range(of: "\"\(key)\":", range: cursor..<line.endIndex),
+        "\(key) missing or out of order in \(line)")
+      cursor = range.upperBound
+    }
+    XCTAssertFalse(line.contains("\\/"), "slashes are not escaped, as in Dart")
+
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+    XCTAssertEqual(object["origin"] as? String, "native")
+    XCTAssertEqual(object["file"] as? String, "File.swift")
+    XCTAssertEqual(object["error"] as? String, "boom", "promoted from the context")
+    XCTAssertNil(object["stack"])
+  }
+
+  func testAnEmptyContextAndNoRecordingAreOmitted() throws {
+    let payload = NativeLogger.buildPayload(
+      level: "INFO", category: "Shape", message: "m", context: nil)
+    let line = try XCTUnwrap(
+      NativeLogLine.encode(payload: payload, sessionId: "s", recordingId: nil))
+    XCTAssertFalse(line.contains("\"context\""))
+    XCTAssertFalse(line.contains("\"recordingId\""))
+  }
+
+  /// JSONSerialization raises an ObjC exception on these. Logging must never
+  /// be the thing that crashes the app.
+  func testValuesJsonCannotHoldAreWrittenAsText() throws {
+    let payload = NativeLogger.buildPayload(
+      level: "INFO", category: "Shape", message: "m",
+      context: [
+        "date": Date(timeIntervalSince1970: 0),
+        "url": URL(fileURLWithPath: "/tmp/a.mov"),
+        "error": NSError(domain: "d", code: 1),
+        "nan": Double.nan,
+        "nested": ["inf": Double.infinity, "ok": true],
+      ])
+    let line = try XCTUnwrap(
+      NativeLogLine.encode(payload: payload, sessionId: "s", recordingId: nil))
+    let object = try XCTUnwrap(
+      JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+    let context = try XCTUnwrap(object["context"] as? [String: Any])
+    XCTAssertEqual(context["url"] as? String, "/tmp/a.mov")
+    XCTAssertNotNil(context["date"] as? String)
+    XCTAssertNotNil(context["nan"] as? String)
+    XCTAssertEqual((context["nested"] as? [String: Any])?["ok"] as? Bool, true)
+  }
+
+  func testAnUncaughtExceptionLeavesItsNameReasonAndStack() {
+    let payload = NativeLogger.uncaughtExceptionPayload(
+      name: "NSInvalidArgumentException", reason: "bad state",
+      symbols: (0..<40).map { "frame \($0)" })
+    XCTAssertEqual(payload["level"] as? String, "ERROR")
+    XCTAssertEqual(payload["error"] as? String, "bad state")
+    let stack = payload["stack"] as? String ?? ""
+    XCTAssertTrue(stack.contains("frame 0"))
+    XCTAssertFalse(stack.contains("frame 30"), "only the top of the stack")
+  }
+
+  // MARK: - The file
+
+  /// Rolls over at local midnight, on the line's own date, as Dart's sink does.
+  func testTheFileRollsOverAtLocalMidnight() throws {
+    var now = try XCTUnwrap(
+      Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 1, hour: 23, minute: 59, second: 59)))
+    let writer = NativeLogFileWriter(directory: dir, clock: { now })
+    XCTAssertTrue(writer.write(line: "{\"a\":1}"))
+    let first = writer.fileURL(for: now)
+    now = now.addingTimeInterval(2)
+    XCTAssertTrue(writer.write(line: "{\"a\":2}"))
+    let second = writer.fileURL(for: now)
+
+    XCTAssertEqual(first.lastPathComponent, "logs_2026-03-01.native.jsonl")
+    XCTAssertEqual(second.lastPathComponent, "logs_2026-03-02.native.jsonl")
+    XCTAssertEqual(try String(contentsOf: first, encoding: .utf8), "{\"a\":1}\n")
+    XCTAssertEqual(try String(contentsOf: second, encoding: .utf8), "{\"a\":2}\n")
+  }
+
+  /// Native writes its own companion file, never Dart's: Dart's append mode
+  /// seeks once and would overwrite a line appended in between.
+  func testNativeNeverWritesDartsFile() throws {
+    let writer = NativeLogFileWriter(directory: dir)
+    XCTAssertTrue(writer.write(line: "{\"native\":1}"))
+    XCTAssertTrue(writer.fileURL(for: Date()).lastPathComponent.hasSuffix(".native.jsonl"))
+    let dartFile = dir.appendingPathComponent(
+      writer.fileURL(for: Date()).lastPathComponent.replacingOccurrences(
+        of: ".native.jsonl", with: ".jsonl"))
+    XCTAssertFalse(FileManager.default.fileExists(atPath: dartFile.path))
+  }
+
+  func testAppendingNeverOverwrites() throws {
+    let writer = NativeLogFileWriter(directory: dir)
+    XCTAssertTrue(writer.write(line: "{\"n\":1}"))
+    XCTAssertTrue(writer.write(line: "{\"n\":2}"))
+    XCTAssertEqual(
+      try String(contentsOf: writer.fileURL(for: Date()), encoding: .utf8),
+      "{\"n\":1}\n{\"n\":2}\n")
+  }
+
+  /// A folder that cannot be written reports failure, so the line falls back
+  /// to Dart's writer instead of being silently lost.
+  func testAnUnwritableFolderReportsFailure() throws {
+    try FileManager.default.createDirectory(
+      at: dir.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data().write(to: dir)  // a FILE where the folder should be
+    let writer = NativeLogFileWriter(directory: dir)
+    XCTAssertFalse(writer.write(line: "{}"))
+  }
+}
+
 final class NativeLoggerTests: XCTestCase {
   override func tearDown() {
     // Restore the build default (DEBUG test build → debug) so the shared
