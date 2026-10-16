@@ -155,6 +155,36 @@ void main() {
     expect(dartEntries, contains('logs/dart/logs_2026-06-08.jsonl'));
   });
 
+  /// macOS native writes its own `logs_<date>.native.jsonl` beside each day's
+  /// Dart file, so a crash's last native lines survive. The bundle has to
+  /// carry them, and the cap counts days: by file, a companion would push a
+  /// whole day out.
+  test('includes each day\'s native companion and caps by day', () async {
+    for (final day in ['07', '08', '09', '10']) {
+      File(
+        '${dartLogs.path}/logs_2026-06-$day.jsonl',
+      ).writeAsStringSync('{"d":"$day"}');
+      File(
+        '${dartLogs.path}/logs_2026-06-$day.native.jsonl',
+      ).writeAsStringSync('{"n":"$day"}');
+    }
+    final archive = readZip(await buildService().buildPackage());
+    final entries = archive.files
+        .where((f) => f.name.startsWith('logs/dart/'))
+        .map((f) => f.name)
+        .toSet();
+    expect(entries, {
+      for (final day in ['08', '09', '10']) ...{
+        'logs/dart/logs_2026-06-$day.jsonl',
+        'logs/dart/logs_2026-06-$day.native.jsonl',
+      },
+    });
+    expect(
+      entryText(archive, 'logs/dart/logs_2026-06-10.native.jsonl'),
+      '{"n":"10"}',
+    );
+  });
+
   test(
     'includes the newest project manifest with paths and ids redacted',
     () async {

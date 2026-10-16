@@ -1016,6 +1016,15 @@ class MainFlutterWindow: NSWindow {
         }
         result(nil)
 
+      case "setNativeLogContext":
+        // Dart's session and recording ids, which every log line carries.
+        // Lets native write its own lines to disk with them (see NativeLogger).
+        let args = call.arguments as? [String: Any]
+        NativeLogger.setLogContext(
+          sessionId: args?["sessionId"] as? String,
+          recordingId: args?["recordingId"] as? String)
+        result(nil)
+
       case "flushPendingNativeLogs":
         // Dart's 'log' handler is installed — drain the lines buffered
         // before the channel/handler existed into the unified pipeline.

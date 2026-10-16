@@ -33,6 +33,17 @@ enum AppPaths {
     return logsDir
   }
 
+  /// The same location as [logsRoot], minus the side effects: nothing is
+  /// created and nothing is logged.
+  ///
+  /// For `NativeLogger`'s own file writer, which must never log while
+  /// resolving where to log: `ensureDirectory` reports a failure through
+  /// `NativeLogger`, so `logsRoot()` there would re-enter the logger from
+  /// inside it. The writer creates the folder itself, silently.
+  static func logsRootURLIfPresent() -> URL {
+    applicationSupportRootURL().appendingPathComponent("Logs", isDirectory: true)
+  }
+
   /// Returns the root directory for downloaded speech-recognition models.
   /// Location: `~/Library/Application Support/<app-id>/Models/`
   ///

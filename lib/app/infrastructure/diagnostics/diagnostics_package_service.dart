@@ -45,7 +45,10 @@ class DiagnosticsPackageService {
   final Directory? tempDir;
   final Directory outputDir;
 
-  /// How many of the newest Dart JSONL logs to include.
+  /// How many of the newest days of JSONL logs to include. A day can have two
+  /// files: Dart's `logs_<date>.jsonl` and, on macOS, native's own
+  /// `logs_<date>.native.jsonl` companion. Both travel, so a crash's last
+  /// native lines are in the bundle.
   static const int maxDartLogFiles = 3;
 
   /// Per-file cap — only the newest bytes of an oversized log travel.
@@ -223,18 +226,30 @@ class DiagnosticsPackageService {
     return out;
   }
 
+  /// The `yyyy-MM-dd` of a daily log file name (Dart's or native's), or null.
+  static String? _logDay(String name) => RegExp(
+    r'^logs_(\d{4}-\d{2}-\d{2})(?:\.native)?\.jsonl$',
+  ).firstMatch(name)?.group(1);
+
   List<File> _newestDartLogs() {
     final dir = dartLogsDir;
     if (dir == null || !dir.existsSync()) return const [];
     try {
-      final files =
-          dir
-              .listSync()
-              .whereType<File>()
-              .where((f) => _baseName(f.path).startsWith('logs_'))
-              .toList()
-            ..sort((a, b) => _baseName(b.path).compareTo(_baseName(a.path)));
-      return files.take(maxDartLogFiles).toList();
+      final files = dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => _logDay(_baseName(f.path)) != null)
+          .toList();
+      // By day, not by file: a native companion sorts beside its day's Dart
+      // file, and counting files would let it push a whole day out.
+      final days =
+          files.map((f) => _logDay(_baseName(f.path))!).toSet().toList()
+            ..sort((a, b) => b.compareTo(a));
+      final keep = days.take(maxDartLogFiles).toSet();
+      return files
+          .where((f) => keep.contains(_logDay(_baseName(f.path))))
+          .toList()
+        ..sort((a, b) => _baseName(b.path).compareTo(_baseName(a.path)));
     } catch (_) {
       return const [];
     }

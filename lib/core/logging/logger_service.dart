@@ -101,7 +101,20 @@ abstract class RemoteLogSink {
 
 class Log {
   static String? _sessionId;
-  static String? recordingId;
+  static String? _recordingId;
+
+  /// The recording a line belongs to, set while one is in progress.
+  static String? get recordingId => _recordingId;
+  static set recordingId(String? value) {
+    if (value == _recordingId) return;
+    _recordingId = value;
+    onContextChanged?.call();
+  }
+
+  /// Called when [recordingId] changes. macOS writes its own native lines to
+  /// disk stamped with these ids, so the bridge installs this to keep native
+  /// in step (see `NativeBridge` and `NativeLogger.setLogContext`).
+  static void Function()? onContextChanged;
   static RemoteLogSink? _remoteSink;
   static bool _initialized = false;
 
@@ -262,7 +275,12 @@ class Log {
       // lowest rank — matching the native gate's fallback so both sides agree.
       final level = logLevelFromName(event.level) ?? LogLevel.debug;
       if (level.index < _minLevel.index) return;
-      _dispatch(event);
+      // macOS writes its own lines to the log file the moment they are logged
+      // (so a line logged right before a crash survives it) and flags them.
+      // Writing a flagged line again would duplicate it; it still goes to the
+      // console and to Sentry. Windows and older macOS builds never set it.
+      final persisted = payload['persisted'] == true;
+      _dispatch(event, writeToFile: !persisted);
     } catch (e) {
       if (kDebugMode) {
         debugPrint("Error parsing native log event: $e");
@@ -353,7 +371,11 @@ class Log {
   /// Routes an event to the sinks, or to the bounded pre-init buffer when
   /// [init] hasn't run yet (console echo still happens immediately so debug
   /// runs see bootstrap lines live).
-  static void _dispatch(LogEvent event) {
+  ///
+  /// [writeToFile] is false for a line its producer already wrote. A buffered
+  /// pre-init event is always written: native only writes its own lines once
+  /// Dart has sent it the session, which happens after [init].
+  static void _dispatch(LogEvent event, {bool writeToFile = true}) {
     if (!_initialized) {
       if (_printToConsole) debugPrint(event.toString());
       if (_preInitBuffer.length >= _preInitBufferCapacity) {
@@ -363,7 +385,7 @@ class Log {
       return;
     }
 
-    _processEvent(event);
+    _processEvent(event, writeToFile: writeToFile);
   }
 
   /// Test-only: number of events waiting for [init].
@@ -391,12 +413,17 @@ class Log {
     _initialized = false;
     _sessionId = null;
     _remoteSink = null;
-    recordingId = null;
+    _recordingId = null;
+    onContextChanged = null;
     _preInitBuffer.clear();
     _minLevel = _resolveDefaultLevel();
   }
 
-  static void _processEvent(LogEvent event, {bool echoConsole = true}) {
+  static void _processEvent(
+    LogEvent event, {
+    bool echoConsole = true,
+    bool writeToFile = true,
+  }) {
     // 1. Console
     if (echoConsole && _printToConsole) {
       // Use debugPrint to avoid truncating lengthy logs on Android
@@ -404,7 +431,7 @@ class Log {
     }
 
     // 2. File Sink
-    FileLogSink().append(event);
+    if (writeToFile) FileLogSink().append(event);
 
     // 3. Remote Sink
     _remoteSink?.send(event);

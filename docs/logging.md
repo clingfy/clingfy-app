@@ -1,6 +1,6 @@
 # Logging
 
-One pipeline, one format, one file — on every platform.
+One pipeline, one format — on every platform. (macOS keeps its native lines in a companion file; see below.)
 
 ```
 Dart   Log.d/i/w/e ─────────────────────────────┐
@@ -12,16 +12,46 @@ Windows NativeLogPublisher::Debug/Info/Warn/Error┘         │
                                           (debug builds) JSONL daily  (Sentry today)
 ```
 
-The Dart `Log` class (`lib/core/logging/logger_service.dart`) is the single
-sink owner. Both native sides are pure producers: they never write their own
-log files; every line crosses the method channel as a reverse `log` call and
-lands in the same JSONL file and the same remote sink.
+The Dart `Log` class (`lib/core/logging/logger_service.dart`) owns the sinks.
+Every line crosses the method channel as a reverse `log` call and reaches the
+same console and remote sink. Windows is a pure producer: Dart writes its
+lines.
+
+**macOS native writes its own lines to disk, the moment they are logged**,
+into a daily companion `logs_YYYY-MM-DD.native.jsonl` in the same folder and
+the same line shape. It still forwards each line, flagged `persisted: true`,
+and Dart skips the file for those. This is so the line logged just before a
+crash survives it. On 2026-07-30 an exception aborted the app on the main
+thread while "Starting camera segment", logged right before the crashing
+call, was still in an unrun `DispatchQueue.main.async` block, so it never
+reached disk. No flush on quit could have saved it.
+
+It is a separate file because Dart's `FileMode.append` is not `O_APPEND`: it
+seeks to the end once and writes at that position, so a line another writer
+appends in between gets overwritten. That was measured: Dart's "C" landed on
+top of an `O_APPEND` writer's "NATIVE". Each file has exactly one writer.
+Merge them by `ts` to read one timeline.
+
+Dart writes its own file synchronously, one line per call, with no queue, so
+its lines survive a crash too.
+
+Native lines go to disk even before Dart has sent the session, stamped
+`unknown-session`, so a startup crash keeps them too. Around a recording's
+start and stop, a native-written line's `recordingId` can lag the console and
+Sentry copy by one main-queue turn, because native learns the new id that
+late. Exceptions that AppKit catches during event dispatch reach no uncaught
+handler, Sentry's included, so they leave no `Crash` line. Native also writes a final `App terminating`
+line on quit, and an `Uncaught exception: <name>` line with the reason and
+the top of the stack. That hook is installed before Sentry and chains to it.
+There are no signal handlers: sentry-cocoa owns those.
 
 ## The line format (JSONL)
 
 One JSON object per line in
-`<application-support>/Logs/logs_YYYY-MM-DD.jsonl` (local-date file name,
-30-day retention, daily rollover):
+`<application-support>/Logs/logs_YYYY-MM-DD.jsonl`, plus on macOS its native
+companion `logs_YYYY-MM-DD.native.jsonl` (local-date file names, 30-day
+retention for both, daily rollover). The diagnostics bundle carries the
+newest three days, both files per day:
 
 | Key | Always | Meaning |
 |---|---|---|
@@ -30,7 +60,7 @@ One JSON object per line in
 | `origin` | ✓ | `flutter` \| `native` |
 | `category` | ✓ | subsystem tag (`Recording`, `Preview`, `DeviceProbe`, …) |
 | `message` | ✓ | human-readable line |
-| `sessionId` | ✓ | stamped at Dart ingest (UTC ISO of app launch) |
+| `sessionId` | ✓ | Dart's UTC ISO of app launch. Stamped at Dart ingest, or by macOS native from `setNativeLogContext` for lines it writes itself (`unknown-session` before Dart sent it) |
 | `file` / `line` | — | producer source location (macOS sends it for free via `#file`/`#line`) |
 | `recordingId` | — | present while a recording session is active |
 | `context` | — | structured key/values; omitted when empty |
@@ -117,7 +147,8 @@ promotion for native ERRORs.
 
 - Dart: `test/core/logging/logger_format_contract_test.dart`
 - Windows: `windows/runner_tests/native_log_publisher_test.cpp`
-- macOS: `NativeLoggerTests` in `macos/RunnerTests/RunnerTests.swift`
+- macOS: `NativeLoggerTests` and `NativeLogPersistenceTests` (the line macOS
+  writes itself, `NativeLogLine.encode`) in `macos/RunnerTests/RunnerTests.swift`
 
 If you change the payload shape, update all three plus the parser
 (`Log.parseNativeEvent`) and this document.
