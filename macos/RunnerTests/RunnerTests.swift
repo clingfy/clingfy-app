@@ -10084,6 +10084,123 @@ final class RecordingSegmentMergerTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: a.path), "moved, not copied")
   }
 
+  /// THE ONE THAT MATTERS. Every preset failing used to finish the take with
+  /// no screen.mov, and a project without one is skipped by the library and
+  /// refused by Finder: unreachable with every frame still on disk. Forced
+  /// here by offering no presets at all.
+  func testAFailedMergePublishesTheFirstPartAndKeepsTheRest() async throws {
+    let a = try makeSegment("screen.segment-001.mov")
+    let b = try makeSegment("screen.segment-002.mov", seconds: 1.0)
+    let out = dir.appendingPathComponent("screen.mov")
+
+    let outcome = try await RecordingSegmentMerger.mergeOrSalvage([a, b], to: out, presets: [])
+
+    XCTAssertNotNil(outcome.mergeError, "the merge did fail")
+    XCTAssertEqual(outcome.publishedSegmentCount, 1)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: out.path), "the recording opens")
+    XCTAssertEqual(
+      AVURLAsset(url: out).duration.seconds, 0.5, accuracy: 0.1,
+      "it is the FIRST part, which every other timeline starts with")
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: b.path), "the part set aside is not touched")
+  }
+
+  /// Found in review: a bad segment is a likely reason the join failed, and
+  /// publishing it would turn a loud failure into a "ready" take that cannot
+  /// play. The first part that plays on its own is published instead.
+  func testAnUnusableFirstPartIsSkipped() async throws {
+    let broken = dir.appendingPathComponent("screen.segment-001.mov")
+    try Data("not a movie".utf8).write(to: broken)
+    let b = try makeSegment("screen.segment-002.mov")
+    let out = dir.appendingPathComponent("screen.mov")
+
+    let outcome = try await RecordingSegmentMerger.mergeOrSalvage([broken, b], to: out, presets: [])
+
+    XCTAssertEqual(outcome.publishedSegmentURL, b)
+    XCTAssertTrue(RecordingSegmentMerger.isUsableSegment(out), "what was published plays")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: broken.path), "the bad part is kept too")
+  }
+
+  func testWithNoUsablePartTheFailureStillSurfaces() async throws {
+    let a = dir.appendingPathComponent("screen.segment-001.mov")
+    let b = dir.appendingPathComponent("screen.segment-002.mov")
+    try Data("x".utf8).write(to: a)
+    try Data("y".utf8).write(to: b)
+    do {
+      _ = try await RecordingSegmentMerger.mergeOrSalvage(
+        [a, b], to: dir.appendingPathComponent("screen.mov"), presets: [])
+      XCTFail("nothing can be published, so the take must fail, not pretend")
+    } catch {}
+  }
+
+  func testTheManifestRecordsThatNothingWasPublished() throws {
+    let data = try XCTUnwrap(
+      RecordingSegmentMerger.unmergedManifest(
+        segments: [["index": 1, "screen": "screen.segment-001.mov"]],
+        publishedIndex: nil, reason: "boom"))
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    XCTAssertTrue(object["publishedSegmentIndex"] is NSNull)
+  }
+
+  func testAMergeThatWorksReportsNoSalvage() async throws {
+    let a = try makeSegment("screen.segment-001.mov")
+    let b = try makeSegment("screen.segment-002.mov")
+    let out = dir.appendingPathComponent("screen.mov")
+    let outcome = try await RecordingSegmentMerger.mergeOrSalvage([a, b], to: out)
+    XCTAssertNil(outcome.mergeError)
+    XCTAssertEqual(outcome.publishedSegmentCount, 2)
+    XCTAssertEqual(outcome.preset, AVAssetExportPresetPassthrough)
+  }
+
+  /// A single segment has nothing to salvage: if moving it fails there is no
+  /// smaller part to fall back to, so the error still surfaces.
+  func testASingleSegmentThatCannotBeMovedStillFails() async throws {
+    let missing = dir.appendingPathComponent("screen.segment-001.mov")
+    let out = dir.appendingPathComponent("screen.mov")
+    do {
+      _ = try await RecordingSegmentMerger.mergeOrSalvage([missing], to: out)
+      XCTFail("expected a failure")
+    } catch {}
+  }
+
+  /// What a later repair needs, since the in-memory session is gone by then.
+  func testTheUnmergedManifestRecordsEverySegment() throws {
+    let data = try XCTUnwrap(
+      RecordingSegmentMerger.unmergedManifest(
+        segments: [
+          ["index": 1, "screen": "screen.segment-001.mov", "durationSeconds": 2.5],
+          ["index": 2, "screen": "screen.segment-002.mov", "mic": "mic.segment-002.m4a"],
+        ],
+        publishedIndex: 1, reason: "boom"))
+    let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    XCTAssertEqual(object["version"] as? Int, 1)
+    XCTAssertEqual(object["publishedSegmentIndex"] as? Int, 1)
+    XCTAssertEqual(object["reason"] as? String, "boom")
+    let segments = try XCTUnwrap(object["segments"] as? [[String: Any]])
+    XCTAssertEqual(segments.map { $0["screen"] as? String }, ["screen.segment-001.mov", "screen.segment-002.mov"])
+    XCTAssertEqual(segments.last?["mic"] as? String, "mic.segment-002.m4a")
+    XCTAssertEqual(RecordingSegmentMerger.unmergedManifestName, "segments.unmerged.json")
+  }
+
+  /// Found live: a FlutterError interpolates as its pointer, so the first
+  /// real manifest recorded the reason as `<FlutterError: 0x…>`.
+  func testFailureReasonsAreReadable() {
+    let flutter = FlutterError(code: "RECORDING_ERROR", message: "Segment merge failed", details: nil)
+    XCTAssertEqual(
+      RecordingSegmentMerger.describe(flutter), "RECORDING_ERROR: Segment merge failed")
+    let ns = NSError(
+      domain: AVFoundationErrorDomain, code: -11838,
+      userInfo: [NSLocalizedDescriptionKey: "Operation Stopped"])
+    XCTAssertTrue(RecordingSegmentMerger.describe(ns).contains("-11838"))
+    XCTAssertFalse(RecordingSegmentMerger.describe(flutter).contains("0x"))
+  }
+
+  func testTheSalvageWarningSaysThePartsAreKept() {
+    let message = RecordingSegmentMerger.salvageWarning
+    XCTAssertTrue(message.contains("one part"))
+    XCTAssertTrue(message.contains("capture folder"))
+  }
+
   func testTheSegmentSummaryNamesTheCodecAndSize() throws {
     let a = try makeSegment("a.segment-000.mov")
     let summary = RecordingSegmentMerger.segmentSummary(a)

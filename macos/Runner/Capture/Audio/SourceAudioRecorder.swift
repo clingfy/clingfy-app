@@ -435,6 +435,16 @@ final class SourceAudioRecorder {
     return artifacts
   }
 
+  /// Stops tracking [urls] as files to clean up, so [cancelAndCleanup] leaves
+  /// them on disk. For a paused recording whose parts could not be joined:
+  /// the parts set aside keep their mic and system audio, which a successful
+  /// stop's reset would otherwise delete.
+  func keepArtifacts(_ urls: [URL]) {
+    lock.lock()
+    finishedArtifactURLs.removeAll { urls.contains($0) }
+    lock.unlock()
+  }
+
   /// Cancels everything in flight and deletes partial segment files — plus
   /// finished-but-unmerged segment files, so a mid-recording failure can't
   /// orphan audio inside the bundle. Used on failure/retry/reset paths; a
