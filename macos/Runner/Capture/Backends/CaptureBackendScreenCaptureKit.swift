@@ -250,6 +250,15 @@ private struct SegmentedRecordingSession {
     cumulativeRecordedDuration += recordedDuration
   }
 
+  /// Keeps only the segments in [indices]. Used when a merge failed and one
+  /// segment was published alone: the metadata's segment list drives the
+  /// camera's sync timeline, so it must describe what is in screen.mov and
+  /// not the parts set aside.
+  mutating func retainSegments(_ indices: Set<Int>) {
+    segmentArtifacts = segmentArtifacts.filter { indices.contains($0.index) }
+    cumulativeRecordedDuration = segmentArtifacts.reduce(0) { $0 + $1.recordedDuration }
+  }
+
   var recordedScreenSegments: [RecordingMetadata.CaptureSegment] {
     segmentArtifacts
       .sorted(by: { $0.index < $1.index })
@@ -480,7 +489,7 @@ enum RecordingSegmentMerger {
             "SCKBackend", "Segment merge re-encoded the recording",
             context: [
               "preset": presetName, "elapsedMs": elapsedMs,
-              "passthroughError": lastError.map { "\($0)" } ?? "",
+              "passthroughError": lastError.map(describe) ?? "",
             ])
         }
         return Outcome(url: outputURL, preset: presetName)
@@ -488,7 +497,7 @@ enum RecordingSegmentMerger {
         NativeLogger.w(
           "SCKBackend", "Segment merge preset failed",
           context: [
-            "preset": presetName, "error": "\(error)",
+            "preset": presetName, "error": describe(error),
             "elapsedMs": Int(Date().timeIntervalSince(started) * 1000),
           ])
         lastError = error
@@ -501,6 +510,111 @@ enum RecordingSegmentMerger {
     throw lastError
       ?? flutterError(NativeErrorCode.recordingError, "Unable to create export session for merged recording")
   }
+
+  /// What a merge produced: the joined file, or, when joining failed, the
+  /// first segment published alone so the recording still opens.
+  struct SalvageOutcome {
+    let url: URL
+    let preset: String?
+    /// How many segments are in [url]. Fewer than were recorded means the
+    /// rest were set aside, untouched, beside it.
+    let publishedSegmentCount: Int
+    let mergeError: Error?
+    /// The segment published alone, after a salvage. Nil when they all joined.
+    var publishedSegmentURL: URL? = nil
+  }
+
+  /// [mergeSegments], and if every preset fails, publishes the FIRST segment
+  /// as the recording instead of leaving none.
+  ///
+  /// Before, a failed merge finished the take with no screen.mov, and a
+  /// project without screen.mov is skipped by the library and refused by
+  /// Finder: every frame was still on disk, unreachable. The first segment,
+  /// not the longest, because the camera, cursor and audio timelines all start
+  /// with it, so what is published stays in sync. The other segments are not
+  /// touched; the caller records them so they can be joined later.
+  static func mergeOrSalvage(
+    _ segmentURLs: [URL],
+    to outputURL: URL,
+    fileManager: FileManager = .default,
+    presets: [String] = presetOrder
+  ) async throws -> SalvageOutcome {
+    do {
+      let outcome = try await mergeSegments(
+        segmentURLs, to: outputURL, fileManager: fileManager, presets: presets)
+      return SalvageOutcome(
+        url: outcome.url, preset: outcome.preset,
+        publishedSegmentCount: segmentURLs.count, mergeError: nil)
+    } catch {
+      guard segmentURLs.count > 1 else { throw error }
+      // A bad segment is a likely reason every preset failed. Publishing it
+      // would turn a loud failure into a "ready" take that cannot play, with
+      // the good parts unused. The first USABLE part, then: the first in
+      // practice, which keeps the other timelines in sync.
+      guard let candidate = segmentURLs.first(where: isUsableSegment) else {
+        NativeLogger.e(
+          "SCKBackend", "Segment merge failed and no part is usable on its own",
+          context: ["error": describe(error), "segments": segmentURLs.count])
+        throw error
+      }
+      NativeLogger.e(
+        "SCKBackend", "Segment merge failed; publishing one part so the recording opens",
+        context: [
+          "error": describe(error), "segments": segmentURLs.count,
+          "published": candidate.lastPathComponent,
+        ])
+      let published = try await mergeSegments([candidate], to: outputURL, fileManager: fileManager)
+      return SalvageOutcome(
+        url: published.url, preset: nil, publishedSegmentCount: 1, mergeError: error,
+        publishedSegmentURL: candidate)
+    }
+  }
+
+  /// A segment that can stand alone as the recording: it has a video track, a
+  /// positive duration, and AVFoundation says it plays.
+  static func isUsableSegment(_ url: URL) -> Bool {
+    let asset = AVURLAsset(url: url)
+    guard asset.isPlayable, !asset.tracks(withMediaType: .video).isEmpty else { return false }
+    let seconds = asset.duration.seconds
+    return seconds.isFinite && seconds > 0
+  }
+
+  /// The record of segments a salvage set aside, written beside them as
+  /// `segments.unmerged.json`: every segment's files and timing, which one was
+  /// published, and why the merge failed. Enough for a later repair to join
+  /// them, without the in-memory session that is gone by then.
+  static func unmergedManifest(
+    segments: [[String: Any]], publishedIndex: Int?, reason: String, now: Date = Date()
+  ) -> Data? {
+    // `publishedSegmentIndex` is null when no part could be published at all.
+    let object: [String: Any] = [
+      "version": 1,
+      "writtenAt": NativeLogger.isoFormatter.string(from: now),
+      "reason": reason,
+      "publishedSegmentIndex": publishedIndex.map { $0 as Any } ?? NSNull(),
+      "segments": segments,
+    ]
+    return try? JSONSerialization.data(
+      withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+  }
+
+  static let unmergedManifestName = "segments.unmerged.json"
+
+  /// Readable text for an error. A FlutterError interpolates as its pointer
+  /// (`<FlutterError: 0x…>`), which is what the first manifest recorded.
+  static func describe(_ error: Error) -> String {
+    if let flutter = error as? FlutterError {
+      return [flutter.code, flutter.message].compactMap { $0 }.joined(separator: ": ")
+    }
+    let ns = error as NSError
+    return "\(ns.domain) \(ns.code): \(ns.localizedDescription)"
+  }
+
+  /// Shown when a paused recording's parts could not be joined. Fixed English,
+  /// as `cameraFinalizeSalvageWarning` is.
+  static let salvageWarning =
+    "This paused recording's parts could not be joined, so the editor shows one part of it. "
+    + "The other parts are saved, untouched, in the project's capture folder."
 
   /// One segment's format, for the merge log: codec, size and tracks.
   static func segmentSummary(_ url: URL) -> [String: Any] {
@@ -1467,21 +1581,112 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
       ]
     )
 
-    let mergedURL = try await RecordingSegmentMerger.mergeSegments(
-      orderedSegments.map(\.rawURL),
-      to: session.primaryInProgressRawURL
-    ).url
+    // Debug builds only: `CLINGFY_FORCE_SEGMENT_MERGE_FAILURE=1` makes every
+    // preset fail, so the salvage path can be exercised on a real paused take.
+    // It cannot be reached by ordinary use, which is why it needs a switch.
+    #if DEBUG
+      let presets =
+        ProcessInfo.processInfo.environment["CLINGFY_FORCE_SEGMENT_MERGE_FAILURE"] == "1"
+        ? [] : RecordingSegmentMerger.presetOrder
+    #else
+      let presets = RecordingSegmentMerger.presetOrder
+    #endif
+    let outcome: RecordingSegmentMerger.SalvageOutcome
+    do {
+      outcome = try await RecordingSegmentMerger.mergeOrSalvage(
+        orderedSegments.map(\.rawURL),
+        to: session.primaryInProgressRawURL,
+        presets: presets
+      )
+    } catch {
+      // Not even one part could be published. The take fails, as before, but
+      // the failure path deletes every audio file the recorder tracks: keep
+      // them, and record the parts, so nothing more is lost than the join.
+      if orderedSegments.count > 1 {
+        sourceAudioRecorder.keepArtifacts(
+          orderedSegments.flatMap { [$0.micAudioURL, $0.systemAudioURL].compactMap { $0 } })
+        writeUnmergedManifest(
+          orderedSegments, publishedIndex: nil, alongside: session.primaryInProgressRawURL,
+          reason: error)
+      }
+      throw error
+    }
+    let mergedURL = outcome.url
 
-    try CursorSegmentMerger.mergeSegments(
-      orderedSegments,
-      expectsCursorSidecars: session.expectsCursorSidecars,
-      outputURL: finalCursorDataURL(for: mergedURL)
-    )
+    // What went into screen.mov. After a salvage that is one segment only, and
+    // cursor, audio and cleanup must describe exactly that, or the parts set
+    // aside get deleted. (The metadata's segment list is trimmed too, but it is
+    // currently never written on camera takes; see TODOS.md, so a salvaged
+    // camera take's camera sync is not protected by this.)
+    var published = orderedSegments
+    if let mergeError = outcome.mergeError,
+      let kept = orderedSegments.first(where: { $0.rawURL == outcome.publishedSegmentURL })
+    {
+      published = [kept]
+      writeUnmergedManifest(
+        orderedSegments, publishedIndex: kept.index, alongside: mergedURL, reason: mergeError)
+      segmentedSession?.retainSegments([kept.index])
+      // The stop's reset deletes every audio file the recorder still tracks.
+      // The parts set aside keep theirs.
+      sourceAudioRecorder.keepArtifacts(
+        orderedSegments.filter { $0.index != kept.index }
+          .flatMap { [$0.micAudioURL, $0.systemAudioURL].compactMap { $0 } })
+      onWarning?(RecordingSegmentMerger.salvageWarning)
+    }
 
-    await mergeSourceAudioArtifacts(orderedSegments, alongside: mergedURL)
+    // Best effort, like the audio below. A cursor sidecar problem used to fail
+    // the whole Stop AFTER screen.mov was already written, so a good recording
+    // was reported as lost. It now finishes without cursor effects instead.
+    do {
+      try CursorSegmentMerger.mergeSegments(
+        published,
+        expectsCursorSidecars: session.expectsCursorSidecars,
+        outputURL: finalCursorDataURL(for: mergedURL)
+      )
+    } catch {
+      NativeLogger.w(
+        "SCKBackend", "Cursor merge failed; finishing without cursor data",
+        context: ["error": "\(error)"])
+      try? FileManager.default.removeItem(at: finalCursorDataURL(for: mergedURL))
+    }
 
-    cleanupMergedSegmentArtifacts(orderedSegments, finalURL: mergedURL)
+    await mergeSourceAudioArtifacts(published, alongside: mergedURL)
+
+    cleanupMergedSegmentArtifacts(published, finalURL: mergedURL)
     return mergedURL
+  }
+
+  private func writeUnmergedManifest(
+    _ segments: [SegmentedRecordingArtifact], publishedIndex: Int?, alongside mergedURL: URL,
+    reason: Error
+  ) {
+    let records: [[String: Any]] = segments.map { segment in
+      var record: [String: Any] = [
+        "index": segment.index,
+        "screen": segment.rawURL.lastPathComponent,
+        "durationSeconds": segment.recordedDuration,
+        "startWallClock": RecordingMetadata.iso8601String(from: segment.startWallClock),
+        "endWallClock": RecordingMetadata.iso8601String(from: segment.endWallClock),
+      ]
+      if let cursor = segment.cursorURL { record["cursor"] = cursor.lastPathComponent }
+      if let mic = segment.micAudioURL { record["mic"] = mic.lastPathComponent }
+      if let system = segment.systemAudioURL { record["system"] = system.lastPathComponent }
+      return record
+    }
+    let url = mergedURL.deletingLastPathComponent()
+      .appendingPathComponent(RecordingSegmentMerger.unmergedManifestName)
+    guard
+      let data = RecordingSegmentMerger.unmergedManifest(
+        segments: records, publishedIndex: publishedIndex,
+        reason: RecordingSegmentMerger.describe(reason))
+    else { return }
+    do {
+      try data.write(to: url, options: .atomic)
+    } catch {
+      NativeLogger.e(
+        "SCKBackend", "Could not record the unmerged segments",
+        context: ["error": "\(error)", "path": url.path])
+    }
   }
 
   /// Merges the per-segment source audio files into capture/mic.m4a and

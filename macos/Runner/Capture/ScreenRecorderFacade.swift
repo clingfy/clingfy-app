@@ -3044,7 +3044,12 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
   }
 
   func backendDidWarn(message: String) {
-    guard let sessionId = sessionState.activeRecordingWorkflowSessionId else { return }
+    guard let sessionId = sessionState.activeRecordingWorkflowSessionId else {
+      NativeLogger.w(
+        "Facade", "Recording warning dropped: no active session", context: ["message": message])
+      return
+    }
+    NativeLogger.i("Facade", "Recording warning sent", context: ["message": message])
     onRecordingWarning?([
       "type": "recordingWarning",
       "sessionId": sessionId,

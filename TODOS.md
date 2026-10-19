@@ -286,31 +286,83 @@ fixed at start. Segments of different sizes even pass through: AVFoundation
 reads the result, scaling the odd segment, though ffmpeg chokes on it. The new
 warning line is how to find out.
 
-### Both segment-merge presets failing makes a paused recording unreachable — code
+### ~~Both segment-merge presets failing makes a paused recording unreachable~~ — DONE 2026-10-19
 
-*Found 2026-10-17 while fixing the item above.*
+When every preset fails, `RecordingSegmentMerger.mergeOrSalvage` publishes the
+first **usable** segment as `screen.mov`: one with a video track, a positive
+duration, and that plays. In practice that is the first segment, which the
+cursor and audio timelines start with. A broken segment is skipped, because
+publishing it would turn a loud failure into a "ready" take that cannot play. The take finishes `ready`, is listed,
+and opens; Finder accepted it in the live check. The other segments, with their
+cursor, mic and system files, stay untouched in `capture/`. They are recorded in
+`capture/segments.unmerged.json`: every segment's files and timing, the
+published index, and a readable reason. The user gets a warning saying so, sent
+through the same path as the camera salvage.
 
-If passthrough and the HEVC fallback both fail, `stopAsync` finishes with no
-file (`CaptureBackendScreenCaptureKit.swift` `finishWithFailure`). The screen
-segments stay in `<project>/capture/*.segment-NNN.mov`, but `resetState` drops
-the session that lists them, and nothing in the app can open them. The mic and
-system sidecar segments are actively deleted (`SourceAudioRecorder.cancelAndCleanup`).
-The user is told the recording failed, while every frame is still on disk.
+The audio sidecars needed one more fix. A successful stop's reset deletes every
+audio file the recorder still tracks, so the parts set aside are now released
+from it (`SourceAudioRecorder.keepArtifacts`). Verified on a real paused take
+with the debug-only `CLINGFY_FORCE_SEGMENT_MERGE_FAILURE=1` switch. If no part
+is usable on its own, the take still fails, as before. Its audio files and the
+manifest (`publishedSegmentIndex: null`) are kept, though, instead of being
+deleted by the failure path.
 
-**To close:** never finish a multi-segment take with no file. Either keep the
-first or longest segment as `screen.mov` with a loud warning, or mark the
-project merge-failed, keep every segment plus the list, and offer a retry. Keep
-the sidecar segments in either case.
+Known gap: on a camera take, the camera's sync after a salvage is not right.
+See "The recording metadata never lists its segments" below.
 
-### A cursor-merge failure throws away a screen merge that succeeded — code
+### Rejoin the parts a salvaged recording set aside — code
 
-*Found 2026-10-17.* `mergeSegmentArtifacts` merges the screen, then the cursor
-sidecars with a throwing call, then the audio as best effort. A cursor problem
-therefore fails the whole Stop after `screen.mov` was already written, and a
-good recording is reported as lost.
+*Follow-up to the item above.* A salvaged take opens with its first part only.
+`capture/segments.unmerged.json` lists everything needed to join the rest: the
+files, durations and wall-clock times. Add a repair at launch, or on open, that
+merges into a temporary file, then renames it over `screen.mov`, rebuilds the
+cursor and audio sidecars, and updates the metadata. Cap the attempts, because
+a failure can be reproducible.
 
-**To close:** make the cursor merge best effort like the audio merge: log it,
-and finish without cursor effects rather than without the recording.
+### ~~A cursor-merge failure throws away a screen merge that succeeded~~ — DONE 2026-10-19
+
+The cursor merge is now best effort, like the audio merge. A sidecar problem
+finishes the take without cursor data (and removes any partial `cursor.json`)
+instead of failing a Stop whose `screen.mov` was already written.
+
+### Workflow events are sent to Flutter off the main thread — code
+
+*Found 2026-10-19 on a live paused take.* On resume Flutter logged "The
+'com.clingfy/workflow/events' channel sent a message from native to Flutter on a
+non-platform thread … may result in data loss or crashes".
+`MainFlutterWindow.emitWorkflowEvent` calls the event sink directly, and
+`ScreenRecorderEventBridge` reaches it from capture callbacks on background
+queues.
+
+**To close:** hop to the main queue in `emitWorkflowEvent` when not already on
+it, and check the other event sinks for the same pattern.
+
+### The recording metadata never lists its segments — code
+
+*Found 2026-10-19.* `screen.meta.json`'s `screen.segments` is empty on every
+take checked, a plain paused one included, even though
+`updateMetadataSidecarOnFinish` sets it from `capture.recordedScreenSegments`.
+`CameraLayoutResolver` uses that list to sync the camera to the screen across
+pauses. Without it, the resolver falls back to `endedAt` minus the duration,
+which cannot account for a pause.
+
+This also misaligns a **salvaged** camera take (see the segment-merge salvage
+above). screen.mov holds one part, but the fallback window is anchored at the
+end of the whole take, so the camera bubble can play footage from a later part.
+Confirmed in review: on camera takes the facade reads the list after the
+backend's `resetState` has dropped the session. The camera stop completes
+asynchronously.
+
+**To close:** snapshot the segment list before the reset and have the facade
+read that. Then check camera sync on a paused take, and on a salvaged take,
+with the camera on. This changes which sync path every camera take uses, so it
+needs that check before it ships.
+
+### A recording failure tells the user nothing — code
+
+*Found 2026-10-19.* A stop failure surfaces as `RECORDING_ERROR`, which
+`home_error_mapper.dart` maps to `errRecordingError('')`: "A recording error
+occurred: " followed by nothing. The native message is dropped.
 
 ### The screen merger matches audio tracks by position, and inserts the whole segment length — code
 
