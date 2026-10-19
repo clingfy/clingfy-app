@@ -337,26 +337,69 @@ queues.
 **To close:** hop to the main queue in `emitWorkflowEvent` when not already on
 it, and check the other event sinks for the same pattern.
 
-### The recording metadata never lists its segments — code
+### ~~The recording metadata never lists its segments~~ — DONE 2026-10-19 (camera sync on paused takes)
 
-*Found 2026-10-19.* `screen.meta.json`'s `screen.segments` is empty on every
-take checked, a plain paused one included, even though
-`updateMetadataSidecarOnFinish` sets it from `capture.recordedScreenSegments`.
-`CameraLayoutResolver` uses that list to sync the camera to the screen across
-pauses. Without it, the resolver falls back to `endedAt` minus the duration,
-which cannot account for a pause.
+Two bugs broke the camera on paused takes. Both were there since separate
+camera recording shipped (057f38ca).
 
-This also misaligns a **salvaged** camera take (see the segment-merge salvage
-above). screen.mov holds one part, but the fallback window is anchored at the
-end of the whole take, so the camera bubble can play footage from a later part.
-Confirmed in review: on camera takes the facade reads the list after the
-backend's `resetState` has dropped the session. The camera stop completes
-asynchronously.
+1. **No segment list on camera takes.** The facade wrote `screen.segments`
+   after the camera's asynchronous stop, by which time the backend had reset
+   and reported none. Camera sync always fell back to a window anchored at the
+   metadata write time. On a paused take, every part but the last showed
+   camera footage from later in the take. Even an unpaused take was off by
+   the stop/merge latency, about 0.9s in the live check. `backendDidFinish`
+   now captures the list synchronously, before the reset, and hands it in.
+   `endedAt` is the last segment's real end.
+2. **The camera stopped recording after resume.** The overlay is re-shown
+   after the camera segment starts, and a new `AVCaptureVideoPreviewLayer`
+   added a connection to the running session, which stopped the movie output
+   ("Recording Stopped", flagged as a successful finish). Every paused camera
+   take recorded about 0.4s after its first resume and nothing more. The
+   coordinator now reuses one preview layer. A segment that ends on its own
+   mid-take is logged at ERROR.
 
-**To close:** snapshot the segment list before the reset and have the facade
-read that. Then check camera sync on a paused take, and on a salvaged take,
-with the camera on. This changes which sync path every camera take uses, so it
-needs that check before it ships.
+Verified live on a paused take. Camera part 2 is 3.54s against the screen's
+4.02s; it used to be about 0.2s. The sync resolves from
+`screen.metadata.segments`, with each part mapped to the camera footage from
+the same wall-clock moment. An unpaused take maps screen 0 to camera 0.32s,
+which matches the camera starting 0.318s earlier.
+
+### Camera starts about 1s after the screen on resume — code
+
+*Found 2026-10-19 on the live check above.* On resume the screen segment starts
+first, and the camera segment starts about 1s later (the camera's start
+latency). The first second of each resumed part has no camera footage, so the
+bubble hides there. This is correct given the footage, but it is visible.
+**To close:** start the camera segment before, or together with, the screen
+segment on resume, as the initial start does.
+
+### Screen and camera segment times are stamped at different points — code
+
+*Found in review, 2026-10-19.* Camera sync now runs on the segment
+timestamps, so their accuracy matters. The screen stamps a segment's end
+before its recording output is removed, then derives the start as end minus
+duration, which lands early. The camera stamps the end after its file is
+written, which lands late. The result is a small systematic skew, tens to a
+few hundred milliseconds, on every camera take.
+
+**To close:** stamp both at the same point, ideally the start events
+(`recordingOutputDidStartRecording` / `didStartRecordingTo`). Measure with a
+clap or a flash on screen and camera.
+
+### Paused camera takes on macOS 13-14 still sync from an estimate — code
+
+The AVFoundation backend, used before macOS 15, pauses one file and reports no
+segments (`CaptureBackend.swift` default `[]`). Its paused camera takes still
+use the end-anchored fallback. **To close:** synthesize the segments from the
+pause/resume wall clocks.
+
+### Other mid-recording overlay rebuilds may still stop the camera — verify
+
+The shared preview layer covers every same-device rebuild: resume, display
+change, and the size change that rebuilds. A camera **device** change or a
+chroma-key toggle during a recording reconfigures the session in other ways
+and was not checked. Projects recorded before this fix keep their empty segment
+lists; nothing repairs them.
 
 ### A recording failure tells the user nothing — code
 

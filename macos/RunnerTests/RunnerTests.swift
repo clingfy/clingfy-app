@@ -677,6 +677,41 @@ final class CameraRecorderTests: XCTestCase {
   }
 
   /// A healthy camera still starts — the guards must not block the normal case.
+  /// Every paused camera take recorded about 0.4s after its first resume. The
+  /// overlay is re-shown after the camera segment starts, and a NEW preview
+  /// layer adds a connection to the running session, which stops the movie
+  /// output. Re-showing must hand back the same layer, adding nothing.
+  /// Found in review: with chroma key on, hiding the overlay on pause
+  /// removed the frame output, and re-showing it after resume added a new one,
+  /// reconfiguring the session while the camera recorded. While recording, the
+  /// output stays attached; it goes when the recording ends.
+  func testTheChromaKeyOutputStaysAttachedWhileRecording() {
+    let coordinator = CameraCaptureCoordinator()
+    coordinator.setSampleBufferHandler { _ in }
+    XCTAssertTrue(coordinator._testHasVideoDataOutput)
+
+    coordinator._testSetRecordingActive(true)
+    coordinator.setSampleBufferHandler(nil)  // overlay hidden on pause
+    XCTAssertTrue(
+      coordinator._testHasVideoDataOutput, "removing it mid-take would stop the recording")
+    coordinator.setSampleBufferHandler { _ in }  // re-shown after resume
+    XCTAssertTrue(coordinator._testHasVideoDataOutput)
+
+    coordinator.setSampleBufferHandler(nil)
+    coordinator._testSetRecordingActive(false)
+    XCTAssertFalse(coordinator._testHasVideoDataOutput, "and it goes once nothing records")
+  }
+
+  func testReShowingThePreviewReusesTheSameLayer() {
+    let coordinator = CameraCaptureCoordinator()
+    let first = coordinator.makePreviewLayer()
+    coordinator.removePreviewLayer(first)
+    first.removeFromSuperlayer()
+    let second = coordinator.makePreviewLayer(videoGravity: .resizeAspect)
+    XCTAssertTrue(first === second, "a new layer would join the running session and stop recording")
+    XCTAssertEqual(second.videoGravity, .resizeAspect, "but it still takes the new settings")
+  }
+
   func testHealthyCameraStartsNormally() throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -5143,6 +5178,62 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(timeline.segments[1].durationSeconds, 2.0, accuracy: 0.05)
   }
 
+  /// A salvaged paused take publishes one part, and its segment list says so.
+  /// The camera must map onto that part alone, not onto the whole take.
+  func testASalvagedCameraTakeMapsTheCameraOntoItsOnePart() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL, size: CGSize(width: 320, height: 180), durationSeconds: 2.0,
+      color: .systemBlue)
+    try makeSolidColorVideo(
+      url: cameraURL, size: CGSize(width: 160, height: 160), durationSeconds: 4.2,
+      color: .systemRed)
+
+    var metadata = RecordingMetadata.create(
+      screenRawRelativePath: RecordingProjectPaths.relativeScreenVideoPath,
+      displayMode: .explicitID, displayID: 1, cropRect: nil, frameRate: 60, quality: .fhd,
+      cursorEnabled: true, cursorLinked: true, windowID: nil, excludedRecorderApp: false,
+      camera: RecordingMetadata.CameraCaptureInfo(
+        mode: .separateCameraAsset, enabled: true,
+        rawRelativePath: RecordingProjectPaths.relativeCameraRawPath,
+        metadataRelativePath: RecordingProjectPaths.relativeCameraMetadataPath,
+        deviceId: "camera-1", mirroredRaw: true, nominalFrameRate: 30,
+        dimensions: .init(width: 160, height: 160),
+        segments: [
+          makeCaptureSegment(
+            index: 0, startSeconds: 99.9, endSeconds: 102.1,
+            relativePath: "camera/segments/segment_000.mov", durationSeconds: 2.2),
+          makeCaptureSegment(
+            index: 1, startSeconds: 104.0, endSeconds: 106.0,
+            relativePath: "camera/segments/segment_001.mov", durationSeconds: 2.0),
+        ]),
+      editorSeed: makeBasicEditorSeed())
+    // Only the published part, as retainSegments leaves it.
+    metadata.screen.segments = [
+      makeCaptureSegment(
+        index: 1, startSeconds: 100.0, endSeconds: 102.0,
+        relativePath: "screen.segment-001.mov", durationSeconds: 2.0)
+    ]
+    metadata.endedAt = RecordingMetadata.iso8601String(
+      from: try XCTUnwrap(RecordingMetadata.date(fromISO8601: metadata.screen.segments[0].endWallClock)))
+
+    let timeline = try XCTUnwrap(
+      CameraSyncTimelineResolver.resolve(
+        recordingMetadata: metadata, cameraMetadata: nil,
+        screenAsset: AVAsset(url: screenURL), cameraAsset: AVAsset(url: cameraURL),
+        logContext: ["test": #function]))
+
+    XCTAssertEqual(timeline.segments.count, 1, "the camera maps onto the one part only")
+    XCTAssertEqual(timeline.segments[0].screenStartSeconds, 0.0, accuracy: 0.0001)
+    XCTAssertEqual(
+      timeline.segments[0].cameraStartSeconds, 0.1, accuracy: 0.05,
+      "camera footage from the SAME moment, not from the take's last part")
+    XCTAssertEqual(timeline.segments[0].durationSeconds, 2.0, accuracy: 0.05)
+  }
+
   @MainActor
   func testResolvePreviewMediaSourcesBuildsLegacyCameraSyncTimeline() throws {
     let tempDir = makeTemporaryDirectory()
@@ -8788,6 +8879,55 @@ final class ScreenRecorderFacadeSeparateCameraTests: XCTestCase {
     let updated = try RecordingMetadata.read(from: metadataURL)
     XCTAssertEqual(updated.camera?.rawRelativePath, "camera/raw.mov")
     XCTAssertEqual(updated.camera?.metadataRelativePath, "camera/meta.json")
+  }
+
+  /// The bug behind every misaligned paused camera take. On a camera take the
+  /// metadata is written after the camera's asynchronous stop, by which time
+  /// the backend has reset and reports NO segments. The writer used to ask it
+  /// then and wrote an empty list, so camera sync fell back to a window
+  /// anchored at the end of the take. The list is now captured when the
+  /// backend finishes and handed in. Here the backend has already reset.
+  ///
+  /// What this does NOT pin: that `backendDidFinish` takes the snapshot before
+  /// the camera's asynchronous stop. Driving that needs a fake camera recorder
+  /// in the facade, which has no seam for one. That ordering was verified on a
+  /// live paused camera take: the segment list is written and the sync resolves
+  /// from it.
+  func testFinishMetadataWritesTheSegmentsCapturedAtFinishNotTheResetBackends() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: false)
+    let metadataURL = RecordingProjectPaths.screenMetadataURL(for: projectRoot)
+    try RecordingMetadata.create(
+      screenRawRelativePath: RecordingProjectPaths.relativeScreenVideoPath,
+      displayMode: .explicitID, displayID: 1, cropRect: nil, frameRate: 60, quality: .fhd,
+      cursorEnabled: true, cursorLinked: true, windowID: nil, excludedRecorderApp: false,
+      camera: nil, editorSeed: makeEditorSeed()
+    ).write(to: metadataURL)
+
+    let captured = [
+      makeCaptureSegment(
+        index: 1, startSeconds: 100.0, endSeconds: 160.0,
+        relativePath: "screen.segment-001.mov", durationSeconds: 60.0),
+      makeCaptureSegment(
+        index: 2, startSeconds: 170.0, endSeconds: 200.0,
+        relativePath: "screen.segment-002.mov", durationSeconds: 30.0),
+    ]
+    let facade = ScreenRecorderFacade()
+    let backend = MockCaptureBackend()
+    backend.recordedScreenSegments = []  // reset, as the real backend is by then
+    facade._testSetCaptureBackend(backend)
+    facade._testUpdateMetadataSidecarOnFinish(
+      projectRoot: projectRoot, cameraResult: nil,
+      publishedScreenURL: RecordingProjectPaths.screenVideoURL(for: projectRoot),
+      screenSegments: captured,
+      screenFinishedAt: Date().addingTimeInterval(3600))
+
+    let updated = try RecordingMetadata.read(from: metadataURL)
+    XCTAssertEqual(updated.screen.segments, captured)
+    XCTAssertEqual(
+      updated.endedAt, captured.last?.endWallClock,
+      "the take ended when its last part did, not when the camera finished merging")
   }
 
   func testFinishMetadataPersistsRecordedScreenSegments() throws {
