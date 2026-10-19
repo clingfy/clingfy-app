@@ -38,6 +38,18 @@ protocol CameraCaptureCoordinating: AnyObject {
   ) throws
 
   func stopOutputRecording()
+
+  /// Whether the output is recording but paused. `isOutputRecording` stays
+  /// true while paused, so this is the only way to tell the two apart.
+  var isOutputRecordingPaused: Bool { get }
+
+  /// Pauses the current file in place; the delegate's `didPauseRecordingTo`
+  /// confirms it. Throws rather than raising if AVFoundation refuses.
+  func pauseOutputRecording() throws
+
+  /// Resumes the paused file; the delegate's `didResumeRecordingTo` confirms
+  /// it. Throws rather than raising if AVFoundation refuses.
+  func resumeOutputRecording() throws
 }
 
 final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
@@ -110,6 +122,18 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
 
   func stopOutputRecording() {
     movieOutput.stopRecording()
+  }
+
+  var isOutputRecordingPaused: Bool {
+    movieOutput.isRecordingPaused
+  }
+
+  func pauseOutputRecording() throws {
+    try AVCaptureMovieFileOutputExceptionBridge.pauseRecording(output: movieOutput)
+  }
+
+  func resumeOutputRecording() throws {
+    try AVCaptureMovieFileOutputExceptionBridge.resumeRecording(output: movieOutput)
   }
 
   var selectedDevice: AVCaptureDevice? {

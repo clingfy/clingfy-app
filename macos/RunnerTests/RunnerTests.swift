@@ -512,16 +512,35 @@ final class CameraRecorderTests: XCTestCase {
       case acceptThenNeverReport
     }
 
+    /// How a pause or resume request is answered.
+    enum ToggleBehaviour {
+      /// Confirm through the delegate, as a real camera does in tens of ms.
+      case confirm
+      /// Raise, which the bridge turns into a thrown error.
+      case refuse
+      /// Accept and never confirm.
+      case neverReport
+    }
+
     var isSessionRunning = true
     var hasActiveVideoConnection = true
     var isOutputRecording = false
+    var isOutputRecordingPaused = false
     var startBehaviour: StartBehaviour = .succeed
+    var pauseBehaviour: ToggleBehaviour = .confirm
+    var resumeBehaviour: ToggleBehaviour = .confirm
+    /// Report `didFinish` when stopped, as AVFoundation does. Off by default
+    /// so the start-path tests keep the behaviour they were written against.
+    var finishesOnStop = false
     var acquireError: Error?
 
     private(set) var acquireCount = 0
     private(set) var releaseCount = 0
     private(set) var startedURLs: [URL] = []
     private(set) var stopCount = 0
+    private(set) var pauseCount = 0
+    private(set) var resumeCount = 0
+    private weak var delegate: AVCaptureFileOutputRecordingDelegate?
 
     func acquireRecording(deviceID: String?) throws {
       acquireCount += 1
@@ -530,13 +549,69 @@ final class CameraRecorderTests: XCTestCase {
 
     func releaseRecording() { releaseCount += 1 }
     func setMirrored(_ mirrored: Bool) {}
-    func stopOutputRecording() { stopCount += 1; isOutputRecording = false }
+
+    func stopOutputRecording() {
+      stopCount += 1
+      isOutputRecording = false
+      isOutputRecordingPaused = false
+      if finishesOnStop, let url = startedURLs.last { reportFinish(of: url) }
+    }
+
+    /// The file ending without being asked, as a device or format change does
+    /// even while paused.
+    func endFileOnItsOwn() {
+      isOutputRecording = false
+      isOutputRecordingPaused = false
+      if let url = startedURLs.last { reportFinish(of: url) }
+    }
+
+    private func reportFinish(of url: URL) {
+      let delegate = self.delegate
+      DispatchQueue.main.async {
+        delegate?.fileOutput(
+          AVCaptureMovieFileOutput(), didFinishRecordingTo: url, from: [], error: nil)
+      }
+    }
+
+    func pauseOutputRecording() throws {
+      pauseCount += 1
+      try toggle(pauseBehaviour) { [weak self] in
+        guard let self, let url = self.startedURLs.last else { return }
+        self.isOutputRecordingPaused = true
+        self.delegate?.fileOutput?(AVCaptureMovieFileOutput(), didPauseRecordingTo: url, from: [])
+      }
+    }
+
+    func resumeOutputRecording() throws {
+      resumeCount += 1
+      try toggle(resumeBehaviour) { [weak self] in
+        guard let self, let url = self.startedURLs.last else { return }
+        self.isOutputRecordingPaused = false
+        self.delegate?.fileOutput?(AVCaptureMovieFileOutput(), didResumeRecordingTo: url, from: [])
+      }
+    }
+
+    private func toggle(_ behaviour: ToggleBehaviour, confirm: @escaping () -> Void) throws {
+      switch behaviour {
+      case .refuse:
+        throw NSError(
+          domain: "Clingfy.AVCaptureMovieFileOutputExceptionBridge", code: 2,
+          userInfo: [NSLocalizedDescriptionKey: "The camera refused."])
+      case .neverReport:
+        return
+      case .confirm:
+        DispatchQueue.main.async(execute: confirm)
+      }
+    }
 
     func startOutputRecording(
       to url: URL,
       delegate: AVCaptureFileOutputRecordingDelegate
     ) throws {
       startedURLs.append(url)
+      self.delegate = delegate
+      // A placeholder for the file, so a finalize has something to move.
+      FileManager.default.createFile(atPath: url.path, contents: Data())
       switch startBehaviour {
       case .refuse:
         throw NSError(
@@ -676,11 +751,6 @@ final class CameraRecorderTests: XCTestCase {
     XCTAssertGreaterThan(coordinator.releaseCount, 0, "a refused start must release")
   }
 
-  /// A healthy camera still starts — the guards must not block the normal case.
-  /// Every paused camera take recorded about 0.4s after its first resume. The
-  /// overlay is re-shown after the camera segment starts, and a NEW preview
-  /// layer adds a connection to the running session, which stops the movie
-  /// output. Re-showing must hand back the same layer, adding nothing.
   /// Found in review: with chroma key on, hiding the overlay on pause
   /// removed the frame output, and re-showing it after resume added a new one,
   /// reconfiguring the session while the camera recorded. While recording, the
@@ -702,6 +772,10 @@ final class CameraRecorderTests: XCTestCase {
     XCTAssertFalse(coordinator._testHasVideoDataOutput, "and it goes once nothing records")
   }
 
+  /// Every paused camera take recorded about 0.4s after its first resume. The
+  /// overlay is re-shown after the camera segment starts, and a NEW preview
+  /// layer adds a connection to the running session, which stops the movie
+  /// output. Re-showing must hand back the same layer, adding nothing.
   func testReShowingThePreviewReusesTheSameLayer() {
     let coordinator = CameraCaptureCoordinator()
     let first = coordinator.makePreviewLayer()
@@ -712,6 +786,7 @@ final class CameraRecorderTests: XCTestCase {
     XCTAssertEqual(second.videoGravity, .resizeAspect, "but it still takes the new settings")
   }
 
+  /// A healthy camera still starts — the guards must not block the normal case.
   func testHealthyCameraStartsNormally() throws {
     let directory = FileManager.default.temporaryDirectory
       .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -733,6 +808,323 @@ final class CameraRecorderTests: XCTestCase {
       XCTFail("a healthy camera must start: \(error)")
     }
     XCTAssertEqual(coordinator.startedURLs.count, 1)
+  }
+
+  // MARK: - Pausing in place
+
+  private func makeDirectory() throws -> URL {
+    let directory = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+    return directory
+  }
+
+  /// Lets queued main-thread work and real time pass.
+  private func spin(_ seconds: TimeInterval) {
+    let passed = expectation(description: "time passed")
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { passed.fulfill() }
+    wait(for: [passed], timeout: seconds + 5)
+  }
+
+  @discardableResult
+  private func run(
+    _ name: String, _ action: (@escaping (Result<Void, Error>) -> Void) -> Void
+  ) -> Result<Void, Error>? {
+    let done = expectation(description: name)
+    var result: Result<Void, Error>?
+    action { outcome in
+      result = outcome
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 5)
+    if case .failure(let error) = result { XCTFail("\(name) failed: \(error)") }
+    return result
+  }
+
+  private func stop(_ recorder: CameraRecorder) -> CameraRecordingResult? {
+    let done = expectation(description: "stop")
+    var result: Result<CameraRecordingResult, Error>?
+    recorder.stop { outcome in
+      result = outcome
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 5)
+    switch result {
+    case .success(let value)?: return value
+    case .failure(let error)?: XCTFail("stop failed: \(error)")
+    case nil: XCTFail("stop never completed")
+    }
+    return nil
+  }
+
+  /// The camera came back about 1.1s after the screen on every resume, because
+  /// a resume started a new file and AVFoundation takes that long to record
+  /// its first frame. A resume must continue the file it paused.
+  func testResumeContinuesThePausedFileInsteadOfStartingANewOne() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    run("pause") { recorder.pause(completion: $0) }
+    run("resume") { recorder.resume(completion: $0) }
+
+    XCTAssertEqual(coordinator.startedURLs.count, 1, "a resume must not start a new file")
+    XCTAssertEqual(coordinator.pauseCount, 1)
+    XCTAssertEqual(coordinator.resumeCount, 1)
+    XCTAssertEqual(coordinator.stopCount, 0, "a pause must not end the file")
+  }
+
+  /// One file now holds every stretch between pauses. Each stretch must be its
+  /// own segment, timed from the callbacks, summing to the file, and the file
+  /// must be finalized once rather than once per stretch.
+  func testStretchesInOneFileAreStampedFromTheCallbacksAndMergedOnce() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    coordinator.finishesOnStop = true
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.3)
+    run("pause") { recorder.pause(completion: $0) }
+    spin(0.4)  // paused: must not count
+    run("resume") { recorder.resume(completion: $0) }
+    spin(0.2)
+    guard let result = stop(recorder) else { return }
+
+    let segments = result.metadata.segments
+    XCTAssertEqual(segments.count, 2)
+    XCTAssertEqual(Set(segments.map { $0.relativePath }).count, 1, "both stretches name one file")
+    XCTAssertEqual(segments.map { $0.index }, [0, 1])
+    XCTAssertEqual(segments[0].durationSeconds ?? 0, 0.3, accuracy: 0.15)
+    XCTAssertEqual(segments[1].durationSeconds ?? 0, 0.2, accuracy: 0.15)
+    let total = segments.reduce(0) { $0 + ($1.durationSeconds ?? 0) }
+    XCTAssertLessThan(total, 0.75, "the paused 0.4s must not be counted")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: result.rawURL.path))
+  }
+
+  /// Stopping while paused ends the paused file. The time spent paused is not
+  /// in it, so there is no last stretch to add.
+  func testStoppingWhilePausedAddsNoStretch() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    coordinator.finishesOnStop = true
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.2)
+    run("pause") { recorder.pause(completion: $0) }
+    spin(0.3)
+    guard let result = stop(recorder) else { return }
+
+    XCTAssertEqual(coordinator.stopCount, 1, "a paused file must still be ended")
+    XCTAssertEqual(result.metadata.segments.count, 1)
+  }
+
+  /// A device or format change ends the file even while paused. The resume
+  /// must then carry on in a new file, not resume a file that is gone.
+  func testAFileThatEndsWhilePausedResumesInANewFile() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.1)
+    run("pause") { recorder.pause(completion: $0) }
+    coordinator.endFileOnItsOwn()
+    spin(0.05)
+    run("resume") { recorder.resume(completion: $0) }
+
+    XCTAssertEqual(coordinator.startedURLs.count, 2)
+    XCTAssertNotEqual(
+      coordinator.startedURLs[0].lastPathComponent, coordinator.startedURLs[1].lastPathComponent,
+      "the new file must not overwrite the old one")
+    XCTAssertEqual(coordinator.resumeCount, 0)
+  }
+
+  /// The same, when the file is gone but its didFinish has not arrived yet.
+  func testAResumeRacingTheEndOfThePausedFileStillResumes() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.1)
+    run("pause") { recorder.pause(completion: $0) }
+    coordinator.endFileOnItsOwn()  // didFinish is queued, not delivered
+    run("resume") { recorder.resume(completion: $0) }
+
+    XCTAssertEqual(coordinator.startedURLs.count, 2)
+  }
+
+  /// If AVFoundation never confirms the pause, end the file as a pause used
+  /// to, so the take still pauses instead of hanging.
+  func testAPauseThatIsNeverConfirmedFallsBackToEndingTheFile() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    coordinator.pauseBehaviour = .neverReport
+    coordinator.finishesOnStop = true
+    let recorder = CameraRecorder(coordinator: coordinator, pauseResumeTimeout: 0.2)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.1)
+    run("pause") { recorder.pause(completion: $0) }
+    XCTAssertEqual(coordinator.stopCount, 1)
+
+    run("resume") { recorder.resume(completion: $0) }
+    XCTAssertEqual(coordinator.startedURLs.count, 2, "the resume starts a new file")
+  }
+
+  /// A refused resume must still resume, in a new file.
+  func testARefusedResumeContinuesInANewFile() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    coordinator.resumeBehaviour = .refuse
+    coordinator.finishesOnStop = true
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.1)
+    run("pause") { recorder.pause(completion: $0) }
+    run("resume") { recorder.resume(completion: $0) }
+
+    XCTAssertEqual(coordinator.stopCount, 1)
+    XCTAssertEqual(coordinator.startedURLs.count, 2)
+  }
+
+  /// A resume that arrives while the pause is still being confirmed must
+  /// resume once it is. Doing nothing would leave the camera paused for the
+  /// rest of the take.
+  func testAResumeBeforeThePauseIsConfirmedStillResumes() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.1)
+    let paused = expectation(description: "pause")
+    recorder.pause { _ in paused.fulfill() }
+    run("resume") { recorder.resume(completion: $0) }
+    wait(for: [paused], timeout: 5)
+
+    XCTAssertEqual(coordinator.resumeCount, 1)
+    XCTAssertFalse(coordinator.isOutputRecordingPaused, "the camera must be recording again")
+    XCTAssertEqual(coordinator.startedURLs.count, 1)
+  }
+
+  /// Writes a real movie of `seconds` at `url`, standing in for what the
+  /// camera recorded, so the recorder can read a true media duration.
+  private func writeMovie(at url: URL, seconds: Double) throws {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64,
+      ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64,
+      ])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+    for i in 0..<Int(seconds * 30) {
+      var buffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+      guard let buffer else { continue }
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
+    }
+    input.markAsFinished()
+    let done = expectation(description: "movie written")
+    writer.finishWriting { done.fulfill() }
+    wait(for: [done], timeout: 30)
+  }
+
+  /// A stop can arrive after the file ended but before its didFinish is
+  /// handled. Finalizing then would merge a file still being written and drop
+  /// its last stretch; the stop must wait for the finish.
+  func testAStopRacingTheEndOfTheFileWaitsForItToFinish() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.2)
+    coordinator.endFileOnItsOwn()  // didFinish is queued, not delivered
+    guard let result = stop(recorder) else { return }
+
+    XCTAssertEqual(result.metadata.segments.count, 1, "the last stretch must be kept")
+  }
+
+  /// A paused file's stretches are timed by the clock, a little off the
+  /// media. When it ends paused, nothing absorbs that, so its last stretch is
+  /// squared with the file. Otherwise every later file in the merge is offset.
+  func testAFileEndingPausedIsSquaredWithItsMedia() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.2)
+    run("pause") { recorder.pause(completion: $0) }
+    let file = try XCTUnwrap(coordinator.startedURLs.last)
+    try writeMovie(at: file, seconds: 0.3)
+    let media = AVURLAsset(url: file).duration.seconds
+    coordinator.endFileOnItsOwn()
+    run("resume") { recorder.resume(completion: $0) }  // waits for the finish
+    try writeMovie(at: try XCTUnwrap(coordinator.startedURLs.last), seconds: 0.3)
+    coordinator.finishesOnStop = true
+    guard let result = stop(recorder) else { return }
+
+    let first = result.metadata.segments.filter { $0.relativePath == file.lastPathComponent }
+    XCTAssertEqual(first.count, 1)
+    XCTAssertEqual(first.first?.durationSeconds ?? 0, media, accuracy: 0.001)
+  }
+
+  /// More media than the clock can explain means a resume took effect whose
+  /// confirmation was lost. That footage is kept as its own stretch, so the
+  /// stretches still sum to the file.
+  func testUnconfirmedMediaInAPausedFileIsKept() throws {
+    let directory = try makeDirectory()
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator)
+
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.2)
+    run("pause") { recorder.pause(completion: $0) }
+    let file = try XCTUnwrap(coordinator.startedURLs.last)
+    try writeMovie(at: file, seconds: 1.0)
+    let media = AVURLAsset(url: file).duration.seconds
+    coordinator.endFileOnItsOwn()
+    run("resume") { recorder.resume(completion: $0) }
+    try writeMovie(at: try XCTUnwrap(coordinator.startedURLs.last), seconds: 0.3)
+    coordinator.finishesOnStop = true
+    guard let result = stop(recorder) else { return }
+
+    let first = result.metadata.segments.filter { $0.relativePath == file.lastPathComponent }
+    XCTAssertEqual(first.count, 2)
+    XCTAssertEqual(first.reduce(0) { $0 + ($1.durationSeconds ?? 0) }, media, accuracy: 0.001)
+  }
+
+  /// The pause and resume callbacks only arrive if the Objective-C selectors
+  /// match exactly. The macOS 13-14 screen backend got these names wrong and
+  /// its callbacks never fire; this pins the camera's.
+  func testThePauseAndResumeCallbacksBindToAVFoundation() {
+    let recorder = CameraRecorder(coordinator: FakeCameraCoordinator())
+    for name in [
+      "captureOutput:didPauseRecordingToOutputFileAtURL:fromConnections:",
+      "captureOutput:didResumeRecordingToOutputFileAtURL:fromConnections:",
+      "captureOutput:didStartRecordingToOutputFileAtURL:fromConnections:",
+      "captureOutput:didFinishRecordingToOutputFileAtURL:fromConnections:error:",
+    ] {
+      XCTAssertTrue(recorder.responds(to: NSSelectorFromString(name)), name)
+    }
   }
 
   /// The preconditions that stand between a not-ready camera and a hard crash.

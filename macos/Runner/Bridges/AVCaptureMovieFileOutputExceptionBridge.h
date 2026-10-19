@@ -29,6 +29,19 @@ NS_ASSUME_NONNULL_BEGIN
                            error:(NSError *_Nullable *_Nullable)error
     NS_SWIFT_NAME(startRecording(output:outputURL:recordingDelegate:));
 
+/// Pauses a recording in place, converting any raised exception into `error`.
+///
+/// The file stays open, so resuming continues it within a few tens of
+/// milliseconds instead of starting a new file, which takes over a second.
++ (BOOL)pauseRecordingWithOutput:(AVCaptureMovieFileOutput *)output
+                           error:(NSError *_Nullable *_Nullable)error
+    NS_SWIFT_NAME(pauseRecording(output:));
+
+/// Resumes a paused recording, converting any raised exception into `error`.
++ (BOOL)resumeRecordingWithOutput:(AVCaptureMovieFileOutput *)output
+                            error:(NSError *_Nullable *_Nullable)error
+    NS_SWIFT_NAME(resumeRecording(output:));
+
 @end
 
 NS_ASSUME_NONNULL_END
