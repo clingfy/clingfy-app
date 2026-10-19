@@ -704,6 +704,16 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
     }
     NativeLogger.i("CameraRecorder", "Camera segment finished", context: finishContext)
 
+    // Nobody asked for this segment to end: no pause, no stop, no start in
+    // flight. That is how the camera went silent after every resume, with an
+    // info line nobody would read. Say it loudly.
+    if activeSegment != nil, pendingPauseCompletion == nil, pendingStopCompletion == nil,
+      pendingStartCompletion == nil
+    {
+      NativeLogger.e(
+        "CameraRecorder", "Camera recording stopped on its own mid-take", context: finishContext)
+    }
+
     if let error, !recordingFinishedSuccessfully {
       let shouldNotifyFailure =
         pendingStartCompletion == nil && pendingPauseCompletion == nil && pendingStopCompletion == nil

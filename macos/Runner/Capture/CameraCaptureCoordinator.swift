@@ -137,6 +137,16 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
     startRunningIfNeeded()
   }
 
+  #if DEBUG
+    /// Test-only: mark a recording active without a camera device.
+    func _testSetRecordingActive(_ active: Bool) {
+      if active { activeUses.insert(.recording) } else { releaseRecording() }
+    }
+
+    /// Test-only: whether the chroma-key frame output is attached.
+    var _testHasVideoDataOutput: Bool { videoDataOutput != nil }
+  #endif
+
   func releasePreview() {
     activeUses.remove(.preview)
     stopRunningIfIdle()
@@ -150,11 +160,27 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
 
   func releaseRecording() {
     activeUses.remove(.recording)
+    // A chroma-key output left attached for the recording's sake (see
+    // configureVideoDataOutput) can go now that nothing is recording.
+    if sampleBufferHandler == nil { configureVideoDataOutput(enabled: false) }
     stopRunningIfIdle()
   }
 
+  /// The one preview layer, created once and handed out again on every show.
+  ///
+  /// A new `AVCaptureVideoPreviewLayer(session:)` adds a connection to the
+  /// running session, and doing that while the movie file output is recording
+  /// stops the recording ("Recording Stopped", flagged as a successful finish,
+  /// so nothing noticed). On resume the overlay is shown again AFTER the camera
+  /// segment has started, so every paused camera take recorded about 0.4s
+  /// after its first resume and nothing more. Reusing the layer adds nothing to
+  /// the session. Only `CameraOverlay` shows a preview, one at a time, and it
+  /// removes the layer from its window when hidden, so one layer is enough.
+  private var sharedPreviewLayer: AVCaptureVideoPreviewLayer?
+
   func makePreviewLayer(videoGravity: AVLayerVideoGravity = .resizeAspectFill) -> AVCaptureVideoPreviewLayer {
-    let layer = AVCaptureVideoPreviewLayer(session: session)
+    let layer = sharedPreviewLayer ?? AVCaptureVideoPreviewLayer(session: session)
+    sharedPreviewLayer = layer
     layer.videoGravity = videoGravity
     previewLayers.add(layer)
     applyMirror(to: layer)
@@ -238,6 +264,17 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
         session.commitConfiguration()
       }
     } else if let output = videoDataOutput {
+      // Removing an output reconfigures the session, and changing the session
+      // while the movie output records stops the recording (the same failure
+      // the shared preview layer fixes). With chroma key on, hiding the
+      // overlay on pause and re-showing it after resume did exactly that. So
+      // while recording, keep the output attached and idle: the handler is
+      // nil, so frames are dropped, and re-enabling reuses it. It is removed
+      // when the recording ends (releaseRecording).
+      if activeUses.contains(.recording) {
+        updateMirrorOnConnections()
+        return
+      }
       output.setSampleBufferDelegate(nil, queue: nil)
       session.beginConfiguration()
       session.removeOutput(output)

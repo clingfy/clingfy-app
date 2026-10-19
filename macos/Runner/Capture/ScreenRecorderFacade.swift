@@ -2748,18 +2748,33 @@ final class ScreenRecorderFacade: NSObject {
   // cameraCaptureInfo moved to MetadataSidecarWriter.swift (PR 10a).
 
   /// Updates the metadata sidecar with end timestamp when recording finishes.
+  /// [screenSegments] is the backend's segment list as it stood when the
+  /// backend finished. Passed in, not read here: on a camera take this runs
+  /// after the camera's asynchronous stop, by which time the backend has reset
+  /// and reports no segments. It did read it here, so every camera take was
+  /// written with an empty list, and camera sync fell back to a window
+  /// anchored at the end of the take: on a paused take, every part but the
+  /// last showed camera footage from later in the take.
+  ///
+  /// The end time is the last segment's real end when there is one, not the
+  /// moment this runs, which is after the camera's stop and merge.
   private func updateMetadataSidecarOnFinish(
     projectRoot: URL,
     cameraResult: CameraRecordingResult?,
-    publishedScreenURL: URL
+    publishedScreenURL: URL,
+    screenSegments: [RecordingMetadata.CaptureSegment],
+    screenFinishedAt: Date
   ) {
     let metaURL = RecordingProjectPaths.screenMetadataURL(for: projectRoot)
 
     // Read existing metadata and update with end timestamp
     do {
       var metadata = try RecordingMetadata.read(from: metaURL)
-      metadata = metadata.withEndTimestamp()
-      metadata.screen.segments = capture.recordedScreenSegments
+      let lastSegmentEnd = screenSegments.last.flatMap {
+        RecordingMetadata.date(fromISO8601: $0.endWallClock)
+      }
+      metadata = metadata.withEndTimestamp(lastSegmentEnd ?? screenFinishedAt)
+      metadata.screen.segments = screenSegments
       if let cameraResult {
         metadata.camera = MetadataSidecarWriter.cameraCaptureInfo(
           from: cameraResult, screenRawURL: publishedScreenURL)
@@ -2817,12 +2832,16 @@ final class ScreenRecorderFacade: NSObject {
   func _testUpdateMetadataSidecarOnFinish(
     projectRoot: URL,
     cameraResult: CameraRecordingResult?,
-    publishedScreenURL: URL
+    publishedScreenURL: URL,
+    screenSegments: [RecordingMetadata.CaptureSegment]? = nil,
+    screenFinishedAt: Date = Date()
   ) {
     updateMetadataSidecarOnFinish(
       projectRoot: projectRoot,
       cameraResult: cameraResult,
-      publishedScreenURL: publishedScreenURL
+      publishedScreenURL: publishedScreenURL,
+      screenSegments: screenSegments ?? capture.recordedScreenSegments,
+      screenFinishedAt: screenFinishedAt
     )
   }
 
@@ -3157,6 +3176,13 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
       return
     }
 
+    // Read NOW, synchronously, before anything asynchronous: the backend drops
+    // its session as soon as this callback returns, and a camera take writes
+    // its metadata later, after the camera's stop. See
+    // updateMetadataSidecarOnFinish.
+    let screenSegments = capture.recordedScreenSegments
+    let screenFinishedAt = Date()
+
     let resolvedTerminalError = combinedStartFallbackFailureIfNeeded(
       screenError: terminalError
     )
@@ -3197,7 +3223,9 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
               self.updateMetadataSidecarOnFinish(
                 projectRoot: projectRoot,
                 cameraResult: cameraResult,
-                publishedScreenURL: rawURL
+                publishedScreenURL: rawURL,
+                screenSegments: screenSegments,
+                screenFinishedAt: screenFinishedAt
               )
               finalURL = rawURL
             } else {
@@ -3210,7 +3238,9 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
           self.updateMetadataSidecarOnFinish(
             projectRoot: projectRoot,
             cameraResult: cameraResult,
-            publishedScreenURL: rawURL
+            publishedScreenURL: rawURL,
+            screenSegments: screenSegments,
+            screenFinishedAt: screenFinishedAt
           )
           MetadataSidecarWriter.updateProjectManifestStatus(.ready, projectRoot: projectRoot)
           finalURL = rawURL

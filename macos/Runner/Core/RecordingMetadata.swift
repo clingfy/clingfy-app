@@ -422,6 +422,13 @@ struct RecordingMetadata: Codable {
   static func iso8601String(from date: Date) -> String {
     recordingISO8601String(from: date)
   }
+
+  /// The inverse of [iso8601String]; nil for anything it did not write.
+  static func date(fromISO8601 string: String) -> Date? {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter.date(from: string)
+  }
 }
 
 private extension RecordingMetadata {

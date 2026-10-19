@@ -1614,10 +1614,9 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
     let mergedURL = outcome.url
 
     // What went into screen.mov. After a salvage that is one segment only, and
-    // cursor, audio and cleanup must describe exactly that, or the parts set
-    // aside get deleted. (The metadata's segment list is trimmed too, but it is
-    // currently never written on camera takes; see TODOS.md, so a salvaged
-    // camera take's camera sync is not protected by this.)
+    // cursor, audio, cleanup and the metadata's segment list must describe
+    // exactly that, or the parts set aside get deleted and the camera sync
+    // maps footage onto parts the file does not contain.
     var published = orderedSegments
     if let mergeError = outcome.mergeError,
       let kept = orderedSegments.first(where: { $0.rawURL == outcome.publishedSegmentURL })
