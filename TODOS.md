@@ -364,15 +364,6 @@ Verified live on a paused take. Camera part 2 is 3.54s against the screen's
 the same wall-clock moment. An unpaused take maps screen 0 to camera 0.32s,
 which matches the camera starting 0.318s earlier.
 
-### Camera starts about 1s after the screen on resume — code
-
-*Found 2026-10-19 on the live check above.* On resume the screen segment starts
-first, and the camera segment starts about 1s later (the camera's start
-latency). The first second of each resumed part has no camera footage, so the
-bubble hides there. This is correct given the footage, but it is visible.
-**To close:** start the camera segment before, or together with, the screen
-segment on resume, as the initial start does.
-
 ### Screen and camera segment times are stamped at different points — code
 
 *Found in review, 2026-10-19.* Camera sync now runs on the segment
@@ -386,12 +377,30 @@ few hundred milliseconds, on every camera take.
 (`recordingOutputDidStartRecording` / `didStartRecordingTo`). Measure with a
 clap or a flash on screen and camera.
 
+*Camera side, 2026-10-19:* stretches inside one camera file are now timed from
+the `didStart` / `didPause` / `didResume` callbacks. Only the last stretch is
+still derived from the file's end (file duration minus the earlier stretches).
+On a live take, camera stretch 2 started 11ms after screen part 2. The screen
+side is unchanged.
+
 ### Paused camera takes on macOS 13-14 still sync from an estimate — code
 
 The AVFoundation backend, used before macOS 15, pauses one file and reports no
 segments (`CaptureBackend.swift` default `[]`). Its paused camera takes still
 use the end-anchored fallback. **To close:** synthesize the segments from the
 pause/resume wall clocks.
+
+### macOS 13-14 pause and resume callbacks never fire — code
+
+*Found 2026-10-19.* `CapturePipeline.swift:273-293`, the AVFoundation screen
+backend used before macOS 15, implements
+`captureOutput(_:didPauseRecordingToOutputFileAt:fromConnections:)` and its
+resume twin. Those are not the protocol's Swift names
+(`fileOutput(_:didPauseRecordingTo:from:)`), so they bind to no Objective-C
+selector, and `responds(to:)` is false. Any pause or resume that waits on them
+likely hangs on macOS 13-14. **To close:** rename them, pin the selectors in a
+test like `testThePauseAndResumeCallbacksBindToAVFoundation`, and pause and
+resume once on macOS 13 or 14.
 
 ### Other mid-recording overlay rebuilds may still stop the camera — verify
 
@@ -906,6 +915,14 @@ cannot do it. Fold it into the camera on-device QA pass.
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Camera started about 1s after the screen on resume.** A pause now pauses the
+  camera file in place, and a resume continues the same file. Measured live on
+  2026-10-19: the camera resumed 109ms after the resume request, against about
+  1.1s before. Camera stretch 2 started 11ms after screen part 2, and the
+  stretches sum to raw.mov exactly (5.403s). If the file cannot be continued,
+  because the pause or resume was refused, did not confirm within 2s, or the
+  file ended while paused, the camera falls back to a new file as before.
 
 - **Camera coordinator seam, so the start failure paths are testable.** Done in
   #393 (`CameraCaptureCoordinating`, `CameraCaptureCoordinator.swift:19`, with

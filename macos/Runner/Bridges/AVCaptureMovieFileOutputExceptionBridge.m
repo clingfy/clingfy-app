@@ -36,4 +36,47 @@
   }
 }
 
++ (BOOL)pauseRecordingWithOutput:(AVCaptureMovieFileOutput *)output
+                           error:(NSError *_Nullable *_Nullable)error {
+  @try {
+    [output pauseRecording];
+    return YES;
+  } @catch (NSException *exception) {
+    if (error != NULL) {
+      *error = [self errorForException:exception output:output code:2 action:@"pause"];
+    }
+    return NO;
+  }
+}
+
++ (BOOL)resumeRecordingWithOutput:(AVCaptureMovieFileOutput *)output
+                            error:(NSError *_Nullable *_Nullable)error {
+  @try {
+    [output resumeRecording];
+    return YES;
+  } @catch (NSException *exception) {
+    if (error != NULL) {
+      *error = [self errorForException:exception output:output code:3 action:@"resume"];
+    }
+    return NO;
+  }
+}
+
++ (NSError *)errorForException:(NSException *)exception
+                        output:(AVCaptureMovieFileOutput *)output
+                          code:(NSInteger)code
+                        action:(NSString *)action {
+  return [NSError
+      errorWithDomain:@"Clingfy.AVCaptureMovieFileOutputExceptionBridge"
+                 code:code
+             userInfo:@{
+               NSLocalizedDescriptionKey :
+                   [NSString stringWithFormat:@"The camera refused to %@ recording.", action],
+               @"exceptionName" : exception.name ?: @"NSException",
+               @"exceptionReason" : exception.reason ?: @"",
+               @"outputIsRecording" : @(output.isRecording),
+               @"outputIsRecordingPaused" : @(output.isRecordingPaused),
+             }];
+}
+
 @end

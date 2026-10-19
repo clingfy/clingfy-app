@@ -116,10 +116,26 @@ struct CameraRecordingResult {
   let metadata: CameraRecordingMetadata
 }
 
+/// The camera file currently open, and where its stretches stand.
+///
+/// A pause no longer ends the file. It pauses it in place, and a resume carries
+/// on in the same file, so one file holds every stretch of the take between
+/// pauses. Each stretch is committed as its own `CaptureSegment`, all naming
+/// this file, because the sync resolver maps the camera onto the screen's
+/// timeline stretch by stretch.
 private struct ActiveCameraSegment {
   let index: Int
   let url: URL
   let startedAt: Date
+  /// When the stretch being recorded began: the `didStart` or `didResume`
+  /// callback. Nil until the start is confirmed, and while paused.
+  var stretchStartedAt: Date?
+  /// Seconds of this file already committed as stretches.
+  var committedSeconds: TimeInterval = 0
+  /// Paused in place, confirmed by `didPause`.
+  var isPaused = false
+  /// We asked for this file to end. Anything else ending it is a surprise.
+  var stopRequested = false
 }
 
 private enum CameraMergeUtility {
@@ -256,7 +272,11 @@ final class CameraRecorder: NSObject {
   private(set) var lastSessionSegmentCount: Int = 0
 
   private var pendingPauseCompletion: ((Result<Void, Error>) -> Void)?
+  private var pendingResumeCompletion: ((Result<Void, Error>) -> Void)?
   private var pendingStopCompletion: ((Result<CameraRecordingResult, Error>) -> Void)?
+  /// Names the next camera file. Separate from the segment count because one
+  /// file can now hold several segments, or none if every stretch was empty.
+  private var nextFileIndex = 0
 
   /// How long to wait for AVFoundation to confirm a segment started.
   ///
@@ -264,14 +284,20 @@ final class CameraRecorder: NSObject {
   /// the backstop fires.
   private let segmentStartTimeout: TimeInterval
 
+  /// How long to wait for `didPause` or `didResume` before giving up on the
+  /// in-place path and ending the file, which is what a pause used to do.
+  private let pauseResumeTimeout: TimeInterval
+
   init(
     coordinator: CameraCaptureCoordinating,
     fileManager: FileManager = .default,
-    segmentStartTimeout: TimeInterval = CameraRecorder.segmentStartTimeoutSeconds
+    segmentStartTimeout: TimeInterval = CameraRecorder.segmentStartTimeoutSeconds,
+    pauseResumeTimeout: TimeInterval = CameraRecorder.pauseResumeTimeoutSeconds
   ) {
     self.coordinator = coordinator
     self.fileManager = fileManager
     self.segmentStartTimeout = segmentStartTimeout
+    self.pauseResumeTimeout = pauseResumeTimeout
     super.init()
   }
 
@@ -313,6 +339,7 @@ final class CameraRecorder: NSObject {
       try coordinator.acquireRecording(deviceID: session.deviceId)
       coordinator.setMirrored(session.mirroredRaw)
       recordingSession = session
+      nextFileIndex = 0
       startNextSegment { [weak self] result in
         // Unwind everything this method claimed if the first segment never
         // starts. `recordingSession` is assigned above so `startNextSegment`
@@ -339,19 +366,53 @@ final class CameraRecorder: NSObject {
     }
   }
 
+  /// Measured on a real camera: `didPause` arrives about 25ms after the call
+  /// and `didResume` about 60ms. Two seconds is far past either and still
+  /// short enough that a stalled pause does not hold the UI.
+  static let pauseResumeTimeoutSeconds: TimeInterval = 2
+
+  /// Pauses the open file in place.
+  ///
+  /// A pause used to end the file and a resume start a new one, and that start
+  /// costs about 1.1 seconds before AVFoundation records a frame. The screen
+  /// resumed at once, so the camera came back a second late on every resume.
+  /// Pausing in place keeps the file and its encoder open, and resuming is
+  /// confirmed in about 60ms.
   func pause(completion: @escaping (Result<Void, Error>) -> Void) {
     guard recordingSession != nil else {
       completion(.success(()))
       return
     }
 
-    guard coordinator.isOutputRecording, activeSegment != nil else {
+    guard coordinator.isOutputRecording, let segment = activeSegment, !segment.isPaused,
+      !segment.stopRequested
+    else {
       completion(.success(()))
       return
     }
 
     pendingPauseCompletion = completion
-    coordinator.stopOutputRecording()
+
+    // Not confirmed started yet, so there is no stretch to close. End the file
+    // as a pause always used to; the resume starts a new one.
+    guard segment.stretchStartedAt != nil else {
+      endFileForPause(reason: "start not yet confirmed")
+      return
+    }
+
+    do {
+      try coordinator.pauseOutputRecording()
+      schedulePauseResumeTimeout()
+    } catch {
+      let nsError = error as NSError
+      NativeLogger.w(
+        "CameraRecorder", "Camera refused to pause in place; ending the file instead",
+        context: [
+          "exceptionName": nsError.userInfo["exceptionName"] ?? "",
+          "exceptionReason": nsError.userInfo["exceptionReason"] ?? "",
+        ])
+      endFileForPause(reason: "pause refused")
+    }
   }
 
   func resume(completion: @escaping (Result<Void, Error>) -> Void) {
@@ -364,12 +425,124 @@ final class CameraRecorder: NSObject {
       return
     }
 
+    // Asked to resume before the pause was confirmed. Without this the resume
+    // would find the file still recording and do nothing, and the pause would
+    // then land and leave the camera paused for the rest of the take.
+    if let segment = activeSegment, !segment.isPaused, pendingPauseCompletion != nil {
+      pendingResumeCompletion = completion
+      return
+    }
+
+    if let segment = activeSegment, segment.isPaused {
+      pendingResumeCompletion = completion
+      resumePausedFile()
+      return
+    }
+
     guard activeSegment == nil, !coordinator.isOutputRecording else {
       completion(.success(()))
       return
     }
 
     startNextSegment(completion: completion)
+  }
+
+  /// Resumes the paused file in place, or ends it so the pending resume
+  /// continues in a new file once `didFinish` has committed it.
+  private func resumePausedFile() {
+    guard let segment = activeSegment, segment.isPaused else { return }
+
+    // The file can end while paused: a device or format change stops the
+    // output even then. Its didFinish may not have arrived yet; when it does,
+    // the pending resume continues in a new file.
+    guard coordinator.isOutputRecording, coordinator.isOutputRecordingPaused,
+      !segment.stopRequested
+    else {
+      NativeLogger.w(
+        "CameraRecorder", "Paused camera file is no longer open; resuming in a new file",
+        context: [
+          "outputIsRecording": coordinator.isOutputRecording,
+          "outputIsPaused": coordinator.isOutputRecordingPaused,
+        ])
+      if coordinator.isOutputRecording, !segment.stopRequested { endFile() }
+      return
+    }
+
+    do {
+      try coordinator.resumeOutputRecording()
+      schedulePauseResumeTimeout()
+    } catch {
+      let nsError = error as NSError
+      NativeLogger.w(
+        "CameraRecorder", "Camera refused to resume in place; resuming in a new file",
+        context: [
+          "exceptionName": nsError.userInfo["exceptionName"] ?? "",
+          "exceptionReason": nsError.userInfo["exceptionReason"] ?? "",
+        ])
+      endFile()
+    }
+  }
+
+  /// Ends the open file so `didFinish` completes the pending pause, which is
+  /// how a pause worked before it could pause in place.
+  private func endFileForPause(reason: String) {
+    NativeLogger.i("CameraRecorder", "Ending the camera file for a pause", context: ["reason": reason])
+    endFile()
+  }
+
+  private func endFile() {
+    guard var segment = activeSegment else { return }
+    segment.stopRequested = true
+    activeSegment = segment
+    coordinator.stopOutputRecording()
+  }
+
+  /// A stop waiting on a didFinish that is already in flight. If it never
+  /// arrives, finalize with what was committed rather than hold the stop.
+  private func scheduleStopBackstop(for url: URL) {
+    DispatchQueue.main.asyncAfter(deadline: .now() + pauseResumeTimeout) { [weak self] in
+      guard let self, let completion = self.pendingStopCompletion,
+        self.activeSegment?.url == url
+      else { return }
+      NativeLogger.w(
+        "CameraRecorder", "Camera file never reported finishing; finalizing without it",
+        context: ["path": url.path, "timeoutSeconds": self.pauseResumeTimeout])
+      self.pendingStopCompletion = nil
+      self.pendingResumeCompletion = nil
+      self.activeSegment = nil
+      self.finalizeStoppedRecording(completion: completion)
+    }
+  }
+
+  /// Distinguishes pause and resume requests so a timer from an earlier one
+  /// cannot act on a later one.
+  private var pauseResumeToken: UInt64 = 0
+
+  private func schedulePauseResumeTimeout() {
+    pauseResumeToken &+= 1
+    let token = pauseResumeToken
+    DispatchQueue.main.asyncAfter(deadline: .now() + pauseResumeTimeout) { [weak self] in
+      self?.endFileIfPauseOrResumeStillPending(token: token)
+    }
+  }
+
+  /// AVFoundation did not confirm in time. Fall back to ending the file: a
+  /// pending pause completes on its didFinish, and a pending resume continues
+  /// in a new file. Either way the take keeps going.
+  private func endFileIfPauseOrResumeStillPending(token: UInt64) {
+    guard token == pauseResumeToken, activeSegment?.stopRequested == false else { return }
+    let waitingFor: String
+    if pendingPauseCompletion != nil {
+      waitingFor = "pause"
+    } else if pendingResumeCompletion != nil {
+      waitingFor = "resume"
+    } else {
+      return
+    }
+    NativeLogger.w(
+      "CameraRecorder", "Camera did not confirm in time; ending the file instead",
+      context: ["waitingFor": waitingFor, "timeoutSeconds": pauseResumeTimeout])
+    endFile()
   }
 
   func stop(completion: @escaping (Result<CameraRecordingResult, Error>) -> Void) {
@@ -396,9 +569,17 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    if coordinator.isOutputRecording, activeSegment != nil {
+    if let segment = activeSegment {
       pendingStopCompletion = completion
-      coordinator.stopOutputRecording()
+      // Still true while paused in place, which is what ends a paused file.
+      if coordinator.isOutputRecording, !segment.stopRequested {
+        endFile()
+      } else {
+        // The file already ended and its didFinish is on its way. Finalizing
+        // now would merge a file AVFoundation may still be writing, and drop
+        // its last stretch.
+        scheduleStopBackstop(for: segment.url)
+      }
       return
     }
 
@@ -415,7 +596,8 @@ final class CameraRecorder: NSObject {
       return
     }
 
-    let nextIndex = session.segments.count
+    let nextIndex = nextFileIndex
+    nextFileIndex += 1
     let segmentURL = session.segmentDirectoryURL.appendingPathComponent(
       String(format: "segment_%03d.mov", nextIndex),
       isDirectory: false
@@ -560,7 +742,13 @@ final class CameraRecorder: NSObject {
       return
     }
 
+    // Every stretch recorded into one file names that file, so merge each file
+    // once, in order. Merging it once per stretch would repeat the take.
+    var seenPaths = Set<String>()
     let segmentURLs = session.segments.compactMap { segment -> URL? in
+      if let relativePath = segment.relativePath, !seenPaths.insert(relativePath).inserted {
+        return nil
+      }
       guard let relativePath = segment.relativePath, !relativePath.isEmpty else {
         NativeLogger.w(
           "CameraRecorder",
@@ -623,6 +811,7 @@ final class CameraRecorder: NSObject {
     activeSegment = nil
     pendingStartCompletion = nil
     pendingPauseCompletion = nil
+    pendingResumeCompletion = nil
     pendingStopCompletion = nil
   }
 
@@ -640,6 +829,7 @@ final class CameraRecorder: NSObject {
     activeSegment = nil
     pendingStartCompletion = nil
     pendingPauseCompletion = nil
+    pendingResumeCompletion = nil
     pendingStopCompletion = nil
   }
 
@@ -673,14 +863,42 @@ final class CameraRecorder: NSObject {
 }
 
 extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
+  // AVFoundation calls these on no particular thread. Each one reads the clock
+  // where it is called, because that moment is what stamps a stretch, and then
+  // does its work on the main thread, where every other piece of this state is
+  // touched. One serial queue also keeps them in the order they were sent.
+
   func fileOutput(
     _ output: AVCaptureFileOutput,
     didStartRecordingTo fileURL: URL,
     from connections: [AVCaptureConnection]
   ) {
-    NativeLogger.d("CameraRecorder", "Camera segment recording started", context: ["path": fileURL.path])
-    pendingStartCompletion?(.success(()))
-    pendingStartCompletion = nil
+    let now = Date()
+    DispatchQueue.main.async { [weak self] in
+      self?.handleDidStart(fileURL: fileURL, at: now)
+    }
+  }
+
+  func fileOutput(
+    _ output: AVCaptureFileOutput,
+    didPauseRecordingTo fileURL: URL,
+    from connections: [AVCaptureConnection]
+  ) {
+    let now = Date()
+    DispatchQueue.main.async { [weak self] in
+      self?.handleDidPause(fileURL: fileURL, at: now)
+    }
+  }
+
+  func fileOutput(
+    _ output: AVCaptureFileOutput,
+    didResumeRecordingTo fileURL: URL,
+    from connections: [AVCaptureConnection]
+  ) {
+    let now = Date()
+    DispatchQueue.main.async { [weak self] in
+      self?.handleDidResume(fileURL: fileURL, at: now)
+    }
   }
 
   func fileOutput(
@@ -689,6 +907,75 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
     from connections: [AVCaptureConnection],
     error: Error?
   ) {
+    let now = Date()
+    DispatchQueue.main.async { [weak self] in
+      self?.handleDidFinish(outputFileURL: outputFileURL, error: error, at: now)
+    }
+  }
+
+  private func handleDidStart(fileURL: URL, at now: Date) {
+    NativeLogger.d("CameraRecorder", "Camera segment recording started", context: ["path": fileURL.path])
+    if var segment = activeSegment, segment.url.lastPathComponent == fileURL.lastPathComponent {
+      segment.stretchStartedAt = now
+      activeSegment = segment
+    }
+    pendingStartCompletion?(.success(()))
+    pendingStartCompletion = nil
+  }
+
+  private func handleDidPause(fileURL: URL, at now: Date) {
+    // Ignored once the file is being ended: the fallback took over, and the
+    // file's tail is committed from its real duration in didFinish.
+    guard var segment = activeSegment, segment.url.lastPathComponent == fileURL.lastPathComponent, !segment.stopRequested,
+      let stretchStart = segment.stretchStartedAt
+    else {
+      NativeLogger.d("CameraRecorder", "Ignoring camera pause confirmation", context: ["path": fileURL.path])
+      return
+    }
+
+    let duration = max(0, now.timeIntervalSince(stretchStart))
+    commitStretch(of: segment, start: stretchStart, end: now, duration: duration)
+    segment.committedSeconds += duration
+    segment.stretchStartedAt = nil
+    segment.isPaused = true
+    activeSegment = segment
+
+    NativeLogger.i(
+      "CameraRecorder", "Camera paused in place",
+      context: ["path": fileURL.path, "stretchSeconds": duration])
+
+    pauseResumeToken &+= 1
+    if let completion = pendingPauseCompletion {
+      pendingPauseCompletion = nil
+      completion(.success(()))
+    }
+    if pendingResumeCompletion != nil {
+      resumePausedFile()
+    }
+  }
+
+  private func handleDidResume(fileURL: URL, at now: Date) {
+    guard var segment = activeSegment, segment.url.lastPathComponent == fileURL.lastPathComponent, segment.isPaused,
+      !segment.stopRequested
+    else {
+      NativeLogger.d("CameraRecorder", "Ignoring camera resume confirmation", context: ["path": fileURL.path])
+      return
+    }
+
+    segment.isPaused = false
+    segment.stretchStartedAt = now
+    activeSegment = segment
+
+    NativeLogger.i("CameraRecorder", "Camera resumed in place", context: ["path": fileURL.path])
+
+    pauseResumeToken &+= 1
+    if let completion = pendingResumeCompletion {
+      pendingResumeCompletion = nil
+      completion(.success(()))
+    }
+  }
+
+  private func handleDidFinish(outputFileURL: URL, error: Error?, at finishedAt: Date) {
     let nsError = error as NSError?
     let recordingFinishedSuccessfully = Self.recordingFinishedSuccessfully(error)
     var finishContext: [String: Any] = [
@@ -704,23 +991,25 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
     }
     NativeLogger.i("CameraRecorder", "Camera segment finished", context: finishContext)
 
-    // Nobody asked for this segment to end: no pause, no stop, no start in
-    // flight. That is how the camera went silent after every resume, with an
-    // info line nobody would read. Say it loudly.
-    if activeSegment != nil, pendingPauseCompletion == nil, pendingStopCompletion == nil,
-      pendingStartCompletion == nil
-    {
+    // Nobody asked for this file to end: no stop and no start in flight. A
+    // pause no longer ends the file, so a pending one does not explain it.
+    // That is how the camera went silent after every resume, with an info line
+    // nobody would read. Say it loudly.
+    if let segment = activeSegment, !segment.stopRequested, pendingStartCompletion == nil {
+      finishContext["wasPaused"] = segment.isPaused
       NativeLogger.e(
         "CameraRecorder", "Camera recording stopped on its own mid-take", context: finishContext)
     }
 
     if let error, !recordingFinishedSuccessfully {
       let shouldNotifyFailure =
-        pendingStartCompletion == nil && pendingPauseCompletion == nil && pendingStopCompletion == nil
+        pendingStartCompletion == nil && pendingPauseCompletion == nil
+        && pendingResumeCompletion == nil && pendingStopCompletion == nil
       let flutterFailure = Self.flutterFailure(from: error)
 
       pendingStartCompletion?(.failure(error))
       pendingPauseCompletion?(.failure(error))
+      pendingResumeCompletion?(.failure(error))
       if let completion = pendingStopCompletion {
         completion(.failure(error))
       }
@@ -735,46 +1024,131 @@ extension CameraRecorder: AVCaptureFileOutputRecordingDelegate {
       return
     }
 
-    guard var session = recordingSession else {
+    guard recordingSession != nil else {
       return
     }
 
-    if let activeSegment {
-      let finishedAt = Date()
-      let mediaDuration = recordedDurationSeconds(
+    // The stretch still open when the file ended. Its length is what the file
+    // holds beyond the stretches already committed, which makes the stretches
+    // sum to the file exactly.
+    if let segment = activeSegment, !segment.isPaused {
+      let openSince = segment.stretchStartedAt ?? segment.startedAt
+      let fileDuration = recordedDurationSeconds(
         for: outputFileURL,
-        fallback: max(0.0, finishedAt.timeIntervalSince(activeSegment.startedAt))
+        fallback: segment.committedSeconds + max(0.0, finishedAt.timeIntervalSince(openSince))
       )
-      let segmentStart = finishedAt.addingTimeInterval(-mediaDuration)
-      let segment = RecordingMetadata.CaptureSegment(
-        index: activeSegment.index,
-        relativePath: activeSegment.url.lastPathComponent,
-        startWallClock: Self.iso8601String(from: segmentStart),
-        endWallClock: Self.iso8601String(from: finishedAt),
-        durationSeconds: mediaDuration
-      )
-      session.segments.append(segment)
-      recordingSession = session
+      let tail = max(0, fileDuration - segment.committedSeconds)
+      // Ended in place of a pause, possibly seconds after the pause took
+      // effect, so the finish time says nothing about when this stretch
+      // stopped. Its start does.
+      if pendingPauseCompletion != nil, let stretchStart = segment.stretchStartedAt {
+        commitStretch(
+          of: segment, start: stretchStart, end: stretchStart.addingTimeInterval(tail),
+          duration: tail)
+      } else {
+        commitStretch(
+          of: segment, start: finishedAt.addingTimeInterval(-tail), end: finishedAt, duration: tail)
+      }
+    } else if let segment = activeSegment, segment.isPaused {
+      // A paused file has no open stretch, but its stretches were timed by the
+      // clock, which runs a few tens of milliseconds off the media. With no
+      // last stretch to absorb that, square the file's last one with its real
+      // duration, or a later file in the merge starts off by the difference.
+      let fileDuration = recordedDurationSeconds(
+        for: outputFileURL, fallback: segment.committedSeconds)
+      let drift = fileDuration - segment.committedSeconds
+      if drift > Self.unconfirmedMediaSeconds {
+        // More than clock error: a resume took effect but its confirmation
+        // was dropped once the file was being ended. That media is real, so
+        // keep it as its own stretch ending when the file did.
+        commitStretch(
+          of: segment, start: finishedAt.addingTimeInterval(-drift), end: finishedAt,
+          duration: drift)
+      } else {
+        reconcileLastStretch(of: segment, by: drift)
+      }
     }
 
     NativeLogger.i(
       "CameraRecorder",
       "Camera segment committed",
-      context: ["path": outputFileURL.path, "segments": session.segments.count]
+      context: ["path": outputFileURL.path, "segments": recordingSession?.segments.count ?? 0]
     )
 
     activeSegment = nil
+    pauseResumeToken &+= 1
 
     if let completion = pendingPauseCompletion {
       pendingPauseCompletion = nil
       completion(.success(()))
-      return
     }
 
     if let completion = pendingStopCompletion {
       pendingStopCompletion = nil
+      pendingResumeCompletion = nil
       finalizeStoppedRecording(completion: completion)
+      return
     }
+
+    // A resume was waiting on this file, which can no longer continue it.
+    if let completion = pendingResumeCompletion {
+      pendingResumeCompletion = nil
+      startNextSegment(completion: completion)
+    }
+  }
+
+  /// Seconds below which a stretch is not committed. The sync resolver refuses
+  /// a camera timeline containing any segment this short, so one empty stretch
+  /// would cost the whole take its camera sync.
+  static let minimumStretchSeconds: TimeInterval = 0.0001
+
+  /// How far a paused file's media may run past its committed stretches and
+  /// still be clock error. Measured at about 25ms per stretch.
+  static let unconfirmedMediaSeconds: TimeInterval = 0.1
+
+  private func reconcileLastStretch(of segment: ActiveCameraSegment, by drift: TimeInterval) {
+    guard abs(drift) > Self.minimumStretchSeconds, var session = recordingSession,
+      let last = session.segments.lastIndex(where: {
+        $0.relativePath == segment.url.lastPathComponent
+      })
+    else { return }
+    let old = session.segments[last]
+    let duration = (old.durationSeconds ?? 0) + drift
+    guard duration > Self.minimumStretchSeconds,
+      let start = Self.date(from: old.startWallClock)
+    else { return }
+    NativeLogger.i(
+      "CameraRecorder", "Squared the paused file's last stretch with its media",
+      context: ["path": segment.url.lastPathComponent, "driftSeconds": drift])
+    session.segments[last] = RecordingMetadata.CaptureSegment(
+      index: old.index,
+      relativePath: old.relativePath,
+      startWallClock: old.startWallClock,
+      endWallClock: Self.iso8601String(from: start.addingTimeInterval(duration)),
+      durationSeconds: duration
+    )
+    recordingSession = session
+  }
+
+  private func commitStretch(
+    of segment: ActiveCameraSegment, start: Date, end: Date, duration: TimeInterval
+  ) {
+    guard var session = recordingSession else { return }
+    guard duration > Self.minimumStretchSeconds else {
+      NativeLogger.d(
+        "CameraRecorder", "Skipping an empty camera stretch",
+        context: ["path": segment.url.lastPathComponent, "seconds": duration])
+      return
+    }
+    session.segments.append(
+      RecordingMetadata.CaptureSegment(
+        index: session.segments.count,
+        relativePath: segment.url.lastPathComponent,
+        startWallClock: Self.iso8601String(from: start),
+        endWallClock: Self.iso8601String(from: end),
+        durationSeconds: duration
+      ))
+    recordingSession = session
   }
 
   private func recordedDurationSeconds(for url: URL, fallback: TimeInterval) -> TimeInterval {
