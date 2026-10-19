@@ -281,14 +281,19 @@ enum RecordingProjectPaths {
       current.deleteLastPathComponent()
     }
 
-    while current.path != current.deletingLastPathComponent().path {
+    while true {
       if isProjectDirectory(current) {
         return current
       }
-      current.deleteLastPathComponent()
+      // Stop once the parent is no shorter. Comparing a URL with its parent
+      // never ended: the parent of "/" is "/..", whose path is not "/", so a
+      // file outside any project walked up forever, building "/../../.." until
+      // memory ran out. Seen in a test, where it pushed swap until the disk
+      // filled; the preview reaches it with any video not in a project.
+      let parent = current.deletingLastPathComponent().standardizedFileURL
+      guard parent.path.count < current.path.count else { return nil }
+      current = parent
     }
-
-    return isProjectDirectory(current) ? current : nil
   }
 
   static func resolvedCursorDataURL(forScreenVideoURL screenVideoURL: URL) -> URL {

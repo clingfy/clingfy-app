@@ -28,6 +28,10 @@ final class CaptureBackendAVFoundation: CaptureBackend {
 
   var currentOutputURL: URL? { pipeline.currentOutputURL }
 
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] {
+    pipeline.recordedScreenSegments
+  }
+
   // MARK: Internals
   private let pipeline: AVFoundationCapturePipelining
 

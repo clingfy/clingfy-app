@@ -139,7 +139,15 @@ final class CursorRecorder {
     startSamplingTimer()
   }
 
+  /// Runs on the cursor queue, the one `captureFrame` samples on. The
+  /// AVFoundation backend calls this from its delegate thread, and a frame
+  /// sampled while `activeSegmentStartTime` was being zeroed got a timestamp
+  /// of the whole system uptime, out of order with every frame after it.
   func pause() {
+    queue.sync { pauseOnQueue() }
+  }
+
+  private func pauseOnQueue() {
     guard isActive, !isPaused else { return }
     let now = ProcessInfo.processInfo.systemUptime
     accumulatedRecordedDuration += max(0, now - activeSegmentStartTime)
@@ -154,7 +162,12 @@ final class CursorRecorder {
     )
   }
 
+  /// Runs on the cursor queue for the same reason as `pause()`.
   func resume() {
+    queue.sync { resumeOnQueue() }
+  }
+
+  private func resumeOnQueue() {
     guard isActive, isPaused else { return }
     isPaused = false
     activeSegmentStartTime = ProcessInfo.processInfo.systemUptime

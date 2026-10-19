@@ -383,24 +383,26 @@ still derived from the file's end (file duration minus the earlier stretches).
 On a live take, camera stretch 2 started 11ms after screen part 2. The screen
 side is unchanged.
 
-### Paused camera takes on macOS 13-14 still sync from an estimate — code
+### Pause and resume on a real macOS 13-14 Mac — verify
 
-The AVFoundation backend, used before macOS 15, pauses one file and reports no
-segments (`CaptureBackend.swift` default `[]`). Its paused camera takes still
-use the end-anchored fallback. **To close:** synthesize the segments from the
-pause/resume wall clocks.
+The AVFoundation backend runs on macOS 13-14, and wherever ScreenCaptureKit
+fails to start. Its pause and resume were fixed on 2026-10-19 without a 13-14
+Mac. Pause was confirmed live by forcing the backend on macOS 26: the take
+reached "paused" 23ms after the request. Resume was not, because screen
+capture through this backend then stopped starting on that Mac (next item).
+**To close:** on macOS 13 or 14, pause, resume and stop one take with the
+camera on. Check that it finalizes, that `screen.meta.json` has one segment per
+stretch, and that the camera bubble lines up in both parts.
 
-### macOS 13-14 pause and resume callbacks never fire — code
+### AVFoundation screen capture is refused on macOS 26 — verify
 
-*Found 2026-10-19.* `CapturePipeline.swift:273-293`, the AVFoundation screen
-backend used before macOS 15, implements
-`captureOutput(_:didPauseRecordingToOutputFileAt:fromConnections:)` and its
-resume twin. Those are not the protocol's Swift names
-(`fileOutput(_:didPauseRecordingTo:from:)`), so they bind to no Objective-C
-selector, and `responds(to:)` is false. Any pause or resume that waits on them
-likely hangs on macOS 13-14. **To close:** rename them, pin the selectors in a
-test like `testThePauseAndResumeCallbacksBindToAVFoundation`, and pause and
-resume once on macOS 13 or 14.
+*Found 2026-10-19,* forcing the backend on macOS 26.1. A few takes recorded,
+then every start was refused with "No active/enabled connections", across
+relaunches. It used to crash the app; it now fails the start with a message.
+It matters only on macOS 15+ when ScreenCaptureKit fails to start and this
+backend is the fallback. **To close:** find out whether macOS 15+ still
+supports `AVCaptureScreenInput` reliably. If not, report the
+ScreenCaptureKit failure instead of falling back.
 
 ### Other mid-recording overlay rebuilds may still stop the camera — verify
 
@@ -450,6 +452,17 @@ and keep or clean up the segments explicitly.
   `effectiveMicCaptureEnabled` (`ScreenRecorderFacade.swift:973`).
 
 ## Logging — macOS
+
+### Every launch logs an uncaught exception from AppDelegate — code
+
+*Found 2026-10-19:* 125 log lines that day alone, the earliest on 2026-10-16.
+`AppDelegate.swift:18` calls `super.applicationDidFinishLaunching`, which
+`FlutterAppDelegate` does not implement at runtime. The call raises
+"unrecognized selector", and `NativeLogger`'s hook logs it as an uncaught
+`NSInvalidArgumentException`. Nothing follows the call, so nothing is skipped.
+It is noise in every crash log and possibly in Sentry. **To close:** call super
+only if `FlutterAppDelegate` implements the selector, then check that one launch
+logs nothing.
 
 ### ~~Logs written just before a crash or quit can be lost~~ — DONE 2026-10-16
 
@@ -915,6 +928,22 @@ cannot do it. Fold it into the camera on-device QA pass.
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Pausing on macOS 13-14 left the take impossible to stop.** The pause and
+  resume callbacks had Swift names that bound to no selector, so AVFoundation
+  never called them. Pause and stop then waited forever. Fixed on 2026-10-19,
+  together with what that exposed:
+  - The resume was guarded on `isRecordingPaused`, which read false after a
+    confirmed pause, so it now uses the delegate's own state.
+  - A repeated pause or resume is answered.
+  - Per-stretch screen segments are recorded for camera sync.
+  - The cursor pause runs on its queue.
+  - A raised screen-recording start no longer crashes.
+  - The project-root walk no longer loops forever outside a project. A test
+    hit that loop, and the swap filled the disk.
+
+  A real 13-14 Mac is still needed; see "Pause and resume on a real macOS 13-14
+  Mac".
 
 - **Camera started about 1s after the screen on resume.** A pause now pauses the
   camera file in place, and a resume continues the same file. Measured live on
