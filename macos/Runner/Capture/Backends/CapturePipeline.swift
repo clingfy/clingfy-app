@@ -10,6 +10,9 @@ protocol AVFoundationCapturePipelining: AnyObject {
   var isRecording: Bool { get }
   var isRecordingPaused: Bool { get }
   var currentOutputURL: URL? { get }
+  /// The stretches between pauses in the finished file, for camera sync. Set
+  /// before `onFinished` is called.
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] { get }
 
   func start(
     displayID: CGDirectDisplayID,
@@ -53,12 +56,36 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
   private var currentCaptureRect: CGRect?
   private var currentCursorRasterScale: Double = 1.0
 
+  // Pause state and the stretches between pauses, as the delegate reported
+  // them. Written on AVFoundation's delegate thread and read from the capture
+  // queue and the main thread, so behind a lock.
+  //
+  // `movieOutput.isRecordingPaused` is not used for this. On a live take it
+  // still read false three seconds after `didPause` was delivered, so a resume
+  // guarded on it returned without resuming, and the take could then neither
+  // resume nor stop.
+  private let stretchLock = NSLock()
+  private var pausedByDelegate = false
+  private var openStretchStartedAt: Date?
+  private var closedStretches: [(start: Date, end: Date)] = []
+  private var finishedSegments: [RecordingMetadata.CaptureSegment] = []
+
+  private func withStretches<T>(_ body: () -> T) -> T {
+    stretchLock.lock()
+    defer { stretchLock.unlock() }
+    return body()
+  }
+
   var isRecording: Bool {
     (movieOutput?.isRecording ?? false) || (movieOutput?.isRecordingPaused ?? false)
   }
 
   var isRecordingPaused: Bool {
-    movieOutput?.isRecordingPaused ?? false
+    withStretches { pausedByDelegate } || (movieOutput?.isRecordingPaused ?? false)
+  }
+
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] {
+    withStretches { finishedSegments }
   }
 
   var currentOutputURL: URL? {
@@ -168,7 +195,28 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
         self.currentCaptureRect = cropRect
 
         session.startRunning()
-        movie.startRecording(to: url, recordingDelegate: self)
+        // Through the bridge: `startRecording(to:)` RAISES when the screen
+        // input has no active connection, and Swift cannot catch that, so it
+        // aborted the app. Seen forcing this backend on macOS 26: "No
+        // active/enabled connections", straight out of a record tap.
+        do {
+          try AVCaptureMovieFileOutputExceptionBridge.startRecording(
+            output: movie, outputURL: url, recordingDelegate: self)
+        } catch {
+          let nsError = error as NSError
+          NativeLogger.e(
+            "AVFBackend", "Screen recording refused to start",
+            context: [
+              "exceptionName": nsError.userInfo["exceptionName"] ?? "",
+              "exceptionReason": nsError.userInfo["exceptionReason"] ?? "",
+            ])
+          session.stopRunning()
+          self.movieOutput = nil
+          self.session = nil
+          self.finishStartError(
+            code: "NO_ACTIVE_VIDEO",
+            msg: "The screen could not be recorded. Try again, or restart Clingfy if it keeps happening.")
+        }
       } catch {
         self.finishStartError(code: "OUTPUT_URL_ERROR", msg: error.localizedDescription)
       }
@@ -179,19 +227,52 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     queue.async { self.movieOutput?.stopRecording() }
   }
 
+  // Already in the asked-for state, these report it again rather than return
+  // silently, as the ScreenCaptureKit backend does. The facade waits for the
+  // callback, so a silent return holds the pause or resume in flight for good
+  // and queues a stop behind it that never runs. That is reachable: a camera
+  // that fails to resume leaves the facade paused over a screen that already
+  // resumed, and the user's next resume must still be answered.
   func pause() {
     queue.async {
-      guard let movieOutput = self.movieOutput, movieOutput.isRecording, !movieOutput.isRecordingPaused
-      else { return }
-      movieOutput.pauseRecording()
+      let isRecording = self.movieOutput?.isRecording ?? false
+      switch Self.toggleAction(
+        wantPaused: true, isRecording: isRecording,
+        isPaused: self.withStretches({ self.pausedByDelegate }))
+      {
+      case .ignore: return
+      case .reportAlreadyThere: DispatchQueue.main.async { self.onPaused?() }
+      case .request: self.movieOutput?.pauseRecording()
+      }
     }
   }
 
   func resume() {
     queue.async {
-      guard let movieOutput = self.movieOutput, movieOutput.isRecordingPaused else { return }
-      movieOutput.resumeRecording()
+      let isRecording = self.movieOutput?.isRecording ?? false
+      switch Self.toggleAction(
+        wantPaused: false, isRecording: isRecording,
+        isPaused: self.withStretches({ self.pausedByDelegate }))
+      {
+      case .ignore: return
+      case .reportAlreadyThere: DispatchQueue.main.async { self.onResumed?() }
+      case .request: self.movieOutput?.resumeRecording()
+      }
     }
+  }
+
+  enum ToggleAction: Equatable {
+    /// Nothing is recording; there is nothing to pause or resume.
+    case ignore
+    /// Already in the asked-for state: report it again.
+    case reportAlreadyThere
+    /// Ask AVFoundation, which confirms through the delegate.
+    case request
+  }
+
+  static func toggleAction(wantPaused: Bool, isRecording: Bool, isPaused: Bool) -> ToggleAction {
+    guard isRecording else { return .ignore }
+    return isPaused == wantPaused ? .reportAlreadyThere : .request
   }
 
   private func applyQuality(
@@ -258,6 +339,13 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     // being on. Display as well as system: a display that turns off records
     // black frames. Pause and resume below are pass-throughs on this backend,
     // so the hold survives them without extra work.
+    let now = Date()
+    withStretches {
+      pausedByDelegate = false
+      openStretchStartedAt = now
+      closedStretches = []
+      finishedSegments = []
+    }
     recordingKeepAwake.acquire(
       reason: "Clingfy is recording your screen", mode: .systemAndDisplay)
     cursorRecorder.start(
@@ -270,22 +358,38 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     }
   }
 
-  func captureOutput(
+  // The Swift names of these two must match the protocol exactly. They used to
+  // be `captureOutput(_:didPauseRecordingToOutputFileAt:fromConnections:)`,
+  // which bound to no Objective-C selector, so AVFoundation never called them:
+  // a pause on this backend never reached the facade and the UI sat in
+  // "pausing" for good. Pinned by `testAVFoundationPipelinePauseCallbacksBind`.
+  func fileOutput(
     _ output: AVCaptureFileOutput,
-    didPauseRecordingToOutputFileAt fileURL: URL,
-    fromConnections connections: [AVCaptureConnection]
+    didPauseRecordingTo fileURL: URL,
+    from connections: [AVCaptureConnection]
   ) {
+    let now = Date()
+    withStretches {
+      if let start = openStretchStartedAt { closedStretches.append((start, now)) }
+      openStretchStartedAt = nil
+      pausedByDelegate = true
+    }
     cursorRecorder.pause()
     DispatchQueue.main.async {
       self.onPaused?()
     }
   }
 
-  func captureOutput(
+  func fileOutput(
     _ output: AVCaptureFileOutput,
-    didResumeRecordingToOutputFileAt fileURL: URL,
-    fromConnections connections: [AVCaptureConnection]
+    didResumeRecordingTo fileURL: URL,
+    from connections: [AVCaptureConnection]
   ) {
+    let now = Date()
+    withStretches {
+      openStretchStartedAt = now
+      pausedByDelegate = false
+    }
     cursorRecorder.resume()
     DispatchQueue.main.async {
       self.onResumed?()
@@ -303,11 +407,13 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     // lifetime a property of CursorRecorder again -- the coupling this change
     // exists to remove -- and that closure captures self weakly, so a released
     // pipeline would skip it entirely.
+    let finishedAt = Date()
     recordingKeepAwake.release()
     microphoneLevelOutput?.setSampleBufferDelegate(nil, queue: nil)
     microphoneLevelOutput = nil
     resetMicrophoneLevelSmoothing()
     self.logFinalVideoInfoAVF(url: url)
+    recordFinishedSegments(fileURL: url, finishedAt: finishedAt)
 
     let cursorURL = RecordingProjectPaths.resolvedCursorDataURL(forScreenVideoURL: url)
 
@@ -318,6 +424,66 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
       }
     }
   }
+  /// Turns the stretches between pauses into screen segments, all naming the
+  /// one file, so the camera can be synced to each.
+  ///
+  /// The stretches are timed from the delegate's callbacks. The last one's
+  /// length is what the file holds beyond the others, so the segments sum to
+  /// the file. Without segments, camera sync assumed one
+  /// unbroken stretch ending at the stop, and on a paused take the camera
+  /// bubble was missing or offset everywhere before the last pause.
+  private func recordFinishedSegments(fileURL: URL, finishedAt: Date) {
+    let fileDuration = AVURLAsset(url: fileURL).duration.seconds
+    withStretches {
+      var stretches = closedStretches.map { ($0.start, $0.end, $0.end.timeIntervalSince($0.start)) }
+      let committed = stretches.reduce(0) { $0 + $1.2 }
+      if fileDuration.isFinite, fileDuration > 0 {
+        let rest = fileDuration - committed
+        let lastIsOpen = openStretchStartedAt != nil || rest > Self.unconfirmedMediaSeconds
+        if lastIsOpen, rest > Self.minimumStretchSeconds {
+          // Anchored at its start when that is known: the finish arrives
+          // after the file is closed, late by however long that took, and a
+          // late screen window shifts the camera against it.
+          let start = openStretchStartedAt ?? finishedAt.addingTimeInterval(-rest)
+          stretches.append((start, start.addingTimeInterval(rest), rest))
+        } else if let last = stretches.indices.last,
+          stretches[last].2 + rest > Self.minimumStretchSeconds
+        {
+          // Ended paused, or the clock ran ahead of the media: square the last
+          // stretch with the file, so the error does not shift what follows.
+          let duration = stretches[last].2 + rest
+          stretches[last] = (stretches[last].0, stretches[last].0.addingTimeInterval(duration), duration)
+        }
+      }
+      finishedSegments = stretches
+        .filter { $0.2 > Self.minimumStretchSeconds }
+        .enumerated()
+        .map { index, stretch in
+          RecordingMetadata.CaptureSegment(
+            index: index,
+            relativePath: fileURL.lastPathComponent,
+            startWallClock: RecordingMetadata.iso8601String(from: stretch.0),
+            endWallClock: RecordingMetadata.iso8601String(from: stretch.1),
+            durationSeconds: stretch.2
+          )
+        }
+      // A file the asset cannot read gets no segments: sync then falls back to
+      // the stop time, as it always did on this backend.
+      if !(fileDuration.isFinite && fileDuration > 0) { finishedSegments = [] }
+      closedStretches = []
+      openStretchStartedAt = nil
+      pausedByDelegate = false
+    }
+  }
+
+  /// Shorter than this is not a stretch. The sync resolver refuses a timeline
+  /// containing one, which would cost the take its camera sync.
+  static let minimumStretchSeconds: TimeInterval = 0.0001
+
+  /// Media past the last confirmed pause beyond this is real footage, not
+  /// clock error, and is kept as its own stretch.
+  static let unconfirmedMediaSeconds: TimeInterval = 0.1
+
   private func logFinalVideoInfoAVF(url: URL) {
     let asset = AVURLAsset(url: url)
 

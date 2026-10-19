@@ -8864,6 +8864,7 @@ private final class MockAVFoundationCapturePipeline: AVFoundationCapturePipelini
   var isRecording: Bool = false
   var isRecordingPaused: Bool = false
   var currentOutputURL: URL?
+  var recordedScreenSegments: [RecordingMetadata.CaptureSegment] = []
 
   func start(
     displayID: CGDirectDisplayID,
@@ -8892,6 +8893,225 @@ private final class MockAVFoundationCapturePipeline: AVFoundationCapturePipelini
 
   func emitMicrophoneLevel(_ sample: MicrophoneLevelSample) {
     onMicrophoneLevel?(sample)
+  }
+}
+
+/// The AVFoundation screen backend runs on macOS 13-14, and wherever
+/// ScreenCaptureKit fails to start. Its pause and resume callbacks had Swift
+/// names that matched no protocol requirement, so they bound to no selector and
+/// AVFoundation never called them. Every pause on that backend left the facade
+/// waiting for a confirmation that never came.
+/// Walking up from a file outside any project never ended: the parent of "/"
+/// is "/..", so the loop built "/../../.." until memory ran out.
+final class RecordingProjectPathsEnclosingRootTests: XCTestCase {
+  func testAFileOutsideAnyProjectHasNoEnclosingProject() {
+    let url = URL(fileURLWithPath: "/tmp/not-a-project/clip.mov")
+    XCTAssertNil(RecordingProjectPaths.enclosingProjectRoot(for: url))
+    XCTAssertEqual(
+      RecordingProjectPaths.resolvedCursorDataURL(forScreenVideoURL: url).path,
+      "/tmp/not-a-project/clip.cursor.json")
+  }
+
+  func testTheRootItselfTerminates() {
+    XCTAssertNil(RecordingProjectPaths.enclosingProjectRoot(for: URL(fileURLWithPath: "/")))
+  }
+
+  func testAFileInsideAProjectFindsIt() {
+    let url = URL(fileURLWithPath: "/tmp/rec_1.clingfyproj/capture/screen.mov")
+    XCTAssertEqual(
+      RecordingProjectPaths.enclosingProjectRoot(for: url)?.path, "/tmp/rec_1.clingfyproj")
+  }
+}
+
+final class AVFoundationCapturePipelineCallbackTests: XCTestCase {
+  func testAVFoundationPipelinePauseCallbacksBind() {
+    let pipeline = CapturePipeline()
+    for name in [
+      "captureOutput:didStartRecordingToOutputFileAtURL:fromConnections:",
+      "captureOutput:didPauseRecordingToOutputFileAtURL:fromConnections:",
+      "captureOutput:didResumeRecordingToOutputFileAtURL:fromConnections:",
+      "captureOutput:didFinishRecordingToOutputFileAtURL:fromConnections:error:",
+    ] {
+      XCTAssertTrue(pipeline.responds(to: NSSelectorFromString(name)), name)
+    }
+  }
+
+  /// Called the way AVFoundation calls it: through the protocol's optional
+  /// requirement, which dispatches by selector.
+  func testAVFoundationPipelineReportsPauseAndResume() {
+    let pipeline = CapturePipeline()
+    let delegate: AVCaptureFileOutputRecordingDelegate = pipeline
+    let url = URL(fileURLWithPath: "/tmp/clingfy-pipeline-test.mov")
+    let paused = expectation(description: "paused reported")
+    let resumed = expectation(description: "resumed reported")
+    pipeline.onPaused = { paused.fulfill() }
+    pipeline.onResumed = { resumed.fulfill() }
+
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didPauseRecordingTo: url, from: [])
+    wait(for: [paused], timeout: 5)
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didResumeRecordingTo: url, from: [])
+    wait(for: [resumed], timeout: 5)
+  }
+
+  /// Asked for the state it is already in, the pipeline reports it again. A
+  /// silent return held the pause or resume in flight for good, with a stop
+  /// queued behind it that never ran.
+  func testAPauseOrResumeAlreadyInEffectIsReportedAgain() {
+    XCTAssertEqual(
+      CapturePipeline.toggleAction(wantPaused: true, isRecording: true, isPaused: false), .request)
+    XCTAssertEqual(
+      CapturePipeline.toggleAction(wantPaused: true, isRecording: true, isPaused: true),
+      .reportAlreadyThere)
+    XCTAssertEqual(
+      CapturePipeline.toggleAction(wantPaused: false, isRecording: true, isPaused: true), .request)
+    XCTAssertEqual(
+      CapturePipeline.toggleAction(wantPaused: false, isRecording: true, isPaused: false),
+      .reportAlreadyThere, "a camera resume that failed leaves the facade paused over this")
+    XCTAssertEqual(
+      CapturePipeline.toggleAction(wantPaused: false, isRecording: false, isPaused: true), .ignore)
+  }
+
+  /// The pause state comes from the delegate, not `isRecordingPaused`, which
+  /// on a live take still read false seconds after the pause was confirmed.
+  func testThePipelineIsPausedOnceThePauseIsConfirmed() {
+    let pipeline = CapturePipeline()
+    let delegate: AVCaptureFileOutputRecordingDelegate = pipeline
+    let url = URL(fileURLWithPath: "/tmp/clingfy-pipeline-test.mov")
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didStartRecordingTo: url, from: [])
+    XCTAssertFalse(pipeline.isRecordingPaused)
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didPauseRecordingTo: url, from: [])
+    XCTAssertTrue(pipeline.isRecordingPaused)
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didResumeRecordingTo: url, from: [])
+    XCTAssertFalse(pipeline.isRecordingPaused)
+  }
+
+  private func spin(_ seconds: TimeInterval) {
+    let passed = expectation(description: "time passed")
+    DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { passed.fulfill() }
+    wait(for: [passed], timeout: seconds + 5)
+  }
+
+  private func writeMovie(at url: URL, seconds: Double) throws {
+    try? FileManager.default.removeItem(at: url)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64,
+      ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64,
+      ])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+    for i in 0..<Int(seconds * 30) {
+      var buffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &buffer)
+      guard let buffer else { continue }
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: 30))
+    }
+    input.markAsFinished()
+    let done = expectation(description: "movie written")
+    writer.finishWriting { done.fulfill() }
+    wait(for: [done], timeout: 30)
+  }
+
+  private func finish(
+    _ pipeline: CapturePipeline, file: URL
+  ) {
+    let finished = expectation(description: "finished")
+    pipeline.onFinished = { _, _ in finished.fulfill() }
+    // Off the main thread, as AVFoundation delivers it. Reading the file's
+    // duration synchronously on the main thread blocks.
+    DispatchQueue.global().async {
+      (pipeline as AVCaptureFileOutputRecordingDelegate).fileOutput(
+        AVCaptureMovieFileOutput(), didFinishRecordingTo: file, from: [], error: nil)
+    }
+    wait(for: [finished], timeout: 20)
+  }
+
+  /// Without segments, camera sync on this backend assumed one unbroken
+  /// stretch ending at the stop, and on a paused take the camera bubble was
+  /// missing or offset everywhere before the last pause.
+  func testAPausedTakeReportsAScreenSegmentPerStretch() throws {
+    let file = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).mov")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let pipeline = CapturePipeline()
+    let delegate: AVCaptureFileOutputRecordingDelegate = pipeline
+
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didStartRecordingTo: file, from: [])
+    spin(0.3)
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didPauseRecordingTo: file, from: [])
+    spin(0.4)  // paused: not in the file
+    let resumedAt = Date()
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didResumeRecordingTo: file, from: [])
+    // Longer than the first stretch can be: the start stamps the clock and the
+    // cursor's accessibility check then blocks for a moment in the test host.
+    try writeMovie(at: file, seconds: 2.0)
+    let media = AVURLAsset(url: file).duration.seconds
+    finish(pipeline, file: file)
+
+    let segments = pipeline.recordedScreenSegments
+    guard segments.count == 2 else { return XCTFail("expected 2 segments, got \(segments)") }
+    XCTAssertEqual(segments.map { $0.index }, [0, 1])
+    XCTAssertEqual(Set(segments.map { $0.relativePath }), [file.lastPathComponent])
+    XCTAssertGreaterThan(segments[0].durationSeconds ?? 0, 0.25)
+    XCTAssertLessThan(segments[0].durationSeconds ?? 0, 1.2, "the 0.4s pause is not in it")
+    // The last stretch starts at the resume, not at the finish minus its
+    // length: the finish arrives late, after the file is closed.
+    let lastStart = try XCTUnwrap(RecordingMetadata.date(fromISO8601: segments[1].startWallClock))
+    XCTAssertEqual(lastStart.timeIntervalSince(resumedAt), 0, accuracy: 0.05)
+    XCTAssertEqual(
+      segments.reduce(0) { $0 + ($1.durationSeconds ?? 0) }, media, accuracy: 0.001,
+      "the stretches must sum to the file")
+  }
+
+  /// An unpaused take is one stretch, the whole file, ending at the finish:
+  /// what the fallback assumed before, now stated.
+  func testAnUnpausedTakeIsOneSegmentOfTheWholeFile() throws {
+    let file = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).mov")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let pipeline = CapturePipeline()
+    (pipeline as AVCaptureFileOutputRecordingDelegate).fileOutput?(
+      AVCaptureMovieFileOutput(), didStartRecordingTo: file, from: [])
+    try writeMovie(at: file, seconds: 0.5)
+    let media = AVURLAsset(url: file).duration.seconds
+    finish(pipeline, file: file)
+
+    let segments = pipeline.recordedScreenSegments
+    XCTAssertEqual(segments.count, 1)
+    XCTAssertEqual(segments[0].durationSeconds ?? 0, media, accuracy: 0.001)
+  }
+
+  /// Stopped while paused, the last stretch is squared with the file rather
+  /// than a new one invented for the pause.
+  func testATakeStoppedWhilePausedSumsToTheFile() throws {
+    let file = FileManager.default.temporaryDirectory
+      .appendingPathComponent("\(UUID().uuidString).mov")
+    defer { try? FileManager.default.removeItem(at: file) }
+    let pipeline = CapturePipeline()
+    let delegate: AVCaptureFileOutputRecordingDelegate = pipeline
+    let startedAt = Date()
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didStartRecordingTo: file, from: [])
+    spin(0.3)
+    delegate.fileOutput?(AVCaptureMovieFileOutput(), didPauseRecordingTo: file, from: [])
+    // As long as the stretch was, give or take a frame: what the file holds
+    // when it is stopped while paused.
+    try writeMovie(at: file, seconds: Date().timeIntervalSince(startedAt))
+    let media = AVURLAsset(url: file).duration.seconds
+    finish(pipeline, file: file)
+
+    let segments = pipeline.recordedScreenSegments
+    XCTAssertEqual(segments.count, 1)
+    XCTAssertEqual(segments[0].durationSeconds ?? 0, media, accuracy: 0.001)
   }
 }
 
