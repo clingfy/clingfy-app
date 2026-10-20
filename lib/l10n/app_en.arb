@@ -59,6 +59,21 @@
   "gifSizeMedium": "Medium (720px)",
   "gifSizeLarge": "Large (1080px)",
   "gifSizeCaption": "GIFs export at 15 fps. Larger sizes look sharper but make bigger files.",
+  "gifTooLongForExport": "GIFs can be at most {maxSeconds} seconds long. This export is {duration}. Cut it shorter, or export it as .mp4 or .mov.",
+  "errExportGifTooLong": "GIFs can be at most {maxSeconds} seconds long. Cut the recording shorter, or export it as .mp4 or .mov.",
+  "@gifTooLongForExport": {
+    "description": "Export dialog, GIF format: shown when the export (after cuts) is longer than the GIF length cap; the Export button is disabled.",
+    "placeholders": {
+      "maxSeconds": {"type": "int"},
+      "duration": {"type": "String", "example": "1:42"}
+    }
+  },
+  "@errExportGifTooLong": {
+    "description": "Shown when the exporter refuses a GIF longer than the length cap.",
+    "placeholders": {
+      "maxSeconds": {"type": "int"}
+    }
+  },
   "original": "Original",
   "fhd1080": "1080p",
   "uhd2k": "2K (1440P)",

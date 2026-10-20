@@ -53,6 +53,7 @@ class ExportFileDialog extends StatefulWidget {
     required this.initialGifSize,
     required this.initialAudioQuality,
     required this.onPickFolder,
+    this.exportDurationMs,
   });
 
   final String initialFileName;
@@ -65,6 +66,10 @@ class ExportFileDialog extends StatefulWidget {
   final GifSizePreset initialGifSize;
   final Future<String?> Function() onPickFolder;
 
+  /// How long the export will be, after cuts. GIF is refused past
+  /// [kGifMaxExportDurationMs]; null when not known yet.
+  final int? exportDurationMs;
+
   static Future<ExportFileDialogResult?> show(
     BuildContext context, {
     required String initialFileName,
@@ -76,6 +81,7 @@ class ExportFileDialog extends StatefulWidget {
     required GifSizePreset initialGifSize,
     required AudioQuality initialAudioQuality,
     required Future<String?> Function() onPickFolder,
+    int? exportDurationMs,
   }) {
     return showDialog<ExportFileDialogResult>(
       context: context,
@@ -90,6 +96,7 @@ class ExportFileDialog extends StatefulWidget {
         initialGifSize: initialGifSize,
         initialAudioQuality: initialAudioQuality,
         onPickFolder: onPickFolder,
+        exportDurationMs: exportDurationMs,
       ),
     );
   }
@@ -97,6 +104,10 @@ class ExportFileDialog extends StatefulWidget {
   @override
   State<ExportFileDialog> createState() => _ExportFileDialogState();
 }
+
+/// The reason shown when the export is too long for a GIF.
+const gifTooLongKey = Key('export_file_dialog_gif_too_long');
+const exportButtonKey = Key('export_file_dialog_export_button');
 
 class _ExportFileDialogState extends State<ExportFileDialog> {
   static const _closeButtonKey = Key('export_file_dialog_close_button');
@@ -127,7 +138,14 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
     });
   }
 
+  bool get _gifTooLong =>
+      _exportFormat == ExportFormat.gif &&
+      gifExceedsDurationCap(widget.exportDurationMs);
+
   void _submit() {
+    // Enter in the name field submits without the button, so the length cap
+    // is checked here as well as by disabling Export.
+    if (_gifTooLong) return;
     final trimmed = _nameController.text.trim();
     if (trimmed.isEmpty) return;
     Navigator.of(context).pop(
@@ -378,6 +396,19 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     ),
                   ),
+                  if (_gifTooLong) ...[
+                    SizedBox(height: spacing.sm),
+                    Text(
+                      l10n.gifTooLongForExport(
+                        kGifMaxExportDurationMs ~/ 1000,
+                        formatGifDuration(widget.exportDurationMs!),
+                      ),
+                      key: gifTooLongKey,
+                      style: typography.caption.copyWith(
+                        color: theme.colorScheme.error,
+                      ),
+                    ),
+                  ],
                 ],
 
                 SizedBox(height: spacing.panel - 2),
@@ -426,7 +457,13 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
                 // ── Actions ──
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
-                  children: [AppButton(label: l10n.export, onPressed: _submit)],
+                  children: [
+                    AppButton(
+                      key: exportButtonKey,
+                      label: l10n.export,
+                      onPressed: _gifTooLong ? null : _submit,
+                    ),
+                  ],
                 ),
               ],
             ),

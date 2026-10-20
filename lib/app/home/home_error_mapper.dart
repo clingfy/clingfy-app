@@ -1,4 +1,5 @@
 import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/core/bridges/recording_warning_codes.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
 import 'package:clingfy/app/home/widgets/desktop_toolbar.dart';
@@ -89,6 +90,8 @@ class HomeErrorMapper {
         );
       case NativeErrorCode.exportInputMissing:
         message = l10n.errExportInputMissing;
+      case NativeErrorCode.exportGifTooLong:
+        message = l10n.errExportGifTooLong(kGifMaxExportDurationMs ~/ 1000);
       case NativeErrorCode.advancedCameraExportFailed:
         message = l10n.errExportError(
           'Advanced camera styling could not be rendered for export.',

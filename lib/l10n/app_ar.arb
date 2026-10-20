@@ -63,6 +63,8 @@
   "gifSizeMedium": "متوسط (720 بكسل)",
   "gifSizeLarge": "كبير (1080 بكسل)",
   "gifSizeCaption": "يتم تصدير ملفات GIF بمعدل 15 إطارًا في الثانية. الأحجام الأكبر تبدو أوضح لكنها تُنتج ملفات أكبر.",
+  "gifTooLongForExport": "يمكن أن تصل مدة ملف GIF إلى {maxSeconds} ثانية كحد أقصى. مدة هذا التصدير {duration}. قصّره، أو صدّره بصيغة ‎.mp4 أو ‎.mov.",
+  "errExportGifTooLong": "يمكن أن تصل مدة ملف GIF إلى {maxSeconds} ثانية كحد أقصى. قصّر التسجيل، أو صدّره بصيغة ‎.mp4 أو ‎.mov.",
   "original": "أصلي",
   "fhd1080": "1080p",
   "uhd2k": "2K (1440P)",

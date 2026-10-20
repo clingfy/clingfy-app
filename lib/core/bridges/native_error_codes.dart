@@ -55,6 +55,10 @@ abstract class NativeErrorCode {
   static const String exportCancelled = 'EXPORT_CANCELLED';
   static const String exportInputMissing = 'EXPORT_INPUT_MISSING';
   static const String exportDiskFull = 'EXPORT_DISK_FULL';
+
+  /// A GIF longer than [kGifMaxExportDurationMs]. Details carry `durationMs`
+  /// and `maxDurationMs`. Keep in sync with Swift `exportGifTooLong`.
+  static const String exportGifTooLong = 'EXPORT_GIF_TOO_LONG';
   static const String advancedCameraExportFailed =
       'ADVANCED_CAMERA_EXPORT_FAILED';
 

@@ -15,7 +15,10 @@ import XCTest
 @MainActor
 final class ExportEngineTests: XCTestCase {
 
-  private func makeAnyInput(projectPath: String = "/tmp/does-not-exist")
+  private func makeAnyInput(
+    projectPath: String = "/tmp/does-not-exist", format: String = "mov",
+    directoryOverride: String? = nil
+  )
     -> ExportEngine.Input
   {
     ExportEngine.Input(
@@ -32,8 +35,8 @@ final class ExportEngineTests: XCTestCase {
       zoomFactor: 1.0,
       showCursor: true,
       filename: nil,
-      directoryOverride: nil,
-      format: "mov",
+      directoryOverride: directoryOverride,
+      format: format,
       writesSubtitleSidecars: false,
       codec: "hevc",
       bitrate: "auto",
@@ -93,6 +96,102 @@ final class ExportEngineTests: XCTestCase {
     XCTAssertEqual(
       receivedError?.message,
       "Recording project not found. It may have been moved or deleted.")
+  }
+
+  // MARK: - GIF length cap
+
+  /// A real project whose screen.mov runs `seconds`: two frames, at 0 and at
+  /// the end, which is all a duration needs.
+  private func makeProject(seconds: Int) throws -> RecordingProjectRef {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("clingfy_gif_cap_\(UUID().uuidString)")
+    let projectRoot = root.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_gif_cap"), isDirectory: true)
+    addTeardownBlock { try? fm.removeItem(at: root) }
+    for directory in [
+      RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.postDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.derivedDirectoryURL(for: projectRoot),
+    ] {
+      try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    var manifest = RecordingProjectManifest.create(
+      projectId: "rec_gif_cap", displayName: "Clingfy Test", includeCamera: false)
+    manifest.updateStatus(.ready)
+    try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+
+    let url = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64,
+      ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64,
+      ])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+    for frame in [0, seconds * 30] {
+      var buffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+      guard let buffer else { continue }
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
+    }
+    input.markAsFinished()
+    let written = expectation(description: "screen.mov written")
+    writer.finishWriting { written.fulfill() }
+    wait(for: [written], timeout: 30)
+    return try RecordingProjectRef.open(projectPath: projectRoot.path)
+  }
+
+  /// Runs an export whose folder does not exist, so anything that passes the
+  /// GIF cap stops at the destination check instead of rendering.
+  private func exportError(
+    _ project: RecordingProjectRef, format: String, clips: [ClipKeptRange] = []
+  ) -> FlutterError? {
+    var input = makeAnyInput(
+      projectPath: project.rootURL.path, format: format,
+      directoryOverride: "/tmp/clingfy-missing-\(UUID().uuidString)")
+    input.clips = clips
+    var error: FlutterError?
+    let done = expectation(description: "export answered")
+    ExportEngine().export(input: input, dependencies: makeDeps { _ in project }) { reply in
+      error = reply as? FlutterError
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 10)
+    return error
+  }
+
+  /// A GIF past the cap is refused before anything is resolved or rendered,
+  /// with the lengths Flutter needs for its message.
+  func testAGifOverTheLengthCapIsRefusedBeforeRendering() throws {
+    let error = exportError(try makeProject(seconds: 61), format: "gif")
+    XCTAssertEqual(error?.code, NativeErrorCode.exportGifTooLong)
+    let details = try XCTUnwrap(error?.details as? [String: Any])
+    XCTAssertEqual(details["maxDurationMs"] as? Int, 60_000)
+    XCTAssertGreaterThanOrEqual(details["durationMs"] as? Int ?? 0, 61_000)
+  }
+
+  /// The cap is on the EXPORTED length: a long recording cut under it exports.
+  func testALongRecordingTrimmedUnderTheCapIsNotRefused() throws {
+    let error = exportError(
+      try makeProject(seconds: 61), format: "gif",
+      clips: [ClipKeptRange(sourceInMs: 0, sourceOutMs: 20_000)])
+    XCTAssertEqual(error?.code, NativeErrorCode.exportError, "stopped by the missing folder instead")
+  }
+
+  /// Only GIFs are capped.
+  func testAVideoExportOverTheGifCapIsNotRefused() throws {
+    let error = exportError(try makeProject(seconds: 61), format: "mov")
+    XCTAssertEqual(error?.code, NativeErrorCode.exportError)
   }
 
   // MARK: - cancel() passthrough

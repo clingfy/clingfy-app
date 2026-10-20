@@ -203,6 +203,16 @@ class AppLocalizationsEn extends AppLocalizations {
       'GIFs export at 15 fps. Larger sizes look sharper but make bigger files.';
 
   @override
+  String gifTooLongForExport(int maxSeconds, String duration) {
+    return 'GIFs can be at most $maxSeconds seconds long. This export is $duration. Cut it shorter, or export it as .mp4 or .mov.';
+  }
+
+  @override
+  String errExportGifTooLong(int maxSeconds) {
+    return 'GIFs can be at most $maxSeconds seconds long. Cut the recording shorter, or export it as .mp4 or .mov.';
+  }
+
+  @override
   String get original => 'Original';
 
   @override

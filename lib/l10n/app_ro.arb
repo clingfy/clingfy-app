@@ -63,6 +63,8 @@
   "gifSizeMedium": "Medie (720px)",
   "gifSizeLarge": "Mare (1080px)",
   "gifSizeCaption": "GIF-urile se exportă la 15 fps. Dimensiunile mai mari arată mai clar, dar produc fișiere mai mari.",
+  "gifTooLongForExport": "GIF-urile pot avea cel mult {maxSeconds} de secunde. Acest export are {duration}. Scurtează-l sau exportă-l ca .mp4 ori .mov.",
+  "errExportGifTooLong": "GIF-urile pot avea cel mult {maxSeconds} de secunde. Scurtează înregistrarea sau exportă-o ca .mp4 ori .mov.",
   "original": "Original",
   "fhd1080": "1080p",
   "uhd2k": "2K (1440P)",

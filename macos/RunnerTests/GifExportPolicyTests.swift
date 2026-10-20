@@ -305,4 +305,35 @@ final class GifExportPolicyTests: XCTestCase {
     XCTAssertLessThan(rendered.width, canvas.width)
     XCTAssertEqual(rendered, CGSize(width: 480, height: 270))
   }
+
+  // MARK: - Length cap
+
+  func testTheCapIsSixtySecondsOfExportedTime() {
+    XCTAssertEqual(GifExportPolicy.maxExportedDurationMs, 60_000)
+  }
+
+  func testNoClipsMeansTheWholeRecording() {
+    XCTAssertEqual(GifExportPolicy.exportedDurationMs(clips: [], assetDurationMs: 90_000), 90_000)
+  }
+
+  func testClipsSumTheirKeptTimeInAnyOrder() {
+    let a = ClipKeptRange(sourceInMs: 0, sourceOutMs: 10_000)
+    let b = ClipKeptRange(sourceInMs: 30_000, sourceOutMs: 45_000)
+    XCTAssertEqual(GifExportPolicy.exportedDurationMs(clips: [a, b], assetDurationMs: 90_000), 25_000)
+    XCTAssertEqual(GifExportPolicy.exportedDurationMs(clips: [b, a], assetDurationMs: 90_000), 25_000)
+  }
+
+  /// A stale range past the end of the recording counts only what exists.
+  func testARangePastTheRecordingIsClamped() {
+    let range = ClipKeptRange(sourceInMs: 50_000, sourceOutMs: 200_000)
+    XCTAssertEqual(GifExportPolicy.exportedDurationMs(clips: [range], assetDurationMs: 70_000), 20_000)
+  }
+
+  /// Exactly the cap exports, and the backstop's slack means it never refuses
+  /// what the dialog allowed. Past the slack, it refuses.
+  func testTheBoundaryAndTheSlack() {
+    XCTAssertFalse(GifExportPolicy.exceedsDurationCap(60_000))
+    XCTAssertFalse(GifExportPolicy.exceedsDurationCap(60_000 + GifExportPolicy.durationCapSlackMs))
+    XCTAssertTrue(GifExportPolicy.exceedsDurationCap(60_001 + GifExportPolicy.durationCapSlackMs))
+  }
 }

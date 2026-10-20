@@ -2625,6 +2625,7 @@ class PostProcessingController extends ChangeNotifier {
       initialGifSize: _settings.export.gifSizeType,
       initialAudioQuality: _settings.export.audioQualityType,
       onPickFolder: _settings.workspace.chooseSaveFolderPath,
+      exportDurationMs: _exportedDurationMs(),
     );
 
     if (dialogResult == null || dialogResult.fileName.trim().isEmpty) {
@@ -3088,6 +3089,10 @@ class PostProcessingController extends ChangeNotifier {
     if (e.code == NativeErrorCode.exportDiskFull) {
       return const SpanStatus.resourceExhausted();
     }
+    // Refused by design (a GIF over the length cap), not a failure.
+    if (e.code == NativeErrorCode.exportGifTooLong) {
+      return const SpanStatus.failedPrecondition();
+    }
     if (e.code == NativeErrorCode.exportError &&
         (e.message?.toLowerCase().contains('space') == true ||
             e.message?.toLowerCase().contains('storage') == true ||
@@ -3132,6 +3137,17 @@ class PostProcessingController extends ChangeNotifier {
         normalized.contains('aborted') ||
         normalized.contains('interrupted') ||
         normalized.contains('stopped by user');
+  }
+
+  /// The length of the export, after cuts, for the dialog's GIF cap. The
+  /// clip editor is the edited length; before it exists nothing is cut, so the
+  /// recording's own length is the export's. Null while neither is known.
+  int? _exportedDurationMs() {
+    final editor = _player.clipEditor;
+    final ms = editor == null
+        ? _player.durationMs
+        : exportedGifDurationMs(editor.clips, editor.recordingDurationMs);
+    return ms > 0 ? ms : null;
   }
 
   String _defaultExportFileName(

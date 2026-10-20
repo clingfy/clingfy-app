@@ -68,4 +68,29 @@ void main() {
     expect(cameraPresentation.action?.label, 'Open Settings');
     expect(accessibilityPresentation.action?.label, 'Open Settings');
   });
+
+  testWidgets('maps a GIF refused for its length to the cap message', (
+    tester,
+  ) async {
+    late HomeErrorPresentation presentation;
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Builder(
+          builder: (context) {
+            presentation = HomeErrorMapper.map(
+              context,
+              NativeErrorCode.exportGifTooLong,
+              openSystemSettings: (_) {},
+            );
+            return const SizedBox();
+          },
+        ),
+      ),
+    );
+
+    expect(presentation.message, contains('at most 60 seconds'));
+    expect(presentation.message, isNot(NativeErrorCode.exportGifTooLong));
+  });
 }

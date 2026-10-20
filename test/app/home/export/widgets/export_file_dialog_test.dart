@@ -2,6 +2,7 @@ import 'package:clingfy/app/home/export/widgets/export_file_dialog.dart';
 import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/core/models/app_models.dart';
 import 'package:clingfy/l10n/app_localizations.dart';
+import 'package:clingfy/ui/platform/widgets/app_button.dart';
 import 'package:clingfy/ui/platform/widgets/app_icon_button.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
 import 'package:clingfy/ui/theme/app_theme.dart';
@@ -17,6 +18,7 @@ void main() {
     ExportFormat initialExportFormat = ExportFormat.mov,
     GifSizePreset initialGifSize = GifSizePreset.large,
     AudioQuality initialAudioQuality = AudioQuality.standard,
+    int? exportDurationMs,
   }) {
     return MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -37,11 +39,80 @@ void main() {
             initialGifSize: initialGifSize,
             initialAudioQuality: initialAudioQuality,
             onPickFolder: () async => null,
+            exportDurationMs: exportDurationMs,
           ),
         ),
       ),
     );
   }
+
+  VoidCallback? exportPressed(WidgetTester tester) =>
+      tester.widget<AppButton>(find.byKey(exportButtonKey)).onPressed;
+
+  group('GIF length cap', () {
+    testWidgets('a GIF past the cap is refused, with the reason', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        buildDialog(
+          initialExportFormat: ExportFormat.gif,
+          exportDurationMs: 102000,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(gifTooLongKey), findsOneWidget);
+      expect(find.textContaining('at most 60 seconds'), findsOneWidget);
+      expect(find.textContaining('1:42'), findsOneWidget);
+      expect(exportPressed(tester), isNull, reason: 'Export is disabled');
+
+      // Enter in the name field submits without the button.
+      await tester.tap(find.byType(TextField).first);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(
+        find.byType(ExportFileDialog),
+        findsOneWidget,
+        reason: 'not closed',
+      );
+    });
+
+    testWidgets('exactly the cap exports', (tester) async {
+      await tester.pumpWidget(
+        buildDialog(
+          initialExportFormat: ExportFormat.gif,
+          exportDurationMs: kGifMaxExportDurationMs,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(gifTooLongKey), findsNothing);
+      expect(exportPressed(tester), isNotNull);
+    });
+
+    testWidgets('only GIF is capped', (tester) async {
+      await tester.pumpWidget(
+        buildDialog(
+          initialExportFormat: ExportFormat.mp4,
+          exportDurationMs: 600000,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(gifTooLongKey), findsNothing);
+      expect(exportPressed(tester), isNotNull);
+    });
+
+    testWidgets('an unknown length is left to the exporter', (tester) async {
+      await tester.pumpWidget(
+        buildDialog(initialExportFormat: ExportFormat.gif),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(gifTooLongKey), findsNothing);
+      expect(exportPressed(tester), isNotNull);
+    });
+  });
 
   testWidgets('format dropdown includes mov gif and mp4', (tester) async {
     await tester.pumpWidget(buildDialog());

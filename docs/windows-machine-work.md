@@ -147,3 +147,63 @@ at about 14.3 fps, about 5% slow. `gif_export_policy.h` admits "~14.3 fps".
   and that it looks sharp.
 - [ ] Comments and `docs/features.md` updated, and the `TODOS.md` entry moved
   to *Recently closed*.
+
+---
+
+## W2. GIF length cap: the Windows native backstop
+
+*Written 2026-10-20, when the cap shipped on macOS.*
+
+GIF exports are capped at **60 s of exported duration** (after cuts, trims
+and reordering), with no silent trimming.
+- **Dialog:** the export dialog is shared Dart, so it already refuses a long
+  GIF on Windows. It disables Export and shows the reason
+  (`kGifMaxExportDurationMs`, `export_settings_types.dart`).
+- **macOS backstop:** `ExportEngine.export` refuses before rendering, with
+  `EXPORT_GIF_TOO_LONG` and details `{durationMs, maxDurationMs}`. The
+  arithmetic is in `GifExportPolicy.exportedDurationMs` and
+  `exceedsDurationCap` (`macos/Runner/Capture/Export/GifExportPolicy.swift`).
+  No clips means the whole file. Each range is clamped to the file before
+  summing. The comparison is strictly greater than the cap plus 100 ms of
+  slack, so the backstop never refuses what the dialog allowed.
+- **Windows:** has no backstop. An older Flutter build, or any path that
+  skips the dialog, would still render a GIF of any length.
+
+**Do (touchpoints mapped from origin/develop; search for the symbols):**
+- `windows/runner/Bridge/native_error_codes.h`: add
+  `kExportGifTooLong = "EXPORT_GIF_TOO_LONG"`. The Dart constant already
+  exists, so `native_error_codes_sync_test.dart` keeps passing.
+- `windows/runner/Capture/Export/gif_export_policy.{h,cpp}`: add
+  `kGifMaxExportedDurationMs = 60'000`, a 100 ms slack, and pure
+  `ExportedDurationMs(clips, asset_ms)` and `GifExceedsDurationCap(ms)`,
+  value for value with the Swift.
+- `export_pipeline.cpp`, where the GIF fork knows `duration_hns`, before any
+  encoder or file is created: compute the exported length (clip planner sum,
+  clamped, or `duration_hns / 10000`). Over the cap, fail with a new
+  `gif_too_long` flag on the result (`export_pipeline.h`). Unknown duration
+  with no clips: let it through, matching the dialog's "unknown length is
+  allowed".
+- `export_passthrough.{h,cpp}`: a `kGifTooLong` `PassthroughError` carrying
+  both lengths. Map `render_result.gif_too_long` to it, and keep it out of
+  the device-loss retry.
+- `Bridge/Routers/export_router.cpp` `ReplyForExportOutcome`: reply
+  `EXPORT_GIF_TOO_LONG` with `{durationMs, maxDurationMs}`, the same shape
+  as macOS.
+
+**Tests:**
+- `gif_export_policy_test.cpp`: the constant; empty clips; a sum in any
+  order; clamping; the boundary and the slack. Mirror
+  `GifExportPolicyTests.swift` (testTheBoundaryAndTheSlack and its
+  neighbours).
+- `export_passthrough_test.cpp`: `gif_too_long` maps to `kGifTooLong` and is
+  not retried.
+- `router_stub_shapes_test.cpp`: the reply's code and details.
+- A pipeline case for a source over 60 s: refused before any output file
+  exists.
+
+**Done when:**
+- [ ] A 61 s GIF export on Windows is refused with `EXPORT_GIF_TOO_LONG`.
+- [ ] The app shows "GIFs can be at most 60 seconds long…".
+- [ ] A long recording trimmed under 60 s exports.
+- [ ] MP4 and MOV are unaffected.
+- [ ] Tests pass, and the `TODOS.md` entry is moved to *Recently closed*.

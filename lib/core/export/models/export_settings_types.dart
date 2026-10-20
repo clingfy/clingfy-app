@@ -1,3 +1,5 @@
+import 'package:clingfy/core/timeline/model/edit_track.dart';
+
 enum ExportFormat { mov, mp4, gif }
 
 enum ExportCodec { hevc, h264 }
@@ -178,6 +180,45 @@ extension GifSizePresetWire on GifSizePreset {
         return 1080;
     }
   }
+}
+
+/// The longest GIF an export may produce, in ms of EXPORTED duration: after
+/// cuts, trims and reordering. Past it the dialog refuses GIF and the native
+/// exporter refuses as a backstop, rather than cutting the GIF short. Mirrors
+/// `GifExportPolicy.maxExportedDurationMs`
+/// (`macos/Runner/Capture/Export/GifExportPolicy.swift`); keep the two equal.
+const int kGifMaxExportDurationMs = 60000;
+
+/// Whether an export of [exportedMs] is too long for a GIF. Exactly the cap is
+/// allowed. An unknown length (null or not positive) is let through, and the
+/// native exporter decides from the file itself.
+bool gifExceedsDurationCap(int? exportedMs) =>
+    exportedMs != null && exportedMs > kGifMaxExportDurationMs;
+
+/// The exported length of [clips] over a recording of [recordingMs], the way
+/// the native exporter measures it (`GifExportPolicy.exportedDurationMs`), so
+/// the dialog never refuses what the exporter would export. Disabled clips are
+/// dropped, each range is clamped to the recording, and no clips means the
+/// whole recording. A restored project's last clip can run a little past the
+/// end; that overshoot is not exported, so it is not counted.
+int exportedGifDurationMs(List<Clip> clips, int recordingMs) {
+  final enabled = clips.where((clip) => clip.enabled).toList();
+  if (enabled.isEmpty) return recordingMs < 0 ? 0 : recordingMs;
+  var total = 0;
+  for (final clip in enabled) {
+    final inMs = clip.sourceInMs.clamp(0, recordingMs);
+    final outMs = clip.sourceOutMs.clamp(0, recordingMs);
+    if (outMs > inMs) total += outMs - inMs;
+  }
+  return total;
+}
+
+/// [ms] as m:ss, for the GIF length message.
+String formatGifDuration(int ms) {
+  final totalSeconds = (ms / 1000).ceil();
+  final minutes = totalSeconds ~/ 60;
+  final seconds = totalSeconds % 60;
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }
 
 extension AudioQualityWire on AudioQuality {

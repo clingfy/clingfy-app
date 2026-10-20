@@ -202,6 +202,16 @@ class AppLocalizationsAr extends AppLocalizations {
       'يتم تصدير ملفات GIF بمعدل 15 إطارًا في الثانية. الأحجام الأكبر تبدو أوضح لكنها تُنتج ملفات أكبر.';
 
   @override
+  String gifTooLongForExport(int maxSeconds, String duration) {
+    return 'يمكن أن تصل مدة ملف GIF إلى $maxSeconds ثانية كحد أقصى. مدة هذا التصدير $duration. قصّره، أو صدّره بصيغة ‎.mp4 أو ‎.mov.';
+  }
+
+  @override
+  String errExportGifTooLong(int maxSeconds) {
+    return 'يمكن أن تصل مدة ملف GIF إلى $maxSeconds ثانية كحد أقصى. قصّر التسجيل، أو صدّره بصيغة ‎.mp4 أو ‎.mov.';
+  }
+
+  @override
   String get original => 'أصلي';
 
   @override
