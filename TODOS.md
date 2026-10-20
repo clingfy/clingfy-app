@@ -244,31 +244,14 @@ which are the only recorded numbers for this defect.
 
 ## Export — GIF
 
-### Windows GIF has no size presets, cap or drift-free timing — code
+### Windows GIF has no size presets, cap or drift-free timing — code (Windows machine)
 
 *Checked 2026-10-20.* macOS shipped all three in 1.0.7 (#319, #326):
-long-edge caps of 480 / 720 / 1080 (`GifExportPolicy.swift:53-75`) and a
-`DelayAccumulator` that keeps frame delays drift-free (`GifExportPolicy.swift:154`).
-Windows has none of them:
-- **No cap or presets:** `export_pipeline.cpp:757-758` encodes the full
-  canvas. `export_geometry.cpp:161-168` reads `gifSize` and discards it.
-- **Frame timing:** `gif_encoder.cpp:343-345` rounds each frame delay on its
-  own, so 15 fps plays as about 14.3 fps, about 5% slow.
-- **Picker promises what Windows doesn't do:** the Small/Medium/Large picker
-  (`export_file_dialog.dart:351-376`) is not gated by platform. Its caption,
-  "Larger sizes look sharper but make bigger files", is false on Windows.
-- **Stale comments:** `gif_export_policy.h:3-6` and `export_geometry.h:149-153`
-  still say macOS has no real GIF encoder.
-- **Docs:** `docs/features.md:107` marks Windows GIF done without these gaps.
-
-**To close:**
-- Port the cap and the accumulator value for value, with
-  `gif_export_policy_test.cpp` cases.
-- Make `ResolveExportPixelSize` return the capped size so burned-in captions
-  match the frame.
-- Rewrite `export_geometry_test.cpp:386`
-  (`FormatAndGifSizeNeverChangeTheAnswer`), which pins today's behaviour.
-- Fix both comments and the features row.
+480 / 720 / 1080 long-edge caps, a drift-free `DelayAccumulator`, and the size
+picker. Windows encodes the full canvas whatever the preset, and its GIFs play
+about 5% slow. Its comments also still say macOS has no real GIF encoder.
+**Do this on a Windows machine.** The full brief, with files, tests and the
+done-when list, is **W1 in `docs/windows-machine-work.md`**.
 
 ### No GIF duration limit — decide
 
