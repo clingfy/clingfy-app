@@ -64,6 +64,7 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
   // still read false three seconds after `didPause` was delivered, so a resume
   // guarded on it returned without resuming, and the take could then neither
   // resume nor stop.
+  private var sessionRuntimeErrors: RuntimeErrorRecorder?
   private let stretchLock = NSLock()
   private var pausedByDelegate = false
   private var openStretchStartedAt: Date?
@@ -194,7 +195,40 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
         self.currentDisplayID = displayID
         self.currentCaptureRect = cropRect
 
+        let runtimeErrors = RuntimeErrorRecorder(session: session)
+        // Kept for the take, so a runtime error mid-recording is logged too.
+        self.sessionRuntimeErrors = runtimeErrors
         session.startRunning()
+
+        // Confirm the screen is actually flowing before asking for a file.
+        // When macOS will not supply it, `startRunning()` returns at once
+        // (about 20ms against 1.4s for a healthy start), the connection never
+        // goes active, and the recording start raises "No active/enabled
+        // connections". Seen on macOS 26 after the system's capture services
+        // were killed under memory pressure. Waiting here lets a slow but
+        // healthy start through and turns the rest into a clear error.
+        let videoActive = Self.waitForActiveVideo(movie, session: session)
+        if let refusal = Self.startRefusal(
+          isRunning: session.isRunning, videoConnectionActive: videoActive,
+          screenCaptureAllowed: CGPreflightScreenCaptureAccess())
+        {
+          NativeLogger.e(
+            "AVFBackend", "Screen capture is not running; not starting the recording",
+            context: [
+              "sessionRunning": session.isRunning,
+              "screenCaptureAllowed": CGPreflightScreenCaptureAccess(),
+              "connections": Self.describeConnections(movie),
+              "runtimeError": runtimeErrors.lastError.map { RecordingSegmentMerger.describe($0) } ?? "none",
+              "code": refusal.code,
+            ])
+          session.stopRunning()
+          self.movieOutput = nil
+          self.session = nil
+          self.sessionRuntimeErrors = nil
+          self.finishStartError(code: refusal.code, msg: refusal.message)
+          return
+        }
+
         // Through the bridge: `startRecording(to:)` RAISES when the screen
         // input has no active connection, and Swift cannot catch that, so it
         // aborted the app. Seen forcing this backend on macOS 26: "No
@@ -213,6 +247,7 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
           session.stopRunning()
           self.movieOutput = nil
           self.session = nil
+          self.sessionRuntimeErrors = nil
           self.finishStartError(
             code: "NO_ACTIVE_VIDEO",
             msg: "The screen could not be recorded. Try again, or restart Clingfy if it keeps happening.")
@@ -225,6 +260,66 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
 
   func stop() {
     queue.async { self.movieOutput?.stopRecording() }
+  }
+
+  /// Why a start must not go ahead, or nil when the screen is flowing.
+  ///
+  /// With screen recording turned off, the existing permission error with an
+  /// empty message, as the facade's own preflight sends it: on macOS Dart
+  /// shows the message when there is one, and only an empty one lets it reach
+  /// its localized permission text and the button that opens the setting. Otherwise macOS is not
+  /// supplying the screen for some other reason; Clingfy cannot fix that, and
+  /// a restart of the Mac is what brought it back.
+  static func startRefusal(
+    isRunning: Bool, videoConnectionActive: Bool, screenCaptureAllowed: Bool
+  ) -> (code: String, message: String)? {
+    // Permission first: with it off, the connection still reports active and
+    // the session fails afterwards with a runtime error ('what') and no
+    // frames, so the connection state alone would let the start through.
+    if !screenCaptureAllowed {
+      return (NativeErrorCode.screenRecordingPermission, "")
+    }
+    if isRunning && videoConnectionActive { return nil }
+    return (
+      NativeErrorCode.screenCaptureUnavailable,
+      "macOS is not providing the screen to Clingfy right now. "
+        + "Restart your Mac, then try again."
+    )
+  }
+
+  /// The finish errors seen when the screen supplied no frames: "no data
+  /// captured", and on macOS 26 a generic -11800 wrapping OSStatus -12780.
+  static func isNoFramesError(_ error: NSError) -> Bool {
+    guard error.domain == AVFoundationErrorDomain else { return false }
+    if error.code == AVError.noDataCaptured.rawValue { return true }
+    guard error.code == AVError.unknown.rawValue,
+      let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+    else { return false }
+    return underlying.domain == NSOSStatusErrorDomain && underlying.code == -12780
+  }
+
+  /// Polls until the movie output's video connection is active, or the
+  /// timeout passes. Runs on the capture queue, which has nothing else to do
+  /// while a start is pending.
+  static func waitForActiveVideo(
+    _ movie: AVCaptureMovieFileOutput, session: AVCaptureSession,
+    timeout: TimeInterval = 1.5
+  ) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while true {
+      if session.isRunning, movie.connection(with: .video)?.isActive == true { return true }
+      if Date() >= deadline { return false }
+      Thread.sleep(forTimeInterval: 0.05)
+    }
+  }
+
+  static func describeConnections(_ output: AVCaptureOutput) -> String {
+    let connections = output.connections
+    if connections.isEmpty { return "none" }
+    return connections.map { connection in
+      let types = connection.inputPorts.map { $0.mediaType.rawValue }.joined(separator: "+")
+      return "\(types) enabled=\(connection.isEnabled) active=\(connection.isActive)"
+    }.joined(separator: "; ")
   }
 
   // Already in the asked-for state, these report it again rather than return
@@ -408,6 +503,24 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     // exists to remove -- and that closure captures self weakly, so a released
     // pipeline would skip it entirely.
     let finishedAt = Date()
+    queue.async { self.sessionRuntimeErrors = nil }
+    if let error {
+      // The facade only sees "The operation could not be completed". The
+      // domain, code and underlying error are what tell a refused screen
+      // (no frames ever arrived) from a full disk or a lost display.
+      let ns = error as NSError
+      NativeLogger.e(
+        "AVFBackend", "Screen recording finished with an error",
+        context: [
+          "error": RecordingSegmentMerger.describe(error),
+          "underlying": (ns.userInfo[NSUnderlyingErrorKey] as? Error).map {
+            RecordingSegmentMerger.describe($0)
+          } ?? "none",
+          "finishedSuccessfully": (ns.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool)
+            ?? false,
+          "screenCaptureAllowed": CGPreflightScreenCaptureAccess(),
+        ])
+    }
     recordingKeepAwake.release()
     microphoneLevelOutput?.setSampleBufferDelegate(nil, queue: nil)
     microphoneLevelOutput = nil
@@ -417,12 +530,39 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
 
     let cursorURL = RecordingProjectPaths.resolvedCursorDataURL(forScreenVideoURL: url)
 
+    let reportedError = Self.reportedFinishError(
+      error,
+      fileHasVideo: !AVURLAsset(url: url).tracks(withMediaType: .video).isEmpty,
+      screenCaptureAllowed: CGPreflightScreenCaptureAccess())
+
     cursorRecorder.stop(outputURL: cursorURL) { [weak self] in
       guard let self = self else { return }
       DispatchQueue.main.async {
-        self.onFinished?(url, error)
+        self.onFinished?(url, reportedError)
       }
     }
+  }
+
+  /// The error to report for a finished file.
+  ///
+  /// A recording that failed with no video written, in the shapes that mean
+  /// no frames ever arrived, means macOS never supplied the screen. Reported
+  /// raw, that reached the user as "The operation could not be completed",
+  /// which was all a live take on macOS 26 ever said. Anything else passes
+  /// through: a full disk or a lost display must keep its own error.
+  static func reportedFinishError(
+    _ error: Error?, fileHasVideo: Bool, screenCaptureAllowed: Bool
+  ) -> Error? {
+    guard let error else { return nil }
+    let ns = error as NSError
+    if (ns.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? Bool) == true { return error }
+    if fileHasVideo || !isNoFramesError(ns) { return error }
+    if let refusal = startRefusal(
+      isRunning: false, videoConnectionActive: false, screenCaptureAllowed: screenCaptureAllowed)
+    {
+      return flutterError(refusal.code, refusal.message)
+    }
+    return error
   }
   /// Turns the stretches between pauses into screen segments, all naming the
   /// one file, so the camera can be synced to each.
@@ -567,4 +707,37 @@ final class CapturePipeline: NSObject, AVCaptureFileOutputRecordingDelegate,
     min(max(value, 0.1), 8.0)
   }
 
+}
+
+/// Keeps the last `AVCaptureSessionRuntimeError` a session posted, so a start
+/// that fails can say what AVFoundation reported. Nothing logged it before,
+/// which left the macOS 26 refusals with no cause on record.
+private final class RuntimeErrorRecorder {
+  private let lock = NSLock()
+  private var error: Error?
+  private var observer: NSObjectProtocol?
+
+  init(session: AVCaptureSession) {
+    observer = NotificationCenter.default.addObserver(
+      forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
+    ) { [weak self] note in
+      let error = note.userInfo?[AVCaptureSessionErrorKey] as? Error
+      NativeLogger.e(
+        "AVFBackend", "Capture session runtime error",
+        context: ["error": error.map { RecordingSegmentMerger.describe($0) } ?? "unknown"])
+      self?.lock.lock()
+      self?.error = error
+      self?.lock.unlock()
+    }
+  }
+
+  var lastError: Error? {
+    lock.lock()
+    defer { lock.unlock() }
+    return error
+  }
+
+  deinit {
+    if let observer { NotificationCenter.default.removeObserver(observer) }
+  }
 }

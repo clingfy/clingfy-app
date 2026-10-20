@@ -37,6 +37,10 @@ abstract class NativeErrorCode {
 
   // Permission errors
   static const String screenRecordingPermission = 'SCREEN_RECORDING_PERMISSION';
+
+  /// macOS only: screen recording is allowed but macOS is not supplying the
+  /// screen. Keep in sync with Swift `NativeErrorCode.screenCaptureUnavailable`.
+  static const String screenCaptureUnavailable = 'SCREEN_CAPTURE_UNAVAILABLE';
   static const String microphonePermissionRequired =
       'MICROPHONE_PERMISSION_REQUIRED';
   static const String accessibilityPermissionRequired =

@@ -449,15 +449,38 @@ capture through this backend then stopped starting on that Mac (next item).
 camera on. Check that it finalizes, that `screen.meta.json` has one segment per
 stretch, and that the camera bubble lines up in both parts.
 
-### AVFoundation screen capture is refused on macOS 26 — verify
+### AVFoundation screen capture fails on this macOS 26 Mac — verify
 
-*Found 2026-10-19,* forcing the backend on macOS 26.1. A few takes recorded,
-then every start was refused with "No active/enabled connections", across
-relaunches. It used to crash the app; it now fails the start with a message.
-It matters only on macOS 15+ when ScreenCaptureKit fails to start and this
-backend is the fallback. **To close:** find out whether macOS 15+ still
-supports `AVCaptureScreenInput` reliably. If not, report the
-ScreenCaptureKit failure instead of falling back.
+*Found 2026-10-19, narrowed 2026-10-20.* Forcing this backend on macOS 26.1
+recorded a few takes. Then every start failed:
+- **2026-10-19:** "No active/enabled connections". That crashed the app until
+  #609.
+- **2026-10-20:** a start that runs, then fails about 2s later with
+  `AVFoundationErrorDomain -11800` wrapping OSStatus `-12780`, with no video
+  written. Screen recording is allowed (`CGPreflightScreenCaptureAccess` is
+  true).
+
+The failures began right after the memory and disk exhaustion of
+2026-10-19. During it macOS killed `tccd` and killed `replayd` 33 times, and
+the Mac has not been rebooted since 2026-09-30, so the cause is most likely
+damaged system capture state, not code. That is unproven.
+
+Measured in a host without the permission: the connection still reports
+active, and the session then fails with a runtime error `'what'` and no
+frames.
+
+Since 2026-10-20 the backend:
+- checks permission and a live connection before recording;
+- logs the session runtime error and the finish error in full;
+- reports "macOS is not providing the screen… Restart your Mac" in place of
+  "The operation could not be completed".
+
+This matters on macOS 15+ only when ScreenCaptureKit fails to start with an
+invalid-parameter error and this backend is the fallback.
+
+**To close:** reboot this Mac, force the backend once (`CaptureBackendFactory`,
+`if false, #available(macOS 15.0, *)`), and record. If it records, it was
+system state. If not, the new logs say why.
 
 ### Other mid-recording overlay rebuilds may still stop the camera — verify
 
