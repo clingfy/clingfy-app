@@ -982,6 +982,127 @@ cannot do it. Fold it into the camera on-device QA pass.
 - **Start at:** `windows/runner/Encoding/mf_sink_writer_encoder.cpp:220-232`, the sibling MF writer, and `windows/runner/Encoding/mf_encoder_config.h:45-57`.
 - **Effort:** human ~1h / CC ~15min once reachable.
 
+## Feature backlog (not started, partial or parked)
+
+*Swept 2026-10-20* from the roadmap and plan docs, the decision and Windows
+docs, the code (reserved modes, no-op handlers, hidden UI) and the history,
+then checked against the code: each item below is genuinely not done.
+Translation and Windows transcription are tracked under *Editor — captions*.
+Tags:
+- **code:** buildable as specified.
+- **idea:** needs a product decision first.
+- **parked:** deliberately deferred, and why.
+- **(Windows machine):** build and test it on Windows. Ask a Windows session
+  for a brief in `docs/windows-machine-work.md` when one is picked up.
+
+### Captions and on-device models
+
+- **LocalModelManager as a real subsystem** — code, macOS + Windows, partial. Only per-variant reporting shipped. Still missing: per-variant delete (delete() removes every model), on-demand download with progress outside a transcription job, hash checks, versioning, offline state and per-model licence notes. DeepFilterNet, M2M-100 and Windows whisper.cpp all depend on it. *Source:* docs/editing-platform-plan.md:324-334; macos/Runner/Services/CaptionModelStore.swift:212; lib/core/bridges/native_bridge.dart:1141
+
+- **Hardware-aware 'Auto' speech-model choice** — code, macOS, not started. The plan's default 'Auto' Whisper model, picked by hardware, was never built. The variant is a manual persisted preference with no safe value to reset to. *Source:* docs/editing-platform-plan.md:495-497 (§A.7.1)
+
+
+### Audio
+
+- **High Quality voice cleanup (DeepFilterNet)** — code, macOS + Windows, not started. The UI offers only Off / Light / Balanced. The highQuality wire value parses but runs RNNoise because DeepFilterNet has not been vendored. Blocked on LocalModelManager. *Source:* macos/Runner/Capture/Audio/AudioEnhancementPipeline.swift:12-43; windows/runner/Capture/Export/mic_cleanup.h:12; docs/editing-platform-plan.md:675-679
+
+- **Per-source audio: system-audio gain and per-source normalize (Phase 1b)** — code, macOS + Windows, not started. Phase 1a shipped in #588, but gain and normalize still apply only to the mic, and system audio is fixed at unity on both platforms. Needs micGainDb/systemGainDb on the bridge, system gain baked in at export, and two Windows tests rewritten. *Source:* docs/editing-platform-plan.md:531-608; macos/Runner/Capture/Export/LetterboxExporter.swift:4073-4120; windows/runner/Capture/Export/export_audio.h:104-112
+
+- **Audio limiter (AudioTrack.limiter is unimplemented)** — code, macOS + Windows, not started. AudioTrack.limiter (default true) is saved and loaded, but no native code reads it. The only ceilings in the audio chain are hard clips. *Source:* lib/core/timeline/model/edit_track.dart:626-642; docs/editing-platform-plan.md:602-603
+
+- **True LUFS loudness normalize, and normalize audible in the preview** — code, macOS + Windows, not started. Normalize matches sample peak despite the targetLoudnessDbfs name, and it runs only at export. The preview hardcodes autoNormalizeOnExport: false, so you cannot hear it in the editor. *Source:* macos/Runner/Preview/InlinePreviewView.swift:729; docs/editing-platform-plan.md:597-602
+
+- **Echo canceller redesign (pause detection that does not depend on level)** — parked, macOS, deferred. v6 failed acceptance (11x bursts during double-talk), so echo removal shipped as an experimental opt-in toggle, off by default. The redesign waits until users ask for it. *Source:* PR #266; lib/core/recording/settings/recording_settings_controller.dart:64; lib/l10n/app_en.arb:744
+
+- **Stop embedding muxed audio in screen.mov (preview/export audio parity, #217)** — parked, macOS, parked. The preview applies a gain tap to the muxed audio in screen.mov, while export mixes the separated mic and system sources. Removing the embed has to ship together with a preview fix, and the issue needs rewriting first. *Source:* GitHub issue #217; docs/editing-platform-plan.md:610-625, :859-863
+
+
+### Editor
+
+- **One undo history across editing domains** — parked, macOS + Windows, parked. There are four separate EditSessions, so undoing a colour change cannot undo a clip split. Deliberately parked until a user complains. *Source:* docs/editing-platform-plan.md:31-36, :873-876, :912-914
+
+- **Editable zoom lane lines up with the ruler under cuts and reorders** — code, macOS, partial. Only the display-only lane maps segments onto the edited timeline. The editable lane shows raw source-time segments, so on a cut or reordered project the pills do not line up with the ruler. *Source:* lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart:436-447; lib/core/zoom/zoom_editor_controller.dart:313-335
+
+
+### Recording
+
+- **Follow-mouse recording across displays** — code, macOS + Windows, not started. DisplayTargetMode.followMouse and its strings exist, but the UI never offers it. macOS resolves it the same as mouse-at-start, followMouseMonitor is never used, and Windows rejects it. *Source:* lib/core/models/app_models.dart:739; macos/Runner/Capture/Targeting/CaptureTargetResolver.swift:55; macos/Runner/Capture/ScreenRecorderFacade.swift:212; lib/l10n/app_en.arb:15-16
+
+- **User-configurable recording filename template** — code, macOS + Windows, not started. Dart always sends the hardcoded '{appname}_{date}_{time}' and no UI lets the user change it, although features.md lists a template as shipped on macOS. The Windows setter is a no-op. *Source:* lib/app/home/home_actions.dart:76; windows/runner/Bridge/Routers/recording_router.cpp:426; docs/features.md:122
+
+
+### Export
+
+- **Higher default bitrate when effects force a re-encode of screen content** — idea, macOS + Windows, not started. Plan rule: text-, UI- and code-heavy screen video that has to be re-encoded should default one bitrate step above camera footage. Nothing implements it. *Source:* docs/editing-platform-plan.md:845-848
+
+- **Chroma key plus camera shadow: suppress or mask the shadow** — idea, macOS + Windows, not started (decide). With chroma key and a shadow preset both on, the baked shadow shows through the keyed area as an 18-32% tint. Suppressing or masking it is an open product call. *Source:* docs/windows-port.md:504-507; docs/windows-beta-tester-guide.md:136-138
+
+
+### Engine and tech debt
+
+- **Metal/CIImage replacement for AVVideoCompositionCoreAnimationTool** — parked, macOS, parked. A future spike. The ~100-CALayer ceiling has never been hit, so nothing is blocked on it. *Source:* docs/editing-platform-plan.md:852-855
+
+- **Finish the ScreenRecorderFacade strangler (coordinators into RecordingEngine)** — code, macOS, not planned. The facade is still a ~3,000-line orchestrator. Moving the camera, overlay, cursor and indicator coordinators into RecordingEngine was judged a large slice with little payoff. *Source:* docs/windows-port-inventory.md:485-503
+
+
+### Longer horizon
+
+- **AI-assisted recording workflows** — idea, both, not started. A roadmap entry with no design or code behind it. *Source:* docs/features.md:138-145
+
+- **Collaborative recording tools** — idea, both, not started. A roadmap entry with no design or code behind it. *Source:* docs/features.md:138-145
+
+
+### Windows parity (Windows machine)
+
+- **Windows 'Screen under mouse' target (offered but refused)** — code, not started. The shared picker offers 'Screen under mouse' on Windows, but RecordingEngine::Start refuses mouseAtStart with kBadMode ('mouse-follow modes land in a later slice'). Either build it or hide the option on Windows. *Source:* windows/runner/Capture/recording_engine.cpp:277-291; lib/app/home/recording/widgets/recording_source_section.dart:129-132
+
+- **Windows capture quality and frame-rate control** — code, not started. setRecordingQuality and setCaptureFrameRate are no-ops, so the Quality and frame-rate group is hidden on Windows. Windows always records at the display's resolution and frame rate. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:425, :430; lib/app/home/recording/widgets/recording_output_section.dart:46-49
+
+- **Windows 'Exclude Clingfy from capture'** — code, not started. setExcludeRecorderApp is a no-op and the toggle is hidden. The obvious WDA approach risks the hybrid-GPU blank-window failure. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:219-223, :427; lib/app/home/recording/widgets/recording_options_sidebar.dart:531-534
+
+- **Windows live cursor highlight while recording** — code, not started. setCursorHighlightEnabled and setCursorHighlightLinkedToRecording are no-ops, so there is no live cursor halo on Windows and the Pointer control is hidden. *Source:* windows/runner/Bridge/Routers/camera_overlay_router.cpp:304-305; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
+
+- **Windows fixed-target zoom (draggable focus point)** — code, partial. Manual zoom segments shipped (#471), but previewGetZoomCapabilities reports fixedTargetPreview, fixedTargetExport and cursorSamples as false, so the macOS draggable focus UI is not offered. *Source:* windows/runner/Bridge/Routers/preview_router.cpp:38-54; docs/features.md:75
+
+- **Windows area selection remembered across restarts** — parked, deferred. The crop region lives only in process memory, so Dart clears the saved area at launch and the user has to pick it again. macOS saves it natively. *Source:* lib/app/home/overlay/overlay_controller.dart:260-266; windows/runner/Capture/windows_selection_state.cpp:40; docs/windows-port.md:728-732
+
+- **Windows 'Reveal area' overlay** — code, not started. revealAreaRecordingRegion is a no-op, so the Reveal Area button is hidden on Windows. *Source:* windows/runner/Bridge/Routers/devices_router.cpp:395-397; lib/app/home/recording/widgets/recording_source_section.dart:285-287
+
+- **Windows window capture follows resizes and covers whole apps** — parked, deferred. The encoder stays at the window's starting size, so a window that grows is cropped. 'App (all windows)' captures a single HWND. *Source:* windows/runner/Capture/wgc_display_capture_backend.cpp:234-236, :523; docs/windows-port.md:719-722
+
+- **Windows recording across sleep, lid-close and Win+L** — code, partial. KeepAwake blocks idle sleep and resume only rebuilds the preview. Session changes (lid-close, Win+L) mid-recording are a documented beta limitation, and no WTS or power notifications are handled; a watchdog is planned for after the beta. *Source:* windows/runner/flutter_window.cpp:213-226; docs/decisions/windows-phase-10-beta-readiness-plan.md:355-357
+
+- **Windows crash salvage of the video (fragmented MP4)** — parked, deferred. The MF sink writer writes non-fragmented MP4, so a hard crash leaves an unplayable file and Windows only cleans up and shows a notice. Salvage would need MFTranscodeContainerType_FMPEG4, which is untested with hardware encoders and the preview. Decide using crash telemetry. *Source:* windows/runner/Services/recovery_sweep.h:23-25; docs/windows-port.md:174-191
+
+- **Windows export destination pre-flight** — code, not started. macOS probe-writes the destination before rendering. Windows renders the whole export and fails only at the Sink Writer when a drive or share is gone. The check belongs before D3DDevice::Create. *Source:* windows/runner/Capture/Export/export_pipeline.cpp:363-384; docs/windows-port.md:202-232
+
+- **Windows export audio tiers above 192 kbps** — code, partial. macOS offers 192/256/320 kbps AAC. Windows clamps every tier to 192 because no one has measured which bitrates the MF AAC encoder accepts; after that, raising the cap in ResolveAudioBitrateBps is one line. *Source:* windows/runner/Capture/Export/export_format.cpp:51-62; docs/editing-platform-plan.md:417-424
+
+- **Windows colour-grade parity with Core Image** — code, not started. At strong grades the D2D colour matrix chain differs from Core Image by up to 2.77 (tolerance 0.002). ColorGradeGoldenTest is excluded from CI until it is fixed. The fixtures are committed; the fix needs a Windows machine. *Source:* .github/workflows/ci.yml:703-714; windows/runner/Graphics/color_grade_effect.cpp; docs/editing-platform-plan.md:864-869
+
+- **Windows hover frame-peek on the ruler (previewPeekTo)** — code, not started. Dart calls previewPeekTo when the ruler is hovered, but Windows registers it as a no-op, so hovering never shows the frame. The native comment saying Dart never calls it is stale. *Source:* windows/runner/Bridge/Routers/preview_router.cpp:990-998; lib/app/home/preview/widgets/video_timeline.dart:47
+
+- **Windows uncut preview: mic gain and voice cleanup audible before the first cut** — code, partial. An uncut project plays through MediaPlayer, which can only attenuate, so gain and cleanup are heard only once a cut or trim switches to the edited audio path. gain_processor exists but has no host on the passthrough path. *Source:* lib/app/home/post_processing/widgets/post_audio_section.dart:145-156; docs/decisions/windows-editing-step4-7-preview-audio.md:135-160
+
+- **Windows preview speaker-echo removal** — code, not started. Windows applies the mic echo canceller only at export, while the macOS preview plays the echo-cancelled mic. With echo removal on, the Windows preview does not match its export. *Source:* windows/runner/preview/preview_engine.h; windows/runner/Bridge/Routers/export_router.cpp:563; macos/Runner/Preview/InlinePreviewView.swift:1117
+
+- **Windows camera layouts: side-by-side, stacked, background** — code, not started. Only the four corner layouts work. Side-by-side, stacked and full-canvas background fall back to a bottom-right bubble, while the shared UI still offers them. *Source:* windows/runner/Capture/Camera/camera_export_layout.cpp:14-35; docs/decisions/windows-phase-9-camera-overlay-architecture.md:279-280
+
+- **Windows true squircle (superellipse) camera mask** — parked, deferred. 'Squircle' is drawn as a rounded rect with a minimum 0.3 corner fraction (the code says 'true superellipse deferred'). macOS draws a real squircle path. *Source:* windows/runner/Capture/Camera/camera_bubble_painter.cpp:78-79, :101-115
+
+- **Windows in-app live camera bubble: chroma key** — code, not started. The floating DComp bubble, the inline preview and the export apply chroma key, but the in-app Flutter bubble does not, because it needs a shader. *Source:* lib/app/home/widgets/camera_overlay_bubble.dart:193-195; docs/decisions/windows-camera-bubble-renderer-architecture.md:246-248
+
+- **Experimental burned-in desktop camera bubble mode** — idea, parked. A mode that burns the live bubble into screen.mov, with previewBurnedIn honoured by the compositors, was considered and shelved. The double-composite guard makes it safe to add later. *Source:* docs/windows-port.md:501-503
+
+- **Windows mic-out-of-loopback cancellation ('Listen to this device')** — idea, not started. With 'Listen to this device' on, the mic plays to the render endpoint and leaks into the system-audio loopback. Removing it would need the reverse of the export-time speaker-bleed canceller. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:225-237
+
+- **Windows hardware-accelerated preview decode (GPU end to end)** — code, not started. The preview reader uses CPU advanced video processing. Pairing it with the D3D manager measured about 1 fps because of GPU-to-CPU readback, so keeping frames on the GPU needs the compositor's upload seam redesigned. *Source:* GitHub issue #296; windows/runner/preview/preview_source_reader.cpp:95-106
+
+- **Windows automatic updates (WinSparkle, in-app download, release notes)** — parked, deferred. Only a manual 'Check for Updates' exists; it opens the installer URL in the browser. There are no background checks, no in-app download or SHA check, and no release notes, and WinSparkle is not integrated (planned for the public beta). *Source:* windows/runner/Updater/; lib/app/settings/sections/about_settings_section.dart:72; docs/windows-port.md:357-362
+
+- **Windows code signing and public beta release gates** — parked, deferred. The private beta ships unsigned (SmartScreen warning) and the Inno Setup licence has not been checked. Invites wait on NVIDIA/AMD stress results, a mixed-DPI dual-monitor pass, and a clean-machine licensing smoke test that is blocked on beta keys. *Source:* docs/windows-beta-release-checklist.md:90-95, :102-104, :122-157; docs/features.md:135-136
+
+
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
