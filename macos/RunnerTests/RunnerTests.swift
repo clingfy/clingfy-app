@@ -8986,6 +8986,79 @@ final class AVFoundationCapturePipelineCallbackTests: XCTestCase {
       CapturePipeline.toggleAction(wantPaused: false, isRecording: false, isPaused: true), .ignore)
   }
 
+  /// A start that macOS will not supply a screen to must stop before asking
+  /// for a file, with the reason the user can act on. It used to reach the
+  /// recording start, which raised "No active/enabled connections".
+  func testAStartWithNoScreenFlowingIsRefusedWithItsReason() {
+    XCTAssertNil(
+      CapturePipeline.startRefusal(
+        isRunning: true, videoConnectionActive: true, screenCaptureAllowed: true))
+    let denied = CapturePipeline.startRefusal(
+      isRunning: true, videoConnectionActive: false, screenCaptureAllowed: false)
+    XCTAssertEqual(
+      denied?.code, NativeErrorCode.screenRecordingPermission, "permission off: the permission error")
+    XCTAssertEqual(
+      denied?.message, "", "empty, so Dart shows its localized text and Open Settings")
+    // Measured in a host without the permission: the connection reported
+    // active and the session then failed with no frames.
+    XCTAssertEqual(
+      CapturePipeline.startRefusal(
+        isRunning: true, videoConnectionActive: true, screenCaptureAllowed: false)?.code,
+      NativeErrorCode.screenRecordingPermission, "even when the connection looks live")
+    XCTAssertEqual(
+      CapturePipeline.startRefusal(
+        isRunning: false, videoConnectionActive: false, screenCaptureAllowed: true)?.code,
+      NativeErrorCode.screenCaptureUnavailable)
+    XCTAssertEqual(
+      CapturePipeline.startRefusal(
+        isRunning: true, videoConnectionActive: false, screenCaptureAllowed: true)?.code,
+      NativeErrorCode.screenCaptureUnavailable, "running but no frames: same")
+  }
+
+  /// A recording that failed before any video was written says why, instead
+  /// of "The operation could not be completed".
+  func testAFailedRecordingWithNoVideoIsReportedAsTheScreenNotFlowing() {
+    let raw = NSError(
+      domain: AVFoundationErrorDomain, code: -11800,
+      userInfo: [NSUnderlyingErrorKey: NSError(domain: NSOSStatusErrorDomain, code: -12780)])
+    let noVideo = CapturePipeline.reportedFinishError(
+      raw, fileHasVideo: false, screenCaptureAllowed: true) as? FlutterError
+    XCTAssertEqual(noVideo?.code, NativeErrorCode.screenCaptureUnavailable)
+    let denied = CapturePipeline.reportedFinishError(
+      raw, fileHasVideo: false, screenCaptureAllowed: false) as? FlutterError
+    XCTAssertEqual(denied?.code, NativeErrorCode.screenRecordingPermission)
+
+    XCTAssertTrue(
+      (CapturePipeline.reportedFinishError(raw, fileHasVideo: true, screenCaptureAllowed: true)
+        as NSError?) === raw, "a file with video keeps its own error")
+    let diskFull = NSError(domain: AVFoundationErrorDomain, code: AVError.diskFull.rawValue)
+    XCTAssertTrue(
+      (CapturePipeline.reportedFinishError(diskFull, fileHasVideo: false, screenCaptureAllowed: true)
+        as NSError?) === diskFull, "a full disk is not 'restart your Mac'")
+    let noData = NSError(domain: AVFoundationErrorDomain, code: AVError.noDataCaptured.rawValue)
+    XCTAssertEqual(
+      (CapturePipeline.reportedFinishError(noData, fileHasVideo: false, screenCaptureAllowed: true)
+        as? FlutterError)?.code, NativeErrorCode.screenCaptureUnavailable)
+    let stopped = NSError(
+      domain: AVFoundationErrorDomain, code: -11818,
+      userInfo: [AVErrorRecordingSuccessfullyFinishedKey: true])
+    XCTAssertTrue(
+      (CapturePipeline.reportedFinishError(stopped, fileHasVideo: false, screenCaptureAllowed: true)
+        as NSError?) === stopped, "a successful finish is not a failure")
+    XCTAssertNil(
+      CapturePipeline.reportedFinishError(nil, fileHasVideo: false, screenCaptureAllowed: true))
+  }
+
+  /// A session that never runs is waited on only for the timeout.
+  func testWaitingForVideoGivesUpAfterTheTimeout() {
+    let session = AVCaptureSession()
+    let movie = AVCaptureMovieFileOutput()
+    let started = Date()
+    XCTAssertFalse(CapturePipeline.waitForActiveVideo(movie, session: session, timeout: 0.2))
+    XCTAssertLessThan(Date().timeIntervalSince(started), 1.0)
+    XCTAssertEqual(CapturePipeline.describeConnections(movie), "none")
+  }
+
   /// The pause state comes from the delegate, not `isRecordingPaused`, which
   /// on a live take still read false seconds after the pause was confirmed.
   func testThePipelineIsPausedOnceThePauseIsConfirmed() {

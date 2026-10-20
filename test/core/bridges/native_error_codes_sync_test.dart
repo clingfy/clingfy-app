@@ -91,4 +91,22 @@ void main() {
     expect(nativeCodes.containsAll(phase104Codes), isTrue);
     expect(dartCodes.containsAll(phase104Codes), isTrue);
   });
+
+  test('every code in the Swift NativeErrorCode exists in NativeErrorCode', () {
+    // The macOS half of the contract. Swift declares codes as
+    // `static let name = "CODE"`; a code added there without the Dart
+    // constant still reaches Dart, but nothing can match on it.
+    final swiftCodes = extractCodes('macos/Runner/Core/NativeErrorCode.swift');
+    final dartCodes = extractCodes('lib/core/bridges/native_error_codes.dart');
+
+    expect(swiftCodes, contains('SCREEN_CAPTURE_UNAVAILABLE'));
+    final missing = swiftCodes.difference(dartCodes);
+    expect(
+      missing,
+      isEmpty,
+      reason:
+          'Codes declared in macos/Runner/Core/NativeErrorCode.swift but '
+          'missing from lib/core/bridges/native_error_codes.dart: $missing.',
+    );
+  });
 }

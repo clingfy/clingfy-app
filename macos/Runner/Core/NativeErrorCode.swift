@@ -30,6 +30,8 @@ enum NativeErrorCode {
 
   // Permission errors
   static let screenRecordingPermission = "SCREEN_RECORDING_PERMISSION"
+  /// macOS granted screen recording but is not supplying the screen (macOS only).
+  static let screenCaptureUnavailable = "SCREEN_CAPTURE_UNAVAILABLE"
   static let microphonePermissionRequired = "MICROPHONE_PERMISSION_REQUIRED"
   static let accessibilityPermissionRequired = "ACCESSIBILITY_PERMISSION_REQUIRED"
   static let cameraPermissionDenied = "CAMERA_PERMISSION_DENIED"
