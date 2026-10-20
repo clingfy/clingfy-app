@@ -93,6 +93,25 @@ explicitly unsupported, and make the copy say the same thing as the code.
   item above.
 - **Effort:** human ~2d / CC ~2h.
 
+### Subtitle translation — decide
+
+*Checked 2026-10-20.* Not started on either platform. Whisper's
+`large-v3-turbo` cannot translate, so this needs a second engine. The data
+model already has room for it: `Caption.translatedText` is serialized and
+never filled (`edit_track.dart:247-294`), and the transcribing model is
+recorded for "a future translation pass" (`edit_track.dart:367-369`).
+**To close:** choose the engine (on-device or cloud), then the UI: a target
+language, and a burn-in and sidecar per language.
+
+### Windows has no transcription engine — code
+
+Windows answers `captionsCapability` with `platformNotSupported`
+(`misc_router.cpp:99-112`), so auto-subtitles are macOS only.
+`docs/windows-port-editing-features.md:392` plans whisper.cpp.
+`docs/features.md` lists Auto-subtitles twice (lines 88 and 90) in different
+words; merge them while there.
+
+
 ## Export — colour
 
 ### Dark recordings have never been checked in QuickTime after the colour fix — verify
@@ -222,6 +241,59 @@ which are the only recorded numbers for this defect.
 - **Caveat that is still true:** recordings made before 2026-08-02 hold P3 data
   under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
   and recorded in the CHANGELOG.
+
+## Export — GIF
+
+### Windows GIF has no size presets, cap or drift-free timing — code
+
+*Checked 2026-10-20.* macOS shipped all three in 1.0.7 (#319, #326):
+long-edge caps of 480 / 720 / 1080 (`GifExportPolicy.swift:53-75`) and a
+`DelayAccumulator` that keeps frame delays drift-free (`GifExportPolicy.swift:154`).
+Windows has none of them:
+- **No cap or presets:** `export_pipeline.cpp:757-758` encodes the full
+  canvas. `export_geometry.cpp:161-168` reads `gifSize` and discards it.
+- **Frame timing:** `gif_encoder.cpp:343-345` rounds each frame delay on its
+  own, so 15 fps plays as about 14.3 fps, about 5% slow.
+- **Picker promises what Windows doesn't do:** the Small/Medium/Large picker
+  (`export_file_dialog.dart:351-376`) is not gated by platform. Its caption,
+  "Larger sizes look sharper but make bigger files", is false on Windows.
+- **Stale comments:** `gif_export_policy.h:3-6` and `export_geometry.h:149-153`
+  still say macOS has no real GIF encoder.
+- **Docs:** `docs/features.md:107` marks Windows GIF done without these gaps.
+
+**To close:**
+- Port the cap and the accumulator value for value, with
+  `gif_export_policy_test.cpp` cases.
+- Make `ResolveExportPixelSize` return the capped size so burned-in captions
+  match the frame.
+- Rewrite `export_geometry_test.cpp:386`
+  (`FormatAndGifSizeNeverChangeTheAnswer`), which pins today's behaviour.
+- Fix both comments and the features row.
+
+### No GIF duration limit — decide
+
+No export path caps a GIF's length. A long clip gives a very large file and a
+long encode. **To close:**
+- Choose a limit (for example 30 to 60 s).
+- Enforce it in `GifExportPolicy` and `ExportEngine`, and in Windows too.
+- In the export dialog, warn or disable GIF past the limit.
+- Add a failure code on both sides of the bridge.
+
+### Single-pass GIF export — decide
+
+GIF export already renders its intermediate at the capped size, but it is
+still two passes: a temp `clingfy-gif-source-<uuid>.mov`
+(`ExportEngine.swift:305-328`), then `GifExportSession` encodes it. #319
+deferred pulling frames straight from the compose tail as "too risky for the
+reward". **To close:** measure first. Do it only if the temp MOV costs
+noticeable time or disk.
+
+### GIF output checked by eye only at Small and Large — verify
+
+The 1.0.7 check (e3ece28) covered Large and Small on a 9.7 s clip, and a
+test proves the colour. **To close:** export Medium, a 4K source and a long
+clip, and judge dither, banding and edges. Export the colour reference chart
+as a GIF and compare.
 
 ## Recording — camera (macOS)
 
@@ -917,6 +989,15 @@ cannot do it. Fold it into the camera on-device QA pass.
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Split and cut, colour, and voice cleanup** (checked 2026-10-20). Split
+  and cut shipped in v1.0.5 on both platforms, and so did colour (Auto enhance
+  and manual sliders). Voice cleanup (RNNoise) shipped in v1.0.6 on both
+  platforms, with a Windows preview gap until the first cut. Auto-subtitles
+  shipped on macOS in v1.1.0 (#424), with later language and model pickers and
+  Arabic burn-in. GIF size presets shipped on macOS in 1.0.7 (#326). An older
+  list called subtitles "not started" and voice cleanup "volume done, noise
+  not"; both were wrong.
 
 - **Every launch logged an uncaught exception from AppDelegate.** It called
   `super.applicationDidFinishLaunching`, which `FlutterAppDelegate` does not
