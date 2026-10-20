@@ -220,8 +220,9 @@ enum GifExportPolicy {
   }
 
   /// The size a GIF export's frames are ACTUALLY rendered at: `renderSize`
-  /// rounded to even dimensions, because the H.264 intermediate the GIF is
-  /// transcoded from wants an even width and height.
+  /// rounded to even dimensions. GIF renders in one pass now, with no H.264
+  /// intermediate, but the shared render path still sizes every export this
+  /// way, and the size is what Flutter lays caption bitmaps out for.
   ///
   /// Lives here, not in `ExportEngine`, because two callers need the same
   /// answer and a second copy would drift silently. `ExportEngine` renders at

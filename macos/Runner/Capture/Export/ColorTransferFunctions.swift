@@ -218,11 +218,11 @@ extension ColorTransferFunctions {
   /// Decodes a frame read back out of an exported file into sRGB.
   ///
   /// Needed by anything that re-reads the export's own output and hands the
-  /// pixels to something that will treat them as sRGB. The GIF transcode is
-  /// the case that made this necessary: it reads the finished MOV, whose
-  /// pixels carry `exportTransferGamma`, and writes them into a container
-  /// viewers read as sRGB — so without this, every GIF shipped its midtones
-  /// about 11 code values dark.
+  /// pixels to something that will treat them as sRGB. GIF export is the case
+  /// that made this necessary: its frames come out of
+  /// `renderComposedExportFrame` carrying `exportTransferGamma`, and go into a
+  /// container viewers read as sRGB — so without this, every GIF shipped its
+  /// midtones about 11 code values dark.
   ///
   /// Deliberately expressed as the inverse of `exportTransferGamma` rather
   /// than as a fixed curve: if the export's transfer ever changes, this

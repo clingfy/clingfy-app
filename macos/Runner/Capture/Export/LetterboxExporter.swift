@@ -2115,6 +2115,7 @@ final class LetterboxExporter {
     useAllAudioSourceTracks: Bool = false,
     editedDurationSeconds: Double? = nil,
     logOutputInfo: Bool = false,
+    rendersGif: Bool = false,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
     let videoTracks = asset.tracks(withMediaType: .video)
@@ -2146,9 +2147,33 @@ final class LetterboxExporter {
       )
       return
     }
-    let writer: AVAssetWriter
+    let writer: AVAssetWriter?
+    // A GIF renders in a single pass: every frame goes through the same loop
+    // and the same `renderComposedExportFrame` as a video export, then into
+    // `gifSink` instead of a video writer. No temp MOV, no codec round trip,
+    // and no audio.
+    var gifSink: GifFrameSink?
+    if rendersGif {
+      do {
+        gifSink = try GifFrameSink(outputURL: outputURL, gifSize: videoComposition.renderSize)
+      } catch {
+        completion(
+          .failure(
+            NSError(
+              domain: "Letterbox",
+              code: -12,
+              userInfo: [
+                NSLocalizedDescriptionKey: "Could not create the GIF file",
+                NSUnderlyingErrorKey: error,
+              ]
+            )
+          )
+        )
+        return
+      }
+    }
     do {
-      writer = try AVAssetWriter(outputURL: outputURL, fileType: outputFileType)
+      writer = rendersGif ? nil : try AVAssetWriter(outputURL: outputURL, fileType: outputFileType)
     } catch {
       completion(
         .failure(
@@ -2269,10 +2294,22 @@ final class LetterboxExporter {
     var currentRangeIndex = 0
     var currentEditedBaseMs = 0
     var videoReaders: [AVAssetReader] = [currentVideoReader]
-    let hasSeparateAudioReader = audioAsset != nil
+    let hasSeparateAudioReader = audioAsset != nil && !rendersGif
 
     let renderSize = videoComposition.renderSize
-    let videoInput: AVAssetWriterInput
+    var videoInput: AVAssetWriterInput?
+    var videoAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+    // GIF frames are rendered into buffers from this pool instead of the
+    // writer adaptor's: the same 32BGRA attributes, consumed one at a time.
+    var gifPixelBufferPool: CVPixelBufferPool?
+    let outputPixelBufferAttributes: [String: Any] = [
+      kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+      kCVPixelBufferWidthKey as String: Int(renderSize.width),
+      kCVPixelBufferHeightKey as String: Int(renderSize.height),
+      kCVPixelBufferCGImageCompatibilityKey as String: true,
+      kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+    ]
+    if let writer {
     do {
       videoInput = try VideoColorPipeline.makeVideoWriterInput(
         baseOutputSettings: [
@@ -2316,16 +2353,11 @@ final class LetterboxExporter {
       )
       return
     }
+    let videoInput = videoInput!  // assigned above; every failure returned
     videoInput.expectsMediaDataInRealTime = false
-    let videoAdaptor = AVAssetWriterInputPixelBufferAdaptor(
+    videoAdaptor = AVAssetWriterInputPixelBufferAdaptor(
       assetWriterInput: videoInput,
-      sourcePixelBufferAttributes: [
-        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: Int(renderSize.width),
-        kCVPixelBufferHeightKey as String: Int(renderSize.height),
-        kCVPixelBufferCGImageCompatibilityKey as String: true,
-        kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
-      ]
+      sourcePixelBufferAttributes: outputPixelBufferAttributes
     )
     guard writer.canAdd(videoInput) else {
       completion(
@@ -2340,6 +2372,23 @@ final class LetterboxExporter {
       return
     }
     writer.add(videoInput)
+    } else {
+      var pool: CVPixelBufferPool?
+      CVPixelBufferPoolCreate(nil, nil, outputPixelBufferAttributes as CFDictionary, &pool)
+      guard let pool else {
+        completion(
+          .failure(
+            NSError(
+              domain: "Letterbox",
+              code: -16,
+              userInfo: [NSLocalizedDescriptionKey: "Could not create the GIF frame pool"]
+            )
+          )
+        )
+        return
+      }
+      gifPixelBufferPool = pool
+    }
 
     // Audio source: when cutting, audio is read from a dedicated kept-range
     // composition (already compacted to edited time) via its own reader, so it
@@ -2347,7 +2396,7 @@ final class LetterboxExporter {
     // it shares the video reader and asset exactly as before.
     let audioSourceAsset = audioAsset ?? asset
     var audioSourceReader = currentVideoReader
-    if audioAsset != nil {
+    if hasSeparateAudioReader {
       do {
         audioSourceReader = try AVAssetReader(asset: audioSourceAsset)
       } catch {
@@ -2376,7 +2425,7 @@ final class LetterboxExporter {
       useAllAudioSourceTracks
       ? audioSourceAsset.tracks(withMediaType: .audio)
       : Array(audioSourceAsset.tracks(withMediaType: .audio).prefix(1))
-    if !audioSourceTracks.isEmpty {
+    if let writer, !audioSourceTracks.isEmpty {
       let candidateOutput = AVAssetReaderAudioMixOutput(
         audioTracks: audioSourceTracks,
         audioSettings: manualAudioOutputSettings()
@@ -2410,6 +2459,7 @@ final class LetterboxExporter {
       }
     }
 
+    if let writer {
     writer.shouldOptimizeForNetworkUse = true
 
     guard writer.startWriting() else {
@@ -2426,8 +2476,11 @@ final class LetterboxExporter {
       return
     }
 
+    }
+
     guard currentVideoReader.startReading() else {
-      writer.cancelWriting()
+      writer?.cancelWriting()
+      gifSink?.cancel()
       completion(
         .failure(
           currentVideoReader.error
@@ -2444,7 +2497,7 @@ final class LetterboxExporter {
     if hasSeparateAudioReader {
       guard audioSourceReader.startReading() else {
         currentVideoReader.cancelReading()
-        writer.cancelWriting()
+        writer?.cancelWriting()
         completion(
           .failure(
             audioSourceReader.error
@@ -2591,8 +2644,8 @@ final class LetterboxExporter {
       var mergedContext: [String: Any] = [
         "stage": "final_manual_video_render",
         "frame": frameIndex,
-        "writerStatus": self.writerStatusDescription(writer.status),
-        "writerError": writer.error?.localizedDescription ?? "nil",
+        "writerStatus": writer.map { self.writerStatusDescription($0.status) } ?? "gif",
+        "writerError": writer?.error?.localizedDescription ?? "nil",
         "outputPath": outputURL.path,
         "outputFileBytes": self.fileSizeBytes(for: outputURL),
       ]
@@ -2617,9 +2670,10 @@ final class LetterboxExporter {
 
       stateQueue.sync { videoReaders }.forEach { $0.cancelReading() }
       if hasSeparateAudioReader { audioSourceReader.cancelReading() }
-      videoInput.markAsFinished()
+      videoInput?.markAsFinished()
       audioInput?.markAsFinished()
-      writer.cancelWriting()
+      writer?.cancelWriting()
+      gifSink?.cancel()
       invalidateCameraSamples()
       removeFileIfExists(outputURL)
 
@@ -2628,10 +2682,58 @@ final class LetterboxExporter {
       }
     }
 
+    // A cue whose bitmap would not load is skipped frame by frame, so it is
+    // simply absent from the finished video with nothing else saying so. The
+    // renderer records the ids for exactly this line.
+    func logMissingCaptionBitmaps() {
+      if let missing = captionRenderer?.missingBitmapCueIds, !missing.isEmpty {
+        NativeLogger.w(
+          "Captions",
+          "Cues dropped from the export: their bitmaps could not be loaded",
+          context: [
+            "count": missing.count,
+            "ids": missing.joined(separator: ","),
+            "bitmapDirectory": captionBitmapDirectory ?? "nil",
+          ])
+      }
+    }
+
     func finishIfReady() {
       stateQueue.async { [self] in
         guard videoFinished, audioFinished, !completed else { return }
         completed = true
+
+        guard let writer else {
+          // GIF: the sink writes the file. Every frame was appended on the
+          // video queue before it marked the video finished.
+          var finishError: Error?
+          do {
+            try gifSink?.finish()
+          } catch {
+            finishError = error
+          }
+          // Already on `stateQueue`: read the readers directly. A
+          // `stateQueue.sync` here deadlocks (libdispatch aborts on it).
+          videoReaders.forEach { $0.cancelReading() }
+          invalidateCameraSamples()
+          DispatchQueue.main.async {
+            if let finishError {
+              self.removeFileIfExists(outputURL)
+              completion(.failure(finishError))
+              return
+            }
+            onProgress?(progressRange.upperBound)
+            logExportStagePerformance(
+              stage: "final_export",
+              frames: videoFrameIndex,
+              startedAt: stageStart,
+              renderPath: "manual_reader_gif"
+            )
+            logMissingCaptionBitmaps()
+            completion(.success(outputURL))
+          }
+          return
+        }
 
         writer.finishWriting {
           stateQueue.sync { videoReaders }.forEach { $0.cancelReading() }
@@ -2649,19 +2751,7 @@ final class LetterboxExporter {
               if logOutputInfo {
                 self.logExportedFileInfo(url: outputURL)
               }
-              // A cue whose bitmap would not load is skipped frame by frame, so
-              // it is simply absent from the finished video with nothing else
-              // saying so. The renderer records the ids for exactly this line.
-              if let missing = captionRenderer?.missingBitmapCueIds, !missing.isEmpty {
-                NativeLogger.w(
-                  "Captions",
-                  "Cues dropped from the export: their bitmaps could not be loaded",
-                  context: [
-                    "count": missing.count,
-                    "ids": missing.joined(separator: ","),
-                    "bitmapDirectory": captionBitmapDirectory ?? "nil",
-                  ])
-              }
+              logMissingCaptionBitmaps()
               completion(.success(outputURL))
             } else {
               self.removeFileIfExists(outputURL)
@@ -2685,10 +2775,11 @@ final class LetterboxExporter {
       nextCameraSampleBuffer = currentCameraOutput.copyNextSampleBuffer()
     }
 
-    writer.startSession(atSourceTime: .zero)
+    writer?.startSession(atSourceTime: .zero)
 
-    videoInput.requestMediaDataWhenReady(on: videoQueue) {
-      while videoInput.isReadyForMoreMediaData {
+    // One frame: read, cut, compose, and hand to the writer or the GIF sink.
+    // False when the loop must stop (finished, failed or cancelled).
+    func renderNextFrame() -> Bool {
         if self.isCancelled {
           fail(
             NSError(
@@ -2697,11 +2788,11 @@ final class LetterboxExporter {
               userInfo: [NSLocalizedDescriptionKey: "Export cancelled"]
             )
           )
-          return
+          return false
         }
 
-        let shouldContinue = autoreleasepool { () -> Bool in
-          guard let pixelBufferPool = videoAdaptor.pixelBufferPool else {
+        return autoreleasepool { () -> Bool in
+          guard let pixelBufferPool = videoAdaptor?.pixelBufferPool ?? gifPixelBufferPool else {
             fail(
               manualRenderError(
                 code: -31,
@@ -2804,7 +2895,7 @@ final class LetterboxExporter {
               return true
             }
 
-            videoInput.markAsFinished()
+            videoInput?.markAsFinished()
             stateQueue.async {
               videoFinished = true
             }
@@ -2858,10 +2949,34 @@ final class LetterboxExporter {
             }
             outputPresentationTime = CMTime(value: CMTimeValue(editedMs), timescale: 1000)
           }
+          // The GIF's time for this frame. With cuts the video stamp above is
+          // whole milliseconds, truncated: a frame at 66.67 ms is stamped 66.
+          // A video does not care, and the old temp MOV hid it, because the
+          // writer's timescale snapped stamps back onto the frame grid. The GIF
+          // decimation grid is 66.67 ms, so a truncated stamp lands just short
+          // of it and the delays come out 8, 7, 5 instead of 7, 7, 7. Put the
+          // truncated fraction back.
+          // The shift a cut applies is a whole number of ms, so take it off
+          // the source's own exact timestamp rather than rounding a fraction.
+          let gifPresentationTime: CMTime =
+            keptRanges.isEmpty
+            ? outputPresentationTime
+            : CMTimeSubtract(
+              presentationTime,
+              CMTime(
+                value: CMTimeValue(Int(sampleTime * 1000.0)) - outputPresentationTime.value,
+                timescale: 1000))
           let progressSeconds = keptRanges.isEmpty ? sampleTime : outputPresentationTime.seconds
           DispatchQueue.main.async {
             onProgress?(
               lower + (min(max(progressSeconds / progressDurationSeconds, 0.0), 1.0) * span))
+          }
+
+          // GIF keeps ~15 fps. A frame the decimation drops is not composed at
+          // all; the camera sample pump and the caption cursor below both catch
+          // up from wherever the next kept frame lands.
+          if let gifSink, !gifSink.shouldKeep(gifPresentationTime) {
+            return true
           }
 
           guard let screenPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
@@ -3003,7 +3118,16 @@ final class LetterboxExporter {
             )
           }
 
-          guard videoAdaptor.append(renderedPixelBuffer, withPresentationTime: outputPresentationTime) else {
+          if let gifSink {
+            do {
+              try gifSink.append(renderedPixelBuffer, at: gifPresentationTime)
+            } catch {
+              fail(error)
+              return false
+            }
+          } else if let videoAdaptor,
+            !videoAdaptor.append(renderedPixelBuffer, withPresentationTime: outputPresentationTime)
+          {
             fail(
               manualRenderError(
                 code: inlineCameraRenderPlan == nil ? -22 : -34,
@@ -3023,10 +3147,19 @@ final class LetterboxExporter {
           videoFrameIndex += 1
           return true
         }
+    }
 
-        if !shouldContinue {
-          return
+    if let videoInput {
+      videoInput.requestMediaDataWhenReady(on: videoQueue) {
+        while videoInput.isReadyForMoreMediaData {
+          if !renderNextFrame() { return }
         }
+      }
+    } else {
+      // GIF: no writer to pull frames, so loop until the reader is done. The
+      // sink encodes each frame before the next is read, which bounds memory.
+      videoQueue.async {
+        while renderNextFrame() {}
       }
     }
 
@@ -3067,7 +3200,7 @@ final class LetterboxExporter {
 
           if !audioInput.append(sampleBuffer) {
             fail(
-              writer.error
+              writer?.error
                 ?? NSError(
                   domain: "Letterbox",
                   code: -24,
@@ -3111,6 +3244,7 @@ final class LetterboxExporter {
     clips: [ClipKeptRange] = [],
     captionBitmapDirectory: String? = nil,
     captions: [CaptionCueTrack.Cue] = [],
+    rendersGif: Bool = false,
     onProgress: ((Double) -> Void)? = nil,
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
@@ -3280,11 +3414,16 @@ final class LetterboxExporter {
     // that bleed against the clean system reference first. The helper is a no-op
     // (returns the original mic) when there's no measurable bleed — headphones,
     // silent mic, or no system audio — and degrades to the raw mic on any error.
-    let echoCancelledMic = echoCancelledMicURL(
-      micAudioURL: mediaSources.micAudioURL,
-      systemAudioURL: mediaSources.systemAudioURL,
-      projectRoot: project.rootURL
-    )
+    // A GIF has no audio, so none of the processing below would reach it.
+    // Each step blocks, and each could fail a GIF export for nothing.
+    let echoCancelledMic =
+      rendersGif
+      ? mediaSources.micAudioURL
+      : echoCancelledMicURL(
+        micAudioURL: mediaSources.micAudioURL,
+        systemAudioURL: mediaSources.systemAudioURL,
+        projectRoot: project.rootURL
+      )
     // Voice cleanup (background noise reduction) runs on the MIC ONLY, and only
     // here: after echo cancellation, whose correlation against the system
     // reference needs the mic's bleed intact, and before the normalize peak scan
@@ -3295,7 +3434,7 @@ final class LetterboxExporter {
     let micAudioURLForMix = voiceCleanedMicURL(
       micAudioURL: echoCancelledMic,
       projectRoot: project.rootURL,
-      request: voiceCleanup
+      request: rendersGif ? .disabled : voiceCleanup
     )
     var separatedMicAsset = Self.readableAudioAsset(url: micAudioURLForMix)
     let separatedSystemAsset = Self.readableAudioAsset(url: mediaSources.systemAudioURL)
@@ -3310,7 +3449,7 @@ final class LetterboxExporter {
       // master volume fader below still applies to every track. Normalize
       // scans the mic file, never the embedded screen.mov track.
       let micPeakLinear: Double? =
-        (autoNormalizeOnExport && separatedMicAsset != nil)
+        (autoNormalizeOnExport && !rendersGif && separatedMicAsset != nil)
         ? separatedMicAsset.flatMap { estimateAudioPeakLinear(asset: $0) }
         : nil
       let controls = Self.resolveSeparatedAudioControls(
@@ -3333,7 +3472,7 @@ final class LetterboxExporter {
       // mixed stream and clamps the whole export at 0 dBFS — the "distorted
       // system audio when the mic is on" bug). The peak estimate above ran on
       // the PRE-gain mic, which is what the normalization math expects.
-      if controls.micGainDb > 0.0001 {
+      if controls.micGainDb > 0.0001, !rendersGif {
         let bakedURL = gainBakedMicURL(
           micAudioURL: micAudioURLForMix, gainDb: controls.micGainDb)
         separatedMicAsset = Self.readableAudioAsset(url: bakedURL) ?? separatedMicAsset
@@ -3590,12 +3729,13 @@ final class LetterboxExporter {
       // surfaced as Letterbox/-12 with the underlying error attached. That is
       // the real check, one line later, on the real object.
       let writerFormat = ExportFormatInfo.resolve(format)
-      // nil `avFileType` means gif, which never reaches this writer —
-      // ExportEngine renders a temp MOV and transcodes it. Fall back to a MOV
-      // container AND a mov extension: taking the extension from the resolved
-      // format would name a QuickTime file ".gif".
+      // nil `avFileType` means gif. A GIF export (`rendersGif`) never uses the
+      // container: its frames go to a GIF sink. Anything else asking for gif
+      // falls back to a MOV container AND a mov extension: taking the
+      // extension from the resolved format would name a QuickTime file ".gif".
       let chosenType = writerFormat.avFileType ?? .mov
-      let chosenExtension = writerFormat.avFileType == nil ? "mov" : writerFormat.ext
+      let chosenExtension =
+        rendersGif ? "gif" : (writerFormat.avFileType == nil ? "mov" : writerFormat.ext)
       let finalURL = outputURL
         .deletingPathExtension()
         .appendingPathExtension(chosenExtension)
@@ -3669,7 +3809,7 @@ final class LetterboxExporter {
       // If the export transfer ever needs to change, it changes in one place.
       // Do not reintroduce a second final render site without routing it
       // through `renderComposedExportFrame`.
-      exportStartContext["finalRenderPath"] = "manual_reader_writer"
+      exportStartContext["finalRenderPath"] = rendersGif ? "manual_reader_gif" : "manual_reader_writer"
       exportStartContext["colorGradeActive"] = hasColorGrade
       exportStartContext["audioSourceMode"] = separatedComposition != nil ? "separated" : "embedded"
       exportStartContext["separatedMicPresent"] = separatedMicAsset != nil
@@ -3707,13 +3847,25 @@ final class LetterboxExporter {
           audioAsset: audioCutComposition,
           useAllAudioSourceTracks: separatedComposition != nil,
           editedDurationSeconds: editedDurationSeconds,
-          logOutputInfo: true,
+          logOutputInfo: !rendersGif,
+          rendersGif: rendersGif,
           completion: completion
         )
       }
 
       runFinalExport { [self] result in
         switch result {
+        case .success(let finalURL) where rendersGif:
+          // Both validators decode the finished VIDEO and compare it with a
+          // reference render. A GIF is no video, and its frames come from the
+          // same `renderComposedExportFrame` call every video export makes and
+          // is validated on; what differs is only the GIF encode after it.
+          NativeLogger.i(
+            "Export", "Final export validation skipped: single-pass GIF",
+            context: ["output": finalURL.path])
+          self.cleanupTemporaryArtifacts()
+          completion(.success(finalURL))
+
         case .success(let finalURL):
           if let validationError = self.validateFinalExportReferenceRender(
             referenceAsset: comp.asset,
