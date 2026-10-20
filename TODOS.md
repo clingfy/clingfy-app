@@ -453,17 +453,6 @@ and keep or clean up the segments explicitly.
 
 ## Logging — macOS
 
-### Every launch logs an uncaught exception from AppDelegate — code
-
-*Found 2026-10-19:* 125 log lines that day alone, the earliest on 2026-10-16.
-`AppDelegate.swift:18` calls `super.applicationDidFinishLaunching`, which
-`FlutterAppDelegate` does not implement at runtime. The call raises
-"unrecognized selector", and `NativeLogger`'s hook logs it as an uncaught
-`NSInvalidArgumentException`. Nothing follows the call, so nothing is skipped.
-It is noise in every crash log and possibly in Sentry. **To close:** call super
-only if `FlutterAppDelegate` implements the selector, then check that one launch
-logs nothing.
-
 ### ~~Logs written just before a crash or quit can be lost~~ — DONE 2026-10-16
 
 macOS native now writes each line to disk when it is logged, into a daily
@@ -928,6 +917,13 @@ cannot do it. Fold it into the camera on-device QA pass.
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Every launch logged an uncaught exception from AppDelegate.** It called
+  `super.applicationDidFinishLaunching`, which `FlutterAppDelegate` does not
+  implement: Flutter observes the notification instead. The call raised out of
+  AppKit's launch notification. Since 2026-10-20 super is called only if Flutter
+  implements it. Checked on launches: the old build logs the exception, the new
+  one does not.
 
 - **Pausing on macOS 13-14 left the take impossible to stop.** The pause and
   resume callbacks had Swift names that bound to no selector, so AVFoundation
