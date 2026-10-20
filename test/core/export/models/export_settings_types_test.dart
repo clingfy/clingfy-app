@@ -1,4 +1,5 @@
 import 'package:clingfy/core/export/models/export_settings_types.dart';
+import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -180,6 +181,49 @@ void main() {
         AudioQuality.high.targetKbps,
         lessThan(AudioQuality.best.targetKbps),
       );
+    });
+  });
+
+  group('GIF length cap', () {
+    test('is sixty seconds, the same as the native GifExportPolicy', () {
+      expect(kGifMaxExportDurationMs, 60000);
+    });
+
+    test('exactly the cap is allowed; one ms more is not', () {
+      expect(gifExceedsDurationCap(60000), isFalse);
+      expect(gifExceedsDurationCap(60001), isTrue);
+    });
+
+    test('an unknown length is not refused', () {
+      expect(gifExceedsDurationCap(null), isFalse);
+    });
+
+    test('measures the export the way the native exporter does', () {
+      Clip clip(int inMs, int outMs, {bool enabled = true}) => Clip(
+        id: '$inMs',
+        sourceInMs: inMs,
+        sourceOutMs: outMs,
+        timelineStartMs: 0,
+        enabled: enabled,
+      );
+      expect(exportedGifDurationMs([], 90000), 90000, reason: 'no clips: all');
+      expect(
+        exportedGifDurationMs([clip(0, 10000), clip(30000, 45000)], 90000),
+        25000,
+      );
+      expect(
+        exportedGifDurationMs([clip(0, 10000, enabled: false)], 90000),
+        90000,
+        reason: 'only disabled clips: nothing is cut',
+      );
+      // A restored last clip running past the end counts only what exists.
+      expect(exportedGifDurationMs([clip(0, 60200)], 60000), 60000);
+    });
+
+    test('formats the length as m:ss, rounding up', () {
+      expect(formatGifDuration(102000), '1:42');
+      expect(formatGifDuration(60001), '1:01');
+      expect(formatGifDuration(5000), '0:05');
     });
   });
 }

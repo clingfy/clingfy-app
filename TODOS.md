@@ -253,14 +253,13 @@ about 5% slow. Its comments also still say macOS has no real GIF encoder.
 **Do this on a Windows machine.** The full brief, with files, tests and the
 done-when list, is **W1 in `docs/windows-machine-work.md`**.
 
-### No GIF duration limit — decide
+### GIF length cap has no Windows backstop — code (Windows machine)
 
-No export path caps a GIF's length. A long clip gives a very large file and a
-long encode. **To close:**
-- Choose a limit (for example 30 to 60 s).
-- Enforce it in `GifExportPolicy` and `ExportEngine`, and in Windows too.
-- In the export dialog, warn or disable GIF past the limit.
-- Add a failure code on both sides of the bridge.
+Since 2026-10-20 a GIF export is capped at 60 s of exported duration
+(`kGifMaxExportDurationMs`, `GifExportPolicy.maxExportedDurationMs`). The
+shared dialog refuses past it on both platforms. On macOS the exporter also
+refuses, with `EXPORT_GIF_TOO_LONG`. Windows has no native backstop yet.
+**Do this on a Windows machine:** **W2 in `docs/windows-machine-work.md`**.
 
 ### Single-pass GIF export — decide
 
@@ -972,6 +971,11 @@ cannot do it. Fold it into the camera on-device QA pass.
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **No GIF duration limit** (decided and shipped 2026-10-20). The cap is
+  60 s of exported duration, after cuts. The dialog disables Export and says
+  why, and the macOS exporter refuses before rendering. Nothing is trimmed
+  silently. The Windows backstop is open, above.
 
 - **Split and cut, colour, and voice cleanup** (checked 2026-10-20). Split
   and cut shipped in v1.0.5 on both platforms, and so did colour (Auto enhance

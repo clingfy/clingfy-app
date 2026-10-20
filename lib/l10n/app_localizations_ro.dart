@@ -203,6 +203,16 @@ class AppLocalizationsRo extends AppLocalizations {
       'GIF-urile se exportă la 15 fps. Dimensiunile mai mari arată mai clar, dar produc fișiere mai mari.';
 
   @override
+  String gifTooLongForExport(int maxSeconds, String duration) {
+    return 'GIF-urile pot avea cel mult $maxSeconds de secunde. Acest export are $duration. Scurtează-l sau exportă-l ca .mp4 ori .mov.';
+  }
+
+  @override
+  String errExportGifTooLong(int maxSeconds) {
+    return 'GIF-urile pot avea cel mult $maxSeconds de secunde. Scurtează înregistrarea sau exportă-o ca .mp4 ori .mov.';
+  }
+
+  @override
   String get original => 'Original';
 
   @override

@@ -5,6 +5,7 @@ import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
+import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/app/home/widgets/crash_reporting_notice.dart';
 import 'package:clingfy/app/home/recording/countdown_controller.dart';
 import 'package:clingfy/core/devices/device_controller.dart';
@@ -528,6 +529,8 @@ class HomeActions {
           ExportDiskFullMessage.forException(e, l10n) ??
           (e.code == 'EXPORT_INPUT_MISSING'
               ? l10n.errExportInputMissing
+              : e.code == NativeErrorCode.exportGifTooLong
+              ? l10n.errExportGifTooLong(kGifMaxExportDurationMs ~/ 1000)
               : e.code == NativeErrorCode.advancedCameraExportFailed
               ? (e.message ??
                     'Advanced camera styling could not be rendered for export.')

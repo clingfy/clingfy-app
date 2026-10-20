@@ -77,6 +77,41 @@ enum GifExportPolicy {
     }
   }
 
+  // MARK: - Length
+
+  /// The longest GIF an export may produce, in ms of EXPORTED duration (after
+  /// cuts, trims and reordering). A GIF stores every frame as a full indexed
+  /// image, so length is what makes one huge and slow to encode. Over it the
+  /// export is refused, never silently cut short. Mirrored by Dart's
+  /// `kGifMaxExportDurationMs`; keep the two equal.
+  static let maxExportedDurationMs = 60_000
+
+  /// How far past the cap the native backstop lets an export through. The
+  /// dialog measures the player's duration and native the file's, which can
+  /// disagree by a few ms; the backstop must never refuse what the dialog
+  /// allowed. One frame at 15 fps, rounded up.
+  static let durationCapSlackMs = 100
+
+  /// The exported duration of a GIF built from `clips` over a source of
+  /// `assetDurationMs`. No clips means the whole recording, as the exporter
+  /// treats it (`LetterboxExporter`, the passthrough case). Each range is
+  /// clamped to the source first: neither the parser nor the exporter limits
+  /// `sourceOutMs` to the asset, and a stale range past the end must not count
+  /// time the GIF will not contain.
+  static func exportedDurationMs(clips: [ClipKeptRange], assetDurationMs: Int) -> Int {
+    guard !clips.isEmpty else { return max(0, assetDurationMs) }
+    return clips.reduce(0) { total, range in
+      let inMs = min(max(range.sourceInMs, 0), assetDurationMs)
+      let outMs = min(max(range.sourceOutMs, 0), assetDurationMs)
+      return total + max(0, outMs - inMs)
+    }
+  }
+
+  /// Whether the native backstop refuses an export of `exportedMs`.
+  static func exceedsDurationCap(_ exportedMs: Int) -> Bool {
+    exportedMs > maxExportedDurationMs + durationCapSlackMs
+  }
+
   private static let hnsPerSecond: Int64 = 10_000_000
   private static let hnsPerCentisecond: Int64 = 100_000  // 1/100 s in 100 ns units
   private static let delayCeilingCentiseconds: Int64 = 0xFFFF  // 16-bit GIF delay field

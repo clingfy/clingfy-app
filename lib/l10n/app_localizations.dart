@@ -466,6 +466,18 @@ abstract class AppLocalizations {
   /// **'GIFs export at 15 fps. Larger sizes look sharper but make bigger files.'**
   String get gifSizeCaption;
 
+  /// Export dialog, GIF format: shown when the export (after cuts) is longer than the GIF length cap; the Export button is disabled.
+  ///
+  /// In en, this message translates to:
+  /// **'GIFs can be at most {maxSeconds} seconds long. This export is {duration}. Cut it shorter, or export it as .mp4 or .mov.'**
+  String gifTooLongForExport(int maxSeconds, String duration);
+
+  /// Shown when the exporter refuses a GIF longer than the length cap.
+  ///
+  /// In en, this message translates to:
+  /// **'GIFs can be at most {maxSeconds} seconds long. Cut the recording shorter, or export it as .mp4 or .mov.'**
+  String errExportGifTooLong(int maxSeconds);
+
   /// No description provided for @original.
   ///
   /// In en, this message translates to:

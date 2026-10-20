@@ -251,6 +251,32 @@ final class ExportEngine {
       return
     }
 
+    // 4b. A GIF over the length cap is refused before anything is resolved,
+    // probed or rendered. The dialog refuses it first; this is the backstop,
+    // worked out from the clips and the file rather than trusting the UI.
+    // An unreadable duration (NaN, or indefinite) is let through, as the dialog
+    // lets an unknown length through: `Int(.nan)` would crash the app.
+    let assetSeconds = asset.duration.seconds
+    if input.format == "gif", assetSeconds.isFinite, assetSeconds >= 0 {
+      let assetDurationMs = Int(assetSeconds * 1000)  // truncated, as LetterboxExporter does
+      let exportedMs = GifExportPolicy.exportedDurationMs(
+        clips: input.clips, assetDurationMs: assetDurationMs)
+      if GifExportPolicy.exceedsDurationCap(exportedMs) {
+        NativeLogger.w(
+          "Export", "Refusing a GIF over the length cap",
+          context: ["durationMs": exportedMs, "maxDurationMs": GifExportPolicy.maxExportedDurationMs])
+        result(
+          FlutterError(
+            code: NativeErrorCode.exportGifTooLong,
+            message: "GIFs can be at most \(GifExportPolicy.maxExportedDurationMs / 1000) seconds long.",
+            details: [
+              "durationMs": exportedMs,
+              "maxDurationMs": GifExportPolicy.maxExportedDurationMs,
+            ]))
+        return
+      }
+    }
+
     // 5. Output folder: explicit override or saveFolder default.
     let folder: URL
     if let directoryOverride = input.directoryOverride, !directoryOverride.isEmpty {

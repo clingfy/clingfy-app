@@ -42,6 +42,8 @@ enum NativeErrorCode {
   static let exportCancelled = "EXPORT_CANCELLED"
   static let exportInputMissing = "EXPORT_INPUT_MISSING"
   static let exportDiskFull = "EXPORT_DISK_FULL"
+  /// A GIF export longer than GifExportPolicy.maxExportedDurationMs.
+  static let exportGifTooLong = "EXPORT_GIF_TOO_LONG"
   static let advancedCameraExportFailed = "ADVANCED_CAMERA_EXPORT_FAILED"
 
   // Preview errors (Phase 10.4: Windows emits these; listed here to keep the
