@@ -28,8 +28,8 @@ struct ExportFormatInfo {
     case "mov":
       return .init(ext: "mov", avFileType: .mov)
     case "gif":
-      // Rendered as a temp MOV and transcoded by GifExportSession; the exporter
-      // itself never writes a GIF container.
+      // No AVFoundation container: the exporter renders the frames and hands
+      // them to `GifFrameSink`, which writes the GIF.
       return .init(ext: "gif", avFileType: nil)
     default:
       return .init(ext: "mov", avFileType: .mov)

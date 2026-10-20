@@ -17,7 +17,7 @@ final class ExportEngineTests: XCTestCase {
 
   private func makeAnyInput(
     projectPath: String = "/tmp/does-not-exist", format: String = "mov",
-    directoryOverride: String? = nil
+    directoryOverride: String? = nil, filename: String? = nil
   )
     -> ExportEngine.Input
   {
@@ -34,7 +34,7 @@ final class ExportEngineTests: XCTestCase {
       cursorSize: 1.0,
       zoomFactor: 1.0,
       showCursor: true,
-      filename: nil,
+      filename: filename,
       directoryOverride: directoryOverride,
       format: format,
       writesSubtitleSidecars: false,
@@ -192,6 +192,282 @@ final class ExportEngineTests: XCTestCase {
   func testAVideoExportOverTheGifCapIsNotRefused() throws {
     let error = exportError(try makeProject(seconds: 61), format: "mov")
     XCTAssertEqual(error?.code, NativeErrorCode.exportError)
+  }
+
+  // MARK: - GIF export measurement (opt-in)
+
+  /// A real project whose screen.mov is `seconds` of `size` at 30 fps, with a
+  /// bar that moves every frame so no two frames are alike.
+  private func makeMovingProject(seconds: Int, size: CGSize) throws -> RecordingProjectRef {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("clingfy_gif_measure_\(UUID().uuidString)")
+    let projectRoot = root.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_gif_measure"), isDirectory: true)
+    addTeardownBlock { try? fm.removeItem(at: root) }
+    for directory in [
+      RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.postDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.derivedDirectoryURL(for: projectRoot),
+    ] {
+      try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    var manifest = RecordingProjectManifest.create(
+      projectId: "rec_gif_measure", displayName: "Clingfy Test", includeCamera: false)
+    manifest.updateStatus(.ready)
+    try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+
+    let url = RecordingProjectPaths.screenVideoURL(for: projectRoot)
+    let width = Int(size.width)
+    let height = Int(size.height)
+    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+    let input = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+      ])
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
+      ])
+    writer.add(input)
+    writer.startWriting()
+    writer.startSession(atSourceTime: .zero)
+    let frames = seconds * 30
+    for frame in 0..<frames {
+      var buffer: CVPixelBuffer?
+      CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer)
+      guard let buffer else { continue }
+      CVPixelBufferLockBaseAddress(buffer, [])
+      if let base = CVPixelBufferGetBaseAddress(buffer) {
+        let rowBytes = CVPixelBufferGetBytesPerRow(buffer)
+        memset(base, 0x30, rowBytes * height)
+        let barX = (frame * 8) % max(width - 64, 1)
+        for y in 0..<height {
+          let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
+          for x in barX..<(barX + 64) {
+            row[x * 4] = 0x20
+            row[x * 4 + 1] = 0xC0
+            row[x * 4 + 2] = 0xF0
+            row[x * 4 + 3] = 0xFF
+          }
+        }
+      }
+      CVPixelBufferUnlockBaseAddress(buffer, [])
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
+    }
+    input.markAsFinished()
+    let written = expectation(description: "screen.mov written")
+    writer.finishWriting { written.fulfill() }
+    wait(for: [written], timeout: 120)
+    return try RecordingProjectRef.open(projectPath: projectRoot.path)
+  }
+
+  /// Exports `project` through the engine and returns the output path.
+  private func exportPath(
+    _ project: RecordingProjectRef, format: String, clips: [ClipKeptRange] = [], folder: URL,
+    grade: ColorGrade = .identity
+  ) throws -> String {
+    var input = makeAnyInput(
+      projectPath: project.rootURL.path, format: format, directoryOverride: folder.path,
+      filename: "out-\(format)-\(UUID().uuidString.prefix(6))")
+    input.clips = clips
+    input.colorGrade = grade
+    var reply: Any?
+    let done = expectation(description: "\(format) export")
+    ExportEngine().export(input: input, dependencies: makeDeps { _ in project }) { value in
+      reply = value
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 300)
+    return try XCTUnwrap(reply as? String, "\(format) export failed: \(String(describing: reply))")
+  }
+
+  private struct DecodedGif {
+    var size: CGSize
+    var delays: [Double]
+    var frames: [[UInt8]]
+  }
+
+  private func decodeGif(_ path: String) throws -> DecodedGif {
+    let source = try XCTUnwrap(CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil))
+    var result = DecodedGif(size: .zero, delays: [], frames: [])
+    for index in 0..<CGImageSourceGetCount(source) {
+      let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+      let gif = props?[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+      result.delays.append(
+        (gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
+          ?? (gif?[kCGImagePropertyGIFDelayTime] as? Double) ?? -1)
+      let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, index, nil))
+      result.size = CGSize(width: image.width, height: image.height)
+      var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+      let context = try XCTUnwrap(
+        CGContext(
+          data: &pixels, width: image.width, height: image.height, bitsPerComponent: 8,
+          bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+      result.frames.append(pixels)
+    }
+    return result
+  }
+
+  /// The pre-#single-pass path, as the reference: render a video, then convert
+  /// it with `GifExportSession`, exactly as GIF export used to.
+  private func twoPassGif(
+    _ project: RecordingProjectRef, clips: [ClipKeptRange], folder: URL,
+    grade: ColorGrade = .identity
+  ) throws -> String {
+    let mov = try exportPath(project, format: "mov", clips: clips, folder: folder, grade: grade)
+    let gifURL = folder.appendingPathComponent("two-pass-\(UUID().uuidString.prefix(6)).gif")
+    var outcome: Result<URL, Error>?
+    let done = expectation(description: "two-pass transcode")
+    GifExportSession().run(sourceVideoURL: URL(fileURLWithPath: mov), outputURL: gifURL, onProgress: nil) {
+      outcome = $0
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 120)
+    return try XCTUnwrap(try outcome?.get()).path
+  }
+
+  /// One pass must give the same GIF as the old render-then-convert, apart from
+  /// the codec loss it no longer has: same frames, same delays, same size, and
+  /// pixels within the H.264 round trip's error.
+  private func assertSinglePassMatchesTwoPass(
+    clips: [ClipKeptRange], grade: ColorGrade = .identity
+  ) throws {
+    let project = try makeMovingProject(seconds: 2, size: CGSize(width: 640, height: 360))
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_gif_parity_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+
+    let single = try decodeGif(
+      try exportPath(project, format: "gif", clips: clips, folder: folder, grade: grade))
+    let reference = try decodeGif(
+      try twoPassGif(project, clips: clips, folder: folder, grade: grade))
+
+    XCTAssertEqual(single.size, reference.size, "same GIF size")
+    XCTAssertEqual(single.frames.count, reference.frames.count, "same kept frames")
+    XCTAssertEqual(single.delays, reference.delays, "same frame timing")
+    for (index, (a, b)) in zip(single.frames, reference.frames).enumerated() {
+      var total = 0
+      for i in stride(from: 0, to: a.count, by: 4) {
+        total += abs(Int(a[i]) - Int(b[i])) + abs(Int(a[i + 1]) - Int(b[i + 1]))
+          + abs(Int(a[i + 2]) - Int(b[i + 2]))
+      }
+      let meanPerChannel = Double(total) / Double(a.count / 4 * 3)
+      XCTAssertLessThan(meanPerChannel, 4.0, "frame \(index) differs beyond codec error")
+    }
+  }
+
+  func testSinglePassGifMatchesTheTwoPassGif() throws {
+    try assertSinglePassMatchesTwoPass(clips: [])
+  }
+
+  func testSinglePassGifMatchesTheTwoPassGifWithCuts() throws {
+    try assertSinglePassMatchesTwoPass(clips: [
+      ClipKeptRange(sourceInMs: 0, sourceOutMs: 600),
+      ClipKeptRange(sourceInMs: 1000, sourceOutMs: 1800),
+    ])
+  }
+
+  /// The grade is applied in the shared loop, before the GIF takes the frame.
+  func testSinglePassGifMatchesTheTwoPassGifWithAColourGrade() throws {
+    var grade = ColorGrade.identity
+    grade.exposure = 0.3
+    grade.temperature = 0.4
+    try assertSinglePassMatchesTwoPass(clips: [], grade: grade)
+  }
+
+  /// Reordered clips take the per-range reader path.
+  func testSinglePassGifMatchesTheTwoPassGifWithReorderedClips() throws {
+    try assertSinglePassMatchesTwoPass(clips: [
+      ClipKeptRange(sourceInMs: 1000, sourceOutMs: 1800),
+      ClipKeptRange(sourceInMs: 0, sourceOutMs: 600),
+    ])
+  }
+
+  /// No temp video is written for a GIF any more.
+  func testASinglePassGifWritesNoTempVideo() throws {
+    let project = try makeMovingProject(seconds: 1, size: CGSize(width: 320, height: 180))
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_gif_notemp_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+    let tempDir = FileManager.default.temporaryDirectory.path
+    func gifSources() -> Set<String> {
+      Set(((try? FileManager.default.contentsOfDirectory(atPath: tempDir)) ?? [])
+        .filter { $0.hasPrefix("clingfy-gif-source-") })
+    }
+    let before = gifSources()
+    var seen = Set<String>()
+    let poll = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { _ in
+      seen.formUnion(gifSources())
+    }
+    _ = try exportPath(project, format: "gif", folder: folder)
+    poll.invalidate()
+    XCTAssertTrue(seen.subtracting(before).isEmpty, "a temp video was written: \(seen)")
+    XCTAssertTrue(
+      ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? [])
+        .allSatisfy { $0.hasSuffix(".gif") }, "only the GIF lands in the folder")
+  }
+
+  /// Wall time, peak temp-file bytes and output size of a real GIF export.
+  /// Opt-in: run with `TEST_RUNNER_CLINGFY_MEASURE_GIF=1 xcodebuild test ...`.
+  /// Prints one `GIF_MEASURE` line; asserts only that the export succeeded.
+  func testMeasureGifExport() throws {
+    guard ProcessInfo.processInfo.environment["CLINGFY_MEASURE_GIF"] == "1" else {
+      throw XCTSkip("Opt-in measurement; set TEST_RUNNER_CLINGFY_MEASURE_GIF=1")
+    }
+    let project = try makeMovingProject(seconds: 10, size: CGSize(width: 1920, height: 1080))
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent("clingfy_gif_measure_out_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+
+    let tempDir = FileManager.default.temporaryDirectory
+    func tempGifSourceBytes() -> Int {
+      let names = (try? FileManager.default.contentsOfDirectory(atPath: tempDir.path)) ?? []
+      return names.filter { $0.hasPrefix("clingfy-gif-source-") }.reduce(0) { total, name in
+        let size = (try? FileManager.default.attributesOfItem(
+          atPath: tempDir.appendingPathComponent(name).path)[.size] as? NSNumber)?.intValue ?? 0
+        return total + size
+      }
+    }
+    var peakTempBytes = 0
+    let poll = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { _ in
+      peakTempBytes = max(peakTempBytes, tempGifSourceBytes())
+    }
+    defer { poll.invalidate() }
+
+    var input = makeAnyInput(
+      projectPath: project.rootURL.path, format: "gif", directoryOverride: folder.path)
+    input.gifSize = "large"
+    var reply: Any?
+    let done = expectation(description: "export finished")
+    let started = Date()
+    ExportEngine().export(input: input, dependencies: makeDeps { _ in project }) { value in
+      reply = value
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 600)
+    let elapsed = Date().timeIntervalSince(started)
+    let path = try XCTUnwrap(reply as? String, "export failed: \(String(describing: reply))")
+    let gifBytes =
+      (try FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber)?.intValue ?? 0
+    let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil)
+    let frames = source.map { CGImageSourceGetCount($0) } ?? 0
+    let line =
+      "GIF_MEASURE elapsed=\(String(format: "%.2f", elapsed))s peakTempMovBytes=\(peakTempBytes) "
+      + "gifBytes=\(gifBytes) frames=\(frames)"
+    NSLog("%@", line)
+    try line.write(
+      to: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("gif_measure.txt"),
+      atomically: true, encoding: .utf8)
   }
 
   // MARK: - cancel() passthrough

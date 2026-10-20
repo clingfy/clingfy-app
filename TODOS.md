@@ -261,15 +261,6 @@ shared dialog refuses past it on both platforms. On macOS the exporter also
 refuses, with `EXPORT_GIF_TOO_LONG`. Windows has no native backstop yet.
 **Do this on a Windows machine:** **W2 in `docs/windows-machine-work.md`**.
 
-### Single-pass GIF export — decide
-
-GIF export already renders its intermediate at the capped size, but it is
-still two passes: a temp `clingfy-gif-source-<uuid>.mov`
-(`ExportEngine.swift:305-328`), then `GifExportSession` encodes it. #319
-deferred pulling frames straight from the compose tail as "too risky for the
-reward". **To close:** measure first. Do it only if the temp MOV costs
-noticeable time or disk.
-
 ### GIF output checked by eye only at Small and Large — verify
 
 The 1.0.7 check (e3ece28) covered Large and Small on a 9.7 s clip, and a
@@ -994,6 +985,13 @@ cannot do it. Fold it into the camera on-device QA pass.
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Single-pass GIF export** (done 2026-10-20). Frames go from the export's
+  render loop straight to the GIF encoder, with no temp MOV. On a 10 s 1080p
+  clip it is about 30% faster (3.5 s → 2.5 s) and the GIF is 63% smaller,
+  because the codec noise is gone. Tests pin frames, delays and size against the
+  old render-then-convert path, uncut, cut and reordered. The numbers are in
+  `docs/decisions/macos-gif-export.md`.
 
 - **No GIF duration limit** (decided and shipped 2026-10-20). The cap is
   60 s of exported duration, after cuts. The dialog disables Export and says

@@ -57,7 +57,37 @@ differentiator, and **both** platforms upgrade together (most plausibly
 libimagequant, not gifski). A macOS-local swap is the wrong move — it's a
 cross-platform product decision, not an implementation choice.
 
-### Frame source — transcode the rendered video (as implemented)
+### Frame source — single pass (since 2026-10-20)
+
+**Superseded below.** GIF export now renders in one pass. `LetterboxExporter`
+runs the same reader loop and the same `renderComposedExportFrame` as a video
+export (grade, camera, cuts, captions, transfer encode), but with no video
+writer and no audio. It hands each frame to `GifFrameSink`
+(`GifExportSession.swift`), which decimates, decodes the export transfer and
+encodes. Frames the decimation drops are not composed at all.
+
+The temp MOV is gone, and so is its lossy codec round trip. Measured on a 10 s,
+1080p, 30 fps clip:
+
+| | Wall time | Temp MOV | GIF size |
+|---|---|---|---|
+| Two-pass (before) | 3.46–3.64 s | 446 KB | 649 KB |
+| Single pass | 2.41–2.52 s | none | 237 KB |
+
+The GIF is smaller because the codec's noise no longer reaches the palette and
+LZW. `ExportEngineTests` pins that a single-pass GIF matches the old
+render-then-convert output: identical frame count, delays and size, and pixels
+within codec error, uncut, with cuts and with reordered clips. They found one
+real difference. A cut timeline stamps frames in truncated ms, and the old
+MOV's timescale had hidden that by snapping the stamps back onto the frame grid.
+The sink now takes the exact edited time.
+
+The two post-render validators decode the finished video, so a GIF skips them.
+Its frames come from the same render call every video export makes and
+validates. The opt-in `testMeasureGifExport`
+(`TEST_RUNNER_CLINGFY_MEASURE_GIF=1`) reproduces the table.
+
+### Frame source — transcode the rendered video (the original approach)
 
 **Load-bearing constraint (verified against the code):** color grade and the
 inline camera are applied in the export's per-frame **compose tail**
@@ -167,10 +197,9 @@ frames returns false and writes nothing.
   the original design's compose-tail extraction (dropped as too risky; see the
   frame-source section). Integration tests write a synthetic video and assert
   decimation (30→~15 fps), infinite loop, and the long-edge downscale.
-- **PR-5 (optional, data-driven)** — single-pass: composite natively at the
-  capped size and encode the GIF in the same render (eliminates the intermediate
-  MOV). Only worth it if the extra encode generation shows up in real perf
-  numbers, plus any hard duration cap.
+- **PR-5 — single pass: done 2026-10-20** (see "Frame source — single pass"
+  above). The hard duration cap shipped separately: 60 s of exported duration,
+  `GifExportPolicy.maxExportedDurationMs`.
 
 ## Effort & verification
 

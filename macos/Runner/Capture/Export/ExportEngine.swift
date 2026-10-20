@@ -44,10 +44,6 @@ final class ExportEngine {
 
   private let exporter: LetterboxExporter
 
-  /// Live GIF transcode (runs after the render). Retained so `cancel()` can
-  /// stop it mid-transcode.
-  private var gifSession: GifExportSession?
-
   init(exporter: LetterboxExporter = LetterboxExporter()) {
     self.exporter = exporter
   }
@@ -329,33 +325,22 @@ final class ExportEngine {
     let exportCameraParams = dependencies.sanitizeCameraParams(
       input.cameraParams, input.cameraPath)
 
-    // 10. Run the exporter. GIF has no AVFileType container, so render the
-    // fully-composited video to a temp MOV first and transcode it to GIF
-    // afterwards (grade/camera/cuts are baked into the render — see
-    // GifExportSession). The temp MOV uses the user's codec/bitrate; only the
-    // container differs.
+    // 10. Run the exporter. A GIF renders in one pass: the exporter composes
+    // each frame exactly as for a video (grade, camera, cuts, captions) and
+    // hands it to a GIF encoder instead of a video writer. There is no temp
+    // MOV, and no lossy codec between the composite and the GIF.
     let flutterExportFailureMap = dependencies.flutterExportFailure
     let isGif = input.format == "gif"
-    let tempMovURL: URL? =
-      isGif
-      ? FileManager.default.temporaryDirectory
-        .appendingPathComponent("clingfy-gif-source-\(UUID().uuidString).mov")
-      : nil
-    let renderURL = tempMovURL ?? outputURL
-    let renderFormat = isGif ? "mov" : input.format
     // GIF long-edge cap for the chosen size preset (small/medium/large). Older
     // payloads without `gifSize` resolve to "large" (== today's 1080 cap).
     let gifMaxLongEdge = GifExportPolicy.maxLongEdge(forSizePreset: input.gifSize)
-    // GIF is downscaled to the long-edge cap, so render the intermediate at that
-    // capped (even) size — otherwise a 4K/8K selection (or a large source at the
-    // Small/Medium preset) renders a huge frame just to throw it away. Non-GIF
-    // is unchanged.
+    // A GIF renders straight at its capped (even) size — otherwise a 4K/8K
+    // selection (or a large source at the Small/Medium preset) renders a huge
+    // frame just to throw it away. Non-GIF is unchanged.
     let renderTarget =
       isGif ? Self.gifIntermediateSize(from: targetSize, maxLongEdge: gifMaxLongEdge) : targetSize
-    // Reserve the tail of the progress bar for the GIF transcode.
-    let renderProgressSpan = isGif ? 0.85 : 1.0
     let renderProgress: ((Double) -> Void)? = onProgress.map { callback in
-      { value in callback(min(max(value, 0), 1) * renderProgressSpan) }
+      { value in callback(min(max(value, 0), 1)) }
     }
 
     exporter.export(
@@ -371,8 +356,8 @@ final class ExportEngine {
       zoomEnabled: true,
       zoomFactor: CGFloat(input.zoomFactor),
       followStrength: dependencies.defaultZoomFollowStrength,
-      outputURL: renderURL,
-      format: renderFormat,
+      outputURL: outputURL,
+      format: input.format,
       codec: input.codec,
       bitrate: input.bitrate,
       audioQuality: input.audioQuality,
@@ -387,43 +372,15 @@ final class ExportEngine {
       clips: input.clips,
       captionBitmapDirectory: input.captionBitmapDirectory,
       captions: input.captions,
+      rendersGif: isGif,
       onProgress: renderProgress
     ) { res in
       switch res {
       case .success(let final):
-        // Non-GIF: finish directly.
-        guard isGif, let tempMovURL else {
-          Self.finishExportSuccess(
-            finalPath: final.path, input: input, projectRef: projectRef,
-            keepOriginals: keepOriginals, recordingStore: recordingStoreRef, result: result)
-          return
-        }
-        // GIF: transcode the rendered MOV -> GIF, delete the temp, then finish.
-        DispatchQueue.main.async {
-          let session = GifExportSession()
-          self.gifSession = session
-          session.run(
-            sourceVideoURL: final,
-            outputURL: outputURL,
-            maxLongEdge: gifMaxLongEdge,
-            onProgress: onProgress.map { callback in
-              { value in callback(renderProgressSpan + value * (1 - renderProgressSpan)) }
-            }
-          ) { gifResult in
-            self.gifSession = nil
-            try? FileManager.default.removeItem(at: tempMovURL)
-            switch gifResult {
-            case .success(let gifURL):
-              Self.finishExportSuccess(
-                finalPath: gifURL.path, input: input, projectRef: projectRef,
-                keepOriginals: keepOriginals, recordingStore: recordingStoreRef, result: result)
-            case .failure(let error):
-              result(flutterExportFailureMap(error))
-            }
-          }
-        }
+        Self.finishExportSuccess(
+          finalPath: final.path, input: input, projectRef: projectRef,
+          keepOriginals: keepOriginals, recordingStore: recordingStoreRef, result: result)
       case .failure(let err):
-        if let tempMovURL { try? FileManager.default.removeItem(at: tempMovURL) }
         // Map error to FlutterError via the facade's ExportPrep extension.
         result(flutterExportFailureMap(err))
       }
@@ -431,8 +388,8 @@ final class ExportEngine {
   }
 
   /// Append the export record to the manifest, schedule cleanup, and return the
-  /// final path to Flutter. `nonisolated` + static so it can run from either the
-  /// direct render completion or the GIF transcode completion, on any thread.
+  /// final path to Flutter. `nonisolated` + static so it can run from the render
+  /// completion on any thread.
   /// The intermediate render size for a GIF: the chosen target capped to the
   /// GIF long-edge (`maxLongEdge`, from the size preset) and rounded to even
   /// dimensions (the H.264 intermediate wants even width/height). Keeps a
@@ -478,6 +435,5 @@ final class ExportEngine {
 
   func cancel() {
     exporter.cancel()
-    gifSession?.cancel()
   }
 }
