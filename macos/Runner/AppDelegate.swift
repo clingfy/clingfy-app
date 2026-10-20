@@ -15,7 +15,19 @@ class AppDelegate: FlutterAppDelegate {
     // First, before Dart starts Sentry: see NativeLogger.installLifecycleHooks.
     NativeLogger.installLifecycleHooks()
     _ = UpdaterController.shared
-    super.applicationDidFinishLaunching(notification)
+    // Only if Flutter implements it, which it does not: FlutterAppDelegate
+    // observes the did-finish-launching notification rather than implementing
+    // this method (FlutterAppLifecycleDelegate.h). Calling super regardless
+    // raised "unrecognized selector" on every launch, out of AppKit's launch
+    // notification, and NativeLogger logged it as an uncaught exception.
+    if Self.superclassImplementsDidFinishLaunching {
+      super.applicationDidFinishLaunching(notification)
+    }
+  }
+
+  static var superclassImplementsDidFinishLaunching: Bool {
+    FlutterAppDelegate.instancesRespond(
+      to: #selector(NSApplicationDelegate.applicationDidFinishLaunching(_:)))
   }
 
   override func application(_ application: NSApplication, open urls: [URL]) {

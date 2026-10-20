@@ -8903,6 +8903,21 @@ private final class MockAVFoundationCapturePipeline: AVFoundationCapturePipelini
 /// waiting for a confirmation that never came.
 /// Walking up from a file outside any project never ended: the parent of "/"
 /// is "/..", so the loop built "/../../.." until memory ran out.
+/// Every launch logged an uncaught "unrecognized selector" from AppDelegate:
+/// it called super.applicationDidFinishLaunching, which FlutterAppDelegate
+/// does not implement.
+final class AppDelegateLaunchTests: XCTestCase {
+  func testSuperIsCalledOnlyIfFlutterImplementsDidFinishLaunching() {
+    // Flutter observes the notification instead of implementing the method.
+    // If a Flutter upgrade adds it, the guard starts calling super, which is
+    // right; this assertion then only needs updating.
+    XCTAssertFalse(AppDelegate.superclassImplementsDidFinishLaunching)
+    XCTAssertFalse(
+      FlutterAppDelegate.instancesRespond(
+        to: #selector(NSApplicationDelegate.applicationDidFinishLaunching(_:))))
+  }
+}
+
 final class RecordingProjectPathsEnclosingRootTests: XCTestCase {
   func testAFileOutsideAnyProjectHasNoEnclosingProject() {
     let url = URL(fileURLWithPath: "/tmp/not-a-project/clip.mov")
