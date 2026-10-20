@@ -1,0 +1,149 @@
+# Work for a Windows machine
+
+Tasks that can only be built, tested and checked on Windows. Each one is a
+self-contained brief: a Claude Code session on a Windows checkout should be
+able to take one from this file alone. Open the session at the repo root and
+say, for example, *"do W1 in docs/windows-machine-work.md"*.
+
+`TODOS.md` stays the one list of open work. Each task here has an entry there
+that points to this file. When a task ships, strike it here, and move its
+`TODOS.md` entry to *Recently closed*.
+
+## Before any task
+
+- Branch from `develop` (`feature/*` or `bugfix/*`), and open the PR against
+  `develop`. See `docs/branching-strategy.md`.
+- `CLAUDE.md` applies, including its testing rules: tests are part of every
+  change.
+- Build and run (Windows takes no `--flavor`):
+
+  ```powershell
+  flutter pub get
+  flutter run -d windows --dart-define-from-file=.env.dev
+  ```
+
+- Native tests (GoogleTest, under `windows/runner_tests/`). Run as CI does
+  (`.github/workflows/ci.yml`), with a `flutter build windows --debug` first
+  so the generated config exists:
+
+  ```powershell
+  cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON
+  cmake --build build/windows-tests --config Debug --target runner_tests
+  ctest --test-dir build/windows-tests --output-on-failure -C Debug -E ColorGradeGoldenTest
+  ```
+
+  To run one suite: `-R GifExportPolicy` (or `-R ExportGeometry`).
+- Flutter validation before finishing:
+
+  ```powershell
+  dart format --output=none --set-exit-if-changed .
+  flutter analyze test
+  flutter analyze lib
+  flutter test
+  ```
+
+- The `.env.*` files hold live credentials and are not in the repo. Never
+  commit them, and never print their values.
+
+---
+
+## W1. GIF export parity with macOS
+
+*Written 2026-10-20 from origin/develop. Line numbers drift; search for the
+symbols.*
+
+macOS shipped three GIF behaviours in 1.0.7 (#319, #326) that Windows lacks.
+The macOS code says it was ported value for value from the Windows policy,
+plus these additions. This task ports them back.
+
+### 1. Size presets and the long-edge cap
+
+**macOS:** `macos/Runner/Capture/Export/GifExportPolicy.swift`
+- Long edge capped at `small` = 480, `medium` = 720, `large` = 1080. An
+  unknown, empty or missing preset falls back to 1080. The match is
+  case-insensitive and trimmed (`maxLongEdge(forSizePreset:)`).
+- `renderSize(canvasSize:maxLongEdge:)` keeps the aspect, rounds to whole
+  pixels with a minimum of 1, and returns the canvas unchanged if it already
+  fits.
+- The frame rate stays 15 fps for every preset. Dimensions are the only
+  file-size lever.
+- `intermediateRenderSize` rounds to even dimensions. Two callers must get the
+  same answer: the renderer, and the size reported to Flutter, which
+  rasterises caption bitmaps against it. If they disagree, burned-in captions
+  are composited at the wrong scale.
+- Tests: `macos/RunnerTests/GifExportPolicyTests.swift`.
+
+**Windows today:**
+- `windows/runner/Capture/Export/export_pipeline.cpp` (about 757-758) sets
+  `gif_config.width/height` to the full canvas.
+- `windows/runner/Capture/Export/export_geometry.cpp` (about 161-168,
+  `ResolveExportPixelSize`) reads `gif_size` and then discards it with
+  `(void)gif_size`. Its comment says a Windows cap "would land exactly here".
+- The bridge already receives the value (`export_router.cpp`, about 419,
+  reads `"gifSize"`).
+- The Flutter picker (`lib/app/home/export/widgets/export_file_dialog.dart`,
+  about 351-376) is not gated by platform. Its caption, "Larger sizes look
+  sharper but make bigger files", is false on Windows until this lands. Once
+  it lands it is true, so no gate is needed.
+
+**Do:**
+- Add the presets, the default and `RenderSize` to `gif_export_policy.{h,cpp}`,
+  value for value with the Swift.
+- Make `ResolveExportPixelSize` return the capped, even-rounded size when the
+  format is GIF.
+- Downscale the composited frame to that size before the WIC encode, and
+  pass the capped size into `gif_config`.
+- Rewrite `windows/runner_tests/export_geometry_test.cpp`
+  `FormatAndGifSizeNeverChangeTheAnswer` (about line 386), which pins today's
+  no-cap behaviour. Do not just delete it.
+- Add `gif_export_policy_test.cpp` cases mirroring `GifExportPolicyTests.swift`
+  for the presets and the size.
+- Extend the GIF case in `export_pipeline_test.cpp` to assert the decoded
+  GIF's size for each preset.
+
+### 2. Drift-free frame delays
+
+**macOS:** `GifExportPolicy.DelayAccumulator` (`GifExportPolicy.swift`, about
+154), used by `GifEncoder.swift`. It is fed the real gap between kept frames
+and carries the fractional-centisecond remainder, so the stamped total tracks
+wall-clock time. At 15 fps the delays alternate 7, 6, 7, 7, 6… and average
+6.667 cs. The per-frame clamps still apply: a 2 cs floor and a 0xFFFF ceiling.
+
+**Windows today:** `windows/runner/Encoding/gif_encoder.cpp` (about 343-345)
+stamps each frame with the stateless `GifDelayCentiseconds` (in
+`gif_export_policy.cpp`). That rounds every gap to 7 cs, so a 15 fps GIF plays
+at about 14.3 fps, about 5% slow. `gif_export_policy.h` admits "~14.3 fps".
+
+**Do:**
+- Add a stateful accumulator to `gif_export_policy.{h,cpp}` that matches the
+  Swift struct line for line, and use it in `GifEncoder::WriteVideoFrame`.
+- Tests: N frames at 15 fps must sum to `round(N * 100 / 15)` cs within 1 cs.
+  Also test the floor and ceiling clamps and the mix of 7s and 6s, as the
+  Swift tests do.
+
+### 3. Stale comments and docs
+
+- `windows/runner/Capture/Export/gif_export_policy.h` (about lines 3-6) and
+  `export_geometry.h` (about 149-153) still say macOS has no real GIF encoder
+  and that its "gif" format downgrades to a video container. That has been
+  false since #319. Say instead that macOS has a native path ported from this
+  file. Once parts 1 and 2 land, the two match.
+- `docs/features.md`: the Windows GIF row (about 107) is marked done with no
+  note of these gaps. Keep it accurate as it ships.
+- `GifExportPolicy.swift` (about 12-24) lists the cap and the accumulator as
+  Windows divergences. Update it when they are gone.
+
+### Done when
+
+- [ ] Small, Medium and Large give 480-, 720- and 1080-long-edge GIFs on
+  Windows, and an unknown or missing preset gives 1080.
+- [ ] Burned-in captions on a capped GIF are laid out for the capped size.
+- [ ] Cumulative delay tracks wall-clock time (tests), and a 10 s, 15 fps
+  export plays in 10 s, not about 10.5 s.
+- [ ] The rewritten geometry test and the new policy and pipeline tests pass
+  in the `ctest` run above; Flutter validation passes.
+- [ ] Checked by eye: export one GIF per preset from a real recording and
+  open each in a browser. Check its size, its duration against the source,
+  and that it looks sharp.
+- [ ] Comments and `docs/features.md` updated, and the `TODOS.md` entry moved
+  to *Recently closed*.
