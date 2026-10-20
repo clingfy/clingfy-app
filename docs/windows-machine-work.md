@@ -207,3 +207,16 @@ and reordering), with no silent trimming.
 - [ ] A long recording trimmed under 60 s exports.
 - [ ] MP4 and MOV are unaffected.
 - [ ] Tests pass, and the `TODOS.md` entry is moved to *Recently closed*.
+
+---
+
+## Not briefed yet
+
+`TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists
+every other Windows gap found on 2026-10-20, each with its source. Some
+examples: capture quality and frame rate, exclude-from-capture, cursor
+highlight, the side-by-side / stacked / background camera layouts, the export
+destination pre-flight, colour-grade parity, automatic updates and signing.
+When one is picked up, write its brief here as W3, W4, and so on, in the
+shape of W1.
+
