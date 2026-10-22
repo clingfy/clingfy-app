@@ -68,10 +68,21 @@ class HomeErrorMapper {
           label: l10n.openSettings,
           onPressed: () => openSystemSettings('microphone'),
         );
+      // These three take the native reason as their detail. It used to be
+      // dropped, so a failed recording read "A recording error occurred: "
+      // with nothing after the colon: Windows sends the code ahead of the
+      // reason, and macOS sends the code itself as the message when a native
+      // error carries none. With no usable reason, say so in a whole sentence.
       case NativeErrorCode.recordingError:
-        message = l10n.errRecordingError('');
+        final detail = usableDetail(verbatimFallback);
+        message = detail != null
+            ? l10n.errRecordingError(detail)
+            : l10n.errRecordingErrorNoReason;
       case NativeErrorCode.outputUrlError:
-        message = l10n.errOutputUrlError('');
+        final detail = usableDetail(verbatimFallback);
+        message = detail != null
+            ? l10n.errOutputUrlError(detail)
+            : l10n.errOutputUrlErrorNoReason;
       case NativeErrorCode.accessibilityPermissionRequired:
         message = l10n.errAccessibilityPermissionRequired;
         action = ToolbarMessageAction(
@@ -79,7 +90,10 @@ class HomeErrorMapper {
           onPressed: () => openSystemSettings('accessibility'),
         );
       case NativeErrorCode.exportError:
-        message = l10n.errExportError('');
+        final detail = usableDetail(verbatimFallback);
+        message = detail != null
+            ? l10n.errExportError(detail)
+            : l10n.errExportErrorNoReason;
       case NativeErrorCode.cameraPermissionDenied:
         message = isWindows()
             ? l10n.errCameraPermissionDeniedWindows
@@ -206,5 +220,25 @@ class HomeErrorMapper {
     }
 
     return HomeErrorPresentation(message: message, action: action);
+  }
+
+  /// The export toast for an [EXPORT_ERROR]-style failure: the native reason,
+  /// or a whole sentence when there is none.
+  static String exportErrorMessage(AppLocalizations l10n, String? reason) {
+    final detail = usableDetail(reason);
+    return detail != null
+        ? l10n.errExportError(detail)
+        : l10n.errExportErrorNoReason;
+  }
+
+  /// [text] if it is a reason worth showing: not empty, and not just an error
+  /// code. macOS reports a native error with no message as its code (`message
+  /// ?? code`), so the "reason" can be the very code being mapped. Shared by
+  /// every surface that puts a native reason after a localized prefix.
+  static String? usableDetail(String? text) {
+    final trimmed = text?.trim();
+    if (trimmed == null || trimmed.isEmpty) return null;
+    if (RegExp(r'^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$').hasMatch(trimmed)) return null;
+    return trimmed;
   }
 }

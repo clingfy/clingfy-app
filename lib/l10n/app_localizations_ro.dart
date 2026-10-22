@@ -1754,6 +1754,18 @@ class AppLocalizationsRo extends AppLocalizations {
   }
 
   @override
+  String get errRecordingErrorNoReason =>
+      'Înregistrarea s-a oprit din cauza unei erori, dar nu a fost raportat niciun motiv. Încearcă din nou. Dacă se repetă, deschide Setări › Diagnosticare și trimite fișierul de jurnal de azi echipei de suport.';
+
+  @override
+  String get errOutputUrlErrorNoReason =>
+      'Fișierul de ieșire nu a putut fi creat și nu a fost raportat niciun motiv. Verifică dacă folderul de salvare există și poți scrie în el, apoi încearcă din nou.';
+
+  @override
+  String get errExportErrorNoReason =>
+      'Exportul a eșuat, dar nu a fost raportat niciun motiv. Încearcă din nou. Dacă se repetă, deschide Setări › Diagnosticare și trimite fișierul de jurnal de azi echipei de suport.';
+
+  @override
   String errOutputUrlError(Object error) {
     return 'Nu s-a putut crea fișierul de ieșire: $error';
   }

@@ -1738,6 +1738,18 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String get errRecordingErrorNoReason =>
+      'The recording stopped because of an error, but no reason was reported. Try again. If it keeps happening, open Settings › Diagnostics and send today\'s log file to support.';
+
+  @override
+  String get errOutputUrlErrorNoReason =>
+      'Could not create the output file, and no reason was reported. Check that the save folder exists and you can write to it, then try again.';
+
+  @override
+  String get errExportErrorNoReason =>
+      'The export failed, but no reason was reported. Try again. If it keeps happening, open Settings › Diagnostics and send today\'s log file to support.';
+
+  @override
   String errOutputUrlError(Object error) {
     return 'Could not create output file: $error';
   }

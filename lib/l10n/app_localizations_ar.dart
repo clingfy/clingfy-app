@@ -1723,6 +1723,18 @@ class AppLocalizationsAr extends AppLocalizations {
   }
 
   @override
+  String get errRecordingErrorNoReason =>
+      'توقف التسجيل بسبب خطأ، لكن لم يُذكر السبب. حاول مرة أخرى. إذا تكرر ذلك، افتح الإعدادات › التشخيص وأرسل ملف سجل اليوم إلى الدعم.';
+
+  @override
+  String get errOutputUrlErrorNoReason =>
+      'تعذّر إنشاء ملف الإخراج، ولم يُذكر السبب. تأكد من وجود مجلد الحفظ ومن إمكانية الكتابة فيه، ثم حاول مرة أخرى.';
+
+  @override
+  String get errExportErrorNoReason =>
+      'فشل التصدير، لكن لم يُذكر السبب. حاول مرة أخرى. إذا تكرر ذلك، افتح الإعدادات › التشخيص وأرسل ملف سجل اليوم إلى الدعم.';
+
+  @override
   String errOutputUrlError(Object error) {
     return 'تعذر إنشاء ملف المخرجات: $error';
   }

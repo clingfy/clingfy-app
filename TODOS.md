@@ -480,12 +480,6 @@ chroma-key toggle during a recording reconfigures the session in other ways
 and was not checked. Projects recorded before this fix keep their empty segment
 lists; nothing repairs them.
 
-### A recording failure tells the user nothing — code
-
-*Found 2026-10-19.* A stop failure surfaces as `RECORDING_ERROR`, which
-`home_error_mapper.dart` maps to `errRecordingError('')`: "A recording error
-occurred: " followed by nothing. The native message is dropped.
-
 ### The screen merger matches audio tracks by position, and inserts the whole segment length — code
 
 *Found 2026-10-17.* `RecordingSegmentMerger` keys composition tracks by each
@@ -1106,6 +1100,17 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **A recording failure told the user nothing** (fixed 2026-10-22). It read
+  "A recording error occurred: " with no reason after the colon, for two
+  reasons:
+  - Windows sends the code ahead of the reason.
+  - macOS sends the code itself as the message when a native error has none
+    (`RecordingFinalizer.errorMessage`: `message ?? code`).
+
+  `HomeErrorMapper` now shows the native reason. With none, or with only the
+  code, it shows a whole sentence that points to Settings › Diagnostics.
+  Export errors and output-file errors had the same hole and get the same fix.
 
 - **Single-pass GIF export** (done 2026-10-20). Frames go from the export's
   render loop straight to the GIF encoder, with no temp MOV. On a 10 s 1080p

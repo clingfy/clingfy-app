@@ -3304,6 +3304,24 @@ abstract class AppLocalizations {
   /// **'A recording error occurred: {error}'**
   String errRecordingError(Object error);
 
+  /// No description provided for @errRecordingErrorNoReason.
+  ///
+  /// In en, this message translates to:
+  /// **'The recording stopped because of an error, but no reason was reported. Try again. If it keeps happening, open Settings › Diagnostics and send today\'s log file to support.'**
+  String get errRecordingErrorNoReason;
+
+  /// No description provided for @errOutputUrlErrorNoReason.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not create the output file, and no reason was reported. Check that the save folder exists and you can write to it, then try again.'**
+  String get errOutputUrlErrorNoReason;
+
+  /// No description provided for @errExportErrorNoReason.
+  ///
+  /// In en, this message translates to:
+  /// **'The export failed, but no reason was reported. Try again. If it keeps happening, open Settings › Diagnostics and send today\'s log file to support.'**
+  String get errExportErrorNoReason;
+
   /// No description provided for @errOutputUrlError.
   ///
   /// In en, this message translates to:
