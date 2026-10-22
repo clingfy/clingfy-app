@@ -8918,6 +8918,59 @@ final class AppDelegateLaunchTests: XCTestCase {
   }
 }
 
+/// The live cursor highlighter showed a quarter of a circle beside the pointer
+/// on every click, on screen and in the recording: the outline's layer had a
+/// zero frame, so the pulse scaled it about the view's corner and pushed it
+/// off the panel.
+final class CursorViewTests: XCTestCase {
+  private func makeView() -> CursorView {
+    let view = CursorView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+    view.ringSize = 60
+    view.layout()
+    return view
+  }
+
+  func testTheRingsFillTheViewSoThePulseScalesAboutItsCentre() {
+    let view = makeView()
+    let (ring, clickRing) = view._testLayers
+    for layer in [ring, clickRing] {
+      XCTAssertEqual(layer.frame, view.bounds)
+      XCTAssertEqual(layer.anchorPoint, CGPoint(x: 0.5, y: 0.5))
+      XCTAssertEqual(layer.position, CGPoint(x: 60, y: 60), "the pulse grows from the centre")
+    }
+    // The ring itself is centred in the view.
+    XCTAssertEqual(ring.path?.boundingBox, CGRect(x: 30, y: 30, width: 60, height: 60))
+    // Fully scaled, the outline still fits inside the panel.
+    let outline = clickRing.path?.boundingBox ?? .zero
+    let side = outline.width * 1.35
+    let pulsed = CGRect(
+      x: clickRing.position.x - side / 2, y: clickRing.position.y - side / 2,
+      width: side, height: side)
+    XCTAssertTrue(view.bounds.contains(pulsed.insetBy(dx: 1, dy: 1)), "pulse clipped: \(pulsed)")
+  }
+
+  func testTheOutlineIsHiddenAtRestAndAfterAPulse() {
+    let view = makeView()
+    let clickRing = view._testLayers.clickRing
+    XCTAssertEqual(clickRing.opacity, 0)
+    view.pulseClick()
+    XCTAssertEqual(clickRing.opacity, 0, "the animation shows it; the resting value must stay 0")
+    XCTAssertNotNil(clickRing.animation(forKey: "pulse"))
+  }
+
+  func testTheRingsRenderAtTheWindowScale() {
+    let panel = NSPanel(
+      contentRect: CGRect(x: 0, y: 0, width: 120, height: 120),
+      styleMask: [.borderless], backing: .buffered, defer: false)
+    let view = makeView()
+    panel.contentView = view
+    view.viewDidChangeBackingProperties()
+    let (ring, clickRing) = view._testLayers
+    XCTAssertEqual(ring.contentsScale, panel.backingScaleFactor)
+    XCTAssertEqual(clickRing.contentsScale, panel.backingScaleFactor)
+  }
+}
+
 final class RecordingProjectPathsEnclosingRootTests: XCTestCase {
   func testAFileOutsideAnyProjectHasNoEnclosingProject() {
     let url = URL(fileURLWithPath: "/tmp/not-a-project/clip.mov")
