@@ -115,7 +115,7 @@ Marked with what the code did with each.
 | **Voice cleanup** | Pluggable `AudioEnhancementPipeline`. v1 = RNNoise. Future High Quality = DeepFilterNet. The UI never names engines. | **Shipped both platforms.** UI exposes Off / Light / Balanced. High Quality **deliberately not offered** — DeepFilterNet is not vendored, so the level would be a relabelled Balanced. The `highQuality` wire value still parses. |
 | **Subtitle export** | Default = video + `.srt` + `.vtt` sidecars. Burn-in opt-in. | **Shipped.** Per-recording destination added in 1.2.0 (`CaptionTrack.destination`, null = follow app preference). |
 | **Local models** | A first-class `LocalModelManager` — download-on-first-use, hash verify, version, disk usage, delete, offline state, per-model license note. Built early, not as an afterthought. | **Not built as specified.** Only the caption-specific path exists. Settings › Storage (1.1.0) shows and deletes the speech model, which is the user-visible slice of it. |
-| **Export quality** | Audio presets — Standard 128 / High 192 / Best 256 kbps. | **Unbuilt.** |
+| **Export quality** | Audio presets — Standard 128 / High 192 / Best 256 kbps. | **Shipped, with a different ladder** (#592): Standard 192 / High 256 / Best 320 kbps, because macOS had always exported 192. The tier is a ceiling, raised only at 48 kHz. Windows clamps every tier to 192 kbps. |
 | **Build order** | Foundation first; then features easiest-first. | **Not what happened.** See "What the plan got wrong". |
 | **Pricing / gating** | No per-feature Pro gates. Trial = 14 days OR 3 exports. The app-level gate covers all local editing. | **Held.** No per-feature gating code was ever written. `LicenseController.canExport` gates on `trialExportsRemaining > 0`. |
 
@@ -904,7 +904,8 @@ In rough order of user-visible value per unit of risk.
    standalone. Build it with whichever of DeepFilterNet, M2M-100 or the
    whisper.cpp models arrives first, since each of those is blocked on it and it
    has no user-visible value alone.
-7. **Export audio presets.** Small, self-contained, no dependencies.
+7. ~~**Export audio presets.**~~ Done in #592 (192 / 256 / 320 kbps;
+   Windows clamped to 192).
 8. **High Quality voice cleanup (DeepFilterNet).** The pipeline is already
    engine-agnostic and the wire value already parses, so this is a vendoring +
    model-download task. Blocked on item 6.
