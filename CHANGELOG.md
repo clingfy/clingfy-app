@@ -1,3 +1,31 @@
+## [Unreleased]
+
+### Export
+- **Choose the export audio quality.** Standard, High or Best (192, 256 or 320 kbps AAC) in the export dialog. macOS had always exported 192 kbps and Windows 128, without saying so; both now default to 192. Windows exports every tier at 192 kbps for now. (#592)
+- **GIFs render in one pass.** On macOS there is no temp video any more: a GIF is about 30% faster to export and about a third the size, because the video codec's noise no longer reaches the GIF. (#615)
+- **GIFs are capped at 60 seconds** of exported length (after cuts). The export dialog says so and disables Export, rather than producing a huge, slow GIF. (#614)
+
+### Subtitles
+- **Choose the speech model**, and switch it without restarting the app. (#597)
+- **A transcript records which model produced it**, and Settings › Storage names each speech model on disk with its real size. (#596, #593, #591)
+- **An Arabic-first subtitle burns in right to left**, matching its `.srt`. (#601)
+- Deleting a speech model while it is still unloading waits for the unload, instead of removing its files from under Core ML. (#598)
+
+### Audio
+- **Audio settings belong to the recording.** Gain, volume and voice cleanup are saved with each recording instead of app-wide, so boosting one take no longer changes another, and audio edits can be undone like every other edit. (#588)
+- Windows reports microphone levels, so the quiet-mic warning can fire there. (#579)
+
+### Recording (macOS)
+- **A paused take's camera comes back at once on resume**, not a second late, and stays in sync with the screen. (#607, #608)
+- **A paused take no longer silently re-encodes as H.264**, and is never left unreachable when its parts will not join. (#605, #606)
+- **Pausing on macOS 13–14 no longer leaves a take that cannot be stopped.** (#609)
+- **A screen macOS will not supply fails with a reason** instead of "The operation could not be completed". (#611)
+- The wait for a recording segment to finish writing is bounded. (#584)
+
+### Fixed
+- Launching no longer logs an "unrecognized selector" exception. (#610)
+- A macOS log line survives a crash that happens right after it. (#604)
+
 ## [1.2.0] - 2026-09-23
 
 A reliability release, and most of it is about Clingfy getting out of your way

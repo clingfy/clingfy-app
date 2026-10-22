@@ -43,6 +43,7 @@ there, so there is nothing to ship).
 | Live mic level meter | dBFS meter while setting up. | ✅ | 🚧 |
 | Exclude mic from system audio | Stops mic bleed into the system track. | ✅ | n/a (WASAPI captures system audio as loopback on the render endpoint and the mic on a separate capture endpoint, so the mic is never in the system track; the toggle is hidden rather than always-on) |
 | Export gain + volume | Per-export audio gain (dB) and volume. | ✅ | ✅ |
+| Export audio quality | Standard / High / Best AAC — 192 / 256 / 320 kbps, chosen in the export dialog (the tier is a ceiling, raised only at 48 kHz). | ✅ | 🚧 (every tier exports at 192 kbps; the higher tiers are not offered) |
 | Loudness normalization | One-click scale at export so the loudest sample lands on a target you pick (−24 to −6 dBFS). A sample-peak match, not LUFS. Export only — never previewed. Mic only on recordings with a separate mic track. | ✅ | ✅ |
 | Live audio mix preview | Hear volume and gain changes while editing; voice cleanup too, on recordings with a separate mic track. Loudness normalization is never previewed on either platform. | ✅ | 🚧 (volume only until a real cut or trim) |
 | Voice cleanup | On-device background-noise removal for the mic (Light / Balanced), previewed live and baked at export. Mic only — system audio is never denoised. Off by default. | ✅ | 🚧 (export baked; live preview only after a cut) |
@@ -85,9 +86,8 @@ there, so there is nothing to ship).
 | Smooth edited playback | Preview plays through cuts and reorders with no stalls. | ✅ | ✅ |
 | WYSIWYG export bake | Cuts export exactly as previewed — zoom, cursor, camera, and audio stay in sync. | ✅ | ✅ |
 | Undo / redo | Full edit history for clip, color and subtitle edits. | ✅ | ✅ |
-| Auto-subtitles | On-device transcription (WhisperKit), an editable cue list, captions in the live preview, and burn-in or `.srt` / `.vtt` sidecars on export. | ✅ | — (reports unavailable with a reason) |
 | Color correction | One-click Auto enhance, plus manual exposure / contrast / saturation / temperature / tint. Live preview + export bake. | ✅ | ✅ |
-| Auto-subtitles | On-device transcription (WhisperKit), a cue-level editor with undo/redo, captions in the live preview, and four destinations: Off / Burn in / File / Both, writing `.srt` and `.vtt` beside the video. Requires Apple silicon (v1.1.0). | ✅ | — |
+| Auto-subtitles | On-device transcription (WhisperKit), a cue-level editor with undo/redo, captions in the live preview, and four destinations: Off / Burn in / File / Both, writing `.srt` and `.vtt` beside the video. Choose the spoken language or let it detect, and the speech model. Requires Apple silicon (v1.1.0). | ✅ | — (reports unavailable with a reason) |
 
 ## Canvas & layout
 
@@ -104,7 +104,7 @@ there, so there is nothing to ship).
 
 | Feature | What it does | macOS | Windows (beta) |
 |---|---|---|---|
-| Formats | MP4, MOV, animated GIF. | ✅ | ✅ |
+| Formats | MP4, MOV, animated GIF. GIF: Small / Medium / Large size presets, at most 60 s long, rendered in one pass on macOS. | ✅ | ✅ (GIF: no size presets or length check yet) |
 | Codecs | HEVC or H.264. | ✅ | 🚧 |
 | Resolution presets | Auto / 1080p / 1440p / 4K / 8K / custom. | ✅ | 🚧 |
 | Bitrate control | Auto / low / medium / high. | ✅ | 🚧 |
@@ -138,8 +138,9 @@ there, so there is nothing to ship).
 ## Roadmap (not started)
 
 - Auto-subtitle translation (transcription ships on macOS; translating the
-  transcript into another language needs a second engine — Whisper cannot
-  translate out of English)
+  transcript into another language needs a second engine — Whisper can only
+  translate into English, and the `large-v3-turbo` model cannot translate at
+  all)
 - AI-assisted recording workflows
 - Collaborative recording tools
 
