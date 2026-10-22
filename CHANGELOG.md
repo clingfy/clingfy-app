@@ -23,6 +23,7 @@
 - The wait for a recording segment to finish writing is bounded. (#584)
 
 ### Fixed
+- **The click highlight is a whole ring again.** With the live cursor highlight on, every click drew a quarter of a circle beside the pointer, on screen and in the recording; after the first click its outline also stayed on for good, and on a Retina display it was soft. (#617)
 - Launching no longer logs an "unrecognized selector" exception. (#610)
 - A macOS log line survives a crash that happens right after it. (#604)
 
