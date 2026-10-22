@@ -99,6 +99,32 @@ void main() {
     expect(harness.recording.elapsed, Duration.zero);
   });
 
+  test('a recordingFailed with a blank error keeps the code, not ""', () async {
+    // macOS sends `err.message ?? ""`. Stored as "", it outranked the code on
+    // macOS (`errorMessage ?? errorCode`), so the toolbar showed nothing.
+    final harness = await createHarness();
+    final sessionId = await startRecordingSession(harness.recording);
+
+    await _emitWorkflowEvent({
+      'type': 'recordingFailed',
+      'sessionId': sessionId,
+      'stage': 'capture',
+      'code': NativeErrorCode.screenRecordingPermission,
+      'error': '',
+    });
+
+    expect(
+      harness.recording.errorCode,
+      NativeErrorCode.screenRecordingPermission,
+    );
+    expect(
+      harness.recording.errorMessage,
+      NativeErrorCode.screenRecordingPermission,
+      reason: 'falls back to the code, which the mapper localizes',
+    );
+    expect(harness.recording.displayErrorFallback, isNull);
+  });
+
   test('duplicate recordingFailed is tolerated (second is stale)', () async {
     final harness = await createHarness();
     final sessionId = await startRecordingSession(harness.recording);

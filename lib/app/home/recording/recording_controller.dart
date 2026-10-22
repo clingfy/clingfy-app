@@ -1112,7 +1112,15 @@ class RecordingController extends ChangeNotifier {
         event['code']?.toString() ??
         event['stage']?.toString() ??
         NativeErrorCode.recordingError;
-    final error = event['error']?.toString();
+    // Blank means no reason, as a blank PlatformException message does. Kept
+    // as "", it outranked the code on macOS (`errorMessage ?? errorCode`): the
+    // toolbar mapped "" to "" and showed nothing, not even the localized
+    // message for the code, and a start refused for screen permission lost
+    // its Open Settings button with it.
+    final rawError = event['error']?.toString();
+    final error = (rawError == null || rawError.trim().isEmpty)
+        ? null
+        : rawError;
 
     // Phase 10.4: once the workflow reached a preview (or export) phase the
     // recording already finalized successfully — native cannot legitimately

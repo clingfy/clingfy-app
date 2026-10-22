@@ -4,6 +4,7 @@ import 'package:clingfy/app/infrastructure/analytics/analytics_events.dart';
 import 'package:clingfy/app/infrastructure/analytics/analytics_service.dart';
 import 'package:clingfy/core/overlay/overlay_mode.dart';
 import 'package:clingfy/core/bridges/native_bar_action.dart';
+import 'package:clingfy/app/home/home_error_mapper.dart';
 import 'package:clingfy/core/bridges/native_error_codes.dart';
 import 'package:clingfy/core/export/models/export_settings_types.dart';
 import 'package:clingfy/app/home/widgets/crash_reporting_notice.dart';
@@ -534,7 +535,9 @@ class HomeActions {
               : e.code == NativeErrorCode.advancedCameraExportFailed
               ? (e.message ??
                     'Advanced camera styling could not be rendered for export.')
-              : l10n.errExportError(e.message ?? 'Unknown error'));
+              // Not "Unknown error": that was English in every locale, and
+              // an empty message left "...during export: " hanging.
+              : HomeErrorMapper.exportErrorMessage(l10n, e.message));
 
       uiState.setNotice(
         HomeUiNotice(message: message, tone: HomeUiNoticeTone.error),
