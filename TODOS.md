@@ -370,18 +370,6 @@ The cursor merge is now best effort, like the audio merge. A sidecar problem
 finishes the take without cursor data (and removes any partial `cursor.json`)
 instead of failing a Stop whose `screen.mov` was already written.
 
-### Workflow events are sent to Flutter off the main thread — code
-
-*Found 2026-10-19 on a live paused take.* On resume Flutter logged "The
-'com.clingfy/workflow/events' channel sent a message from native to Flutter on a
-non-platform thread … may result in data loss or crashes".
-`MainFlutterWindow.emitWorkflowEvent` calls the event sink directly, and
-`ScreenRecorderEventBridge` reaches it from capture callbacks on background
-queues.
-
-**To close:** hop to the main queue in `emitWorkflowEvent` when not already on
-it, and check the other event sinks for the same pattern.
-
 ### ~~The recording metadata never lists its segments~~ — DONE 2026-10-19 (camera sync on paused takes)
 
 Two bugs broke the camera on paused takes. Both were there since separate
@@ -1100,6 +1088,18 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Native sends to Flutter happened off the main thread** (fixed 2026-10-24).
+  `FlutterMainThread` (`PlayerEventHandler.swift`) wraps each event sink at
+  `onListen`: the player, workflow, screen-recorder and updater channels.
+  Also hopped to main:
+  - export progress (the prepasses report from render queues);
+  - the preview's AVPlayer status and ready-for-display observers;
+  - the end-of-playback handler;
+  - camera connect and disconnect.
+
+  On main a send still runs at once, so ordering is unchanged. Live: a paused
+  take, stop and preview open logged no "non-platform thread" warnings.
 
 - **A recording failure told the user nothing** (fixed 2026-10-22). It read
   "A recording error occurred: " with no reason after the colon, for two

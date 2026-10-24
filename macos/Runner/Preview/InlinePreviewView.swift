@@ -1836,99 +1836,103 @@ final class InlinePreviewView: NSView {
     guard let item = player?.currentItem else { return }
 
     let obs1 = item.observe(\.status) { [weak self] observedItem, _ in
-      guard let self else { return }
+      FlutterMainThread.run { [weak self] in
+        guard let self else { return }
 
-      // Check if this callback is for the current open token
-      if self.currentOpenToken != token {
+        // Check if this callback is for the current open token
+        if self.currentOpenToken != token {
+          NativeLogger.d(
+            "Player", "Ignoring status change from stale open",
+            context: [
+              "observedToken": token.uuidString,
+              "currentToken": self.currentOpenToken?.uuidString ?? "nil",
+            ])
+          return
+        }
+
+        let status = observedItem.status
         NativeLogger.d(
-          "Player", "Ignoring status change from stale open",
+          "Player", "AVPlayerItem status changed",
           context: [
-            "observedToken": token.uuidString,
-            "currentToken": self.currentOpenToken?.uuidString ?? "nil",
+            "status": statusString(status),
+            "token": token.uuidString,
           ])
-        return
-      }
 
-      let status = observedItem.status
-      NativeLogger.d(
-        "Player", "AVPlayerItem status changed",
-        context: [
-          "status": statusString(status),
-          "token": token.uuidString,
-        ])
+        if status == .failed {
+          if let error = observedItem.error {
+            // Safety Net Retry
+            let now = Date()
+            let timeSinceOpen = now.timeIntervalSince(self.lastOpenRequestTime ?? now)
 
-      if status == .failed {
-        if let error = observedItem.error {
-          // Safety Net Retry
-          let now = Date()
-          let timeSinceOpen = now.timeIntervalSince(self.lastOpenRequestTime ?? now)
+            if self.openRetryCount < 1 && timeSinceOpen < 2.0 {
+              self.openRetryCount += 1
+              let retryPath = self.currentVideoPath ?? ""
+              NativeLogger.w(
+                "Player", "AVPlayerItem failed early, triggering safety net retry",
+                context: [
+                  "path": retryPath,
+                  "attempt": self.openRetryCount,
+                  "timeSinceOpen": timeSinceOpen,
+                ])
 
-          if self.openRetryCount < 1 && timeSinceOpen < 2.0 {
-            self.openRetryCount += 1
-            let retryPath = self.currentVideoPath ?? ""
-            NativeLogger.w(
-              "Player", "AVPlayerItem failed early, triggering safety net retry",
+              DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                guard let self = self else { return }
+                // Only retry if the path hasn't changed
+                if self.currentVideoPath == retryPath,
+                  let sessionId = self.currentSessionId,
+                  let mediaSources = self.currentMediaSources
+                {
+                  self.open(mediaSources: mediaSources, sessionId: sessionId)
+                }
+              }
+              return  // Wait for the retry
+            }
+
+            NativeLogger.e(
+              "Player", "AVPlayerItem failed",
               context: [
-                "path": retryPath,
-                "attempt": self.openRetryCount,
-                "timeSinceOpen": timeSinceOpen,
+                "error": error.localizedDescription,
+                "token": token.uuidString,
               ])
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-              guard let self = self else { return }
-              // Only retry if the path hasn't changed
-              if self.currentVideoPath == retryPath,
-                let sessionId = self.currentSessionId,
-                let mediaSources = self.currentMediaSources
-              {
-                self.open(mediaSources: mediaSources, sessionId: sessionId)
-              }
+            // Emit previewFailed event
+            if let path = self.currentVideoPath,
+              let sessionId = self.currentSessionId,
+              !self.hasEmittedReadyForCurrentToken
+            {
+              self.emitPreviewLifecycleEvent(
+                type: "previewFailed",
+                sessionId: sessionId,
+                path: path,
+                token: token,
+                reason: "AVPlayerItem failed",
+                error: error.localizedDescription
+              )
+              self.hasEmittedReadyForCurrentToken = true
             }
-            return  // Wait for the retry
           }
-
-          NativeLogger.e(
-            "Player", "AVPlayerItem failed",
-            context: [
-              "error": error.localizedDescription,
-              "token": token.uuidString,
-            ])
-
-          // Emit previewFailed event
-          if let path = self.currentVideoPath,
-            let sessionId = self.currentSessionId,
-            !self.hasEmittedReadyForCurrentToken
-          {
-            self.emitPreviewLifecycleEvent(
-              type: "previewFailed",
-              sessionId: sessionId,
-              path: path,
-              token: token,
-              reason: "AVPlayerItem failed",
-              error: error.localizedDescription
-            )
-            self.hasEmittedReadyForCurrentToken = true
-          }
+        } else if status == .readyToPlay {
+          // Reset retry count on success
+          self.openRetryCount = 0
+          // Player item is ready, but we need to check if layer is ready too
+          self.checkAndEmitPreviewReady(token: token)
         }
-      } else if status == .readyToPlay {
-        // Reset retry count on success
-        self.openRetryCount = 0
-        // Player item is ready, but we need to check if layer is ready too
-        self.checkAndEmitPreviewReady(token: token)
-      }
 
-      self.emitCurrentState()
+        self.emitCurrentState()
+      }
     }
 
     let obs2 = item.observe(\.duration) { [weak self] _, _ in
-      guard let self else { return }
+      FlutterMainThread.run { [weak self] in
+        guard let self else { return }
 
-      // Check token
-      if self.currentOpenToken != token {
-        return
+        // Check token
+        if self.currentOpenToken != token {
+          return
+        }
+
+        self.emitCurrentState()
       }
-
-      self.emitCurrentState()
     }
 
     itemObservers = [obs1, obs2]
@@ -1937,22 +1941,24 @@ final class InlinePreviewView: NSView {
     if let playerLayer = self.playerLayer {
       layerReadyObserver = playerLayer.observe(\.isReadyForDisplay, options: [.new]) {
         [weak self] layer, change in
-        guard let self else { return }
+        FlutterMainThread.run { [weak self] in
+          guard let self else { return }
 
-        if self.currentOpenToken != token {
-          return
-        }
+          if self.currentOpenToken != token {
+            return
+          }
 
-        let isReady = change.newValue ?? false
-        NativeLogger.d(
-          "Player", "playerLayer.isReadyForDisplay changed",
-          context: [
-            "isReady": isReady,
-            "token": token.uuidString,
-          ])
+          let isReady = change.newValue ?? false
+          NativeLogger.d(
+            "Player", "playerLayer.isReadyForDisplay changed",
+            context: [
+              "isReady": isReady,
+              "token": token.uuidString,
+            ])
 
-        if isReady {
-          self.checkAndEmitPreviewReady(token: token)
+          if isReady {
+            self.checkAndEmitPreviewReady(token: token)
+          }
         }
       }
     }
@@ -2154,6 +2160,12 @@ final class InlinePreviewView: NSView {
   }
 
   @objc private func playerDidFinishPlaying(note: NSNotification) {
+    // The end-of-playback notification can be posted off the main thread; the
+    // body seeks the player and sends to Flutter.
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { [weak self] in self?.playerDidFinishPlaying(note: note) }
+      return
+    }
     // Seek to zero
     let targetTime = CMTime.zero
     player?.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero)

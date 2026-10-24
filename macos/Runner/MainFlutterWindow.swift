@@ -862,9 +862,13 @@ class MainFlutterWindow: NSWindow {
             onProgress: { [weak self] progress in
               // Labelled payload, not a bare double. See JobProgress — the Dart
               // side and the Windows publisher implement the same shape.
-              self?.channel?.invokeMethod(
-                "updateExportProgress",
-                arguments: JobProgress.export(progress).toFlutter())
+              // The export prepasses report from their render queues, so hop:
+              // a channel send must be made on the main thread.
+              FlutterMainThread.run { [weak self] in
+                self?.channel?.invokeMethod(
+                  "updateExportProgress",
+                  arguments: JobProgress.export(progress).toFlutter())
+              }
             },
             result: result)
         } else {
@@ -1604,7 +1608,7 @@ final class AudioDevicesEventHandler: NSObject, FlutterStreamHandler {
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
     -> FlutterError?
   {
-    sink = events
+    sink = FlutterMainThread.eventSink(events)
     return nil
   }
   func onCancel(withArguments arguments: Any?) -> FlutterError? {
