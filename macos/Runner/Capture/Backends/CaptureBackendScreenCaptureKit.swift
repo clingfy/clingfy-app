@@ -377,6 +377,114 @@ enum RecordingSegmentMerger {
     let preset: String?
   }
 
+  /// What a segment's audio track is, as far as the file can say: its codec,
+  /// channel count and sample rate. A screen segment can hold system audio
+  /// and the microphone (ScreenCaptureKit records the mic into it whenever one
+  /// is selected), and the two differ in format in practice: system audio is
+  /// stereo, a microphone usually mono.
+  struct AudioRole: Hashable {
+    let formatID: AudioFormatID
+    let channels: UInt32
+    let sampleRate: Double
+  }
+
+  static func audioRole(of track: AVAssetTrack) -> AudioRole? {
+    guard
+      let format = track.formatDescriptions.first.map({ $0 as! CMAudioFormatDescription }),
+      let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee
+    else { return nil }
+    return AudioRole(
+      formatID: asbd.mFormatID, channels: asbd.mChannelsPerFrame, sampleRate: asbd.mSampleRate)
+  }
+
+  /// The segments laid end to end in one composition, ready to export.
+  ///
+  /// Audio is matched to its composition track by role, not by position. Keyed
+  /// by position (`audio-0`, `audio-1`), a segment that lacked a track, such
+  /// as a short one where no system audio arrived, shifted the next track into
+  /// its slot: the microphone was spliced into the system-audio track for that
+  /// stretch. Two tracks of one identical format still fall back to their
+  /// order, which is all the file can say about them.
+  ///
+  /// Each insert is clamped to the track's own time range. Inserting the whole
+  /// segment length read past the end of a track shorter than its segment,
+  /// which audio usually is by a few frames.
+  static func buildComposition(_ segmentURLs: [URL]) throws -> AVMutableComposition {
+    let composition = AVMutableComposition()
+    var cursorTime = CMTime.zero
+    var compositionTracks: [String: AVMutableCompositionTrack] = [:]
+
+    func compositionTrack(_ key: String, _ type: AVMediaType) throws -> AVMutableCompositionTrack {
+      if let existing = compositionTracks[key] { return existing }
+      guard
+        let created = composition.addMutableTrack(
+          withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid)
+      else {
+        throw flutterError(
+          NativeErrorCode.recordingError, "Unable to create composition track for merged recording")
+      }
+      compositionTracks[key] = created
+      return created
+    }
+
+    for segmentURL in segmentURLs {
+      let asset = AVURLAsset(url: segmentURL)
+      let duration = asset.duration
+      let videoTracks = asset.tracks(withMediaType: .video)
+      // Only a segment with no length is skipped. One that is merely missing
+      // its picture (a short resume on a static screen can write audio and no
+      // frame) still holds its place: the cursor, source audio and camera
+      // timelines all count its duration, and dropping it would put everything
+      // after it out of step with screen.mov.
+      guard duration.isNumeric, duration > .zero else {
+        NativeLogger.w(
+          "SCKBackend", "Skipping a segment with no duration in the merge",
+          context: ["segment": segmentURL.lastPathComponent])
+        continue
+      }
+      if videoTracks.isEmpty {
+        NativeLogger.w(
+          "SCKBackend", "A merged segment has no video; its time is kept",
+          context: ["segment": segmentURL.lastPathComponent, "seconds": duration.seconds])
+      }
+      let slot = CMTimeRange(start: .zero, duration: duration)
+
+      var placements: [(key: String, type: AVMediaType, track: AVAssetTrack)] = []
+      for (index, track) in videoTracks.enumerated() {
+        placements.append(("video-\(index)", .video, track))
+      }
+      var occurrences: [AudioRole: Int] = [:]
+      for (index, track) in asset.tracks(withMediaType: .audio).enumerated() {
+        let key: String
+        if let role = audioRole(of: track) {
+          let occurrence = occurrences[role, default: 0]
+          occurrences[role] = occurrence + 1
+          key = "audio-\(role.formatID)-\(role.channels)-\(Int(role.sampleRate))-\(occurrence)"
+        } else {
+          key = "audio-unknown-\(index)"
+        }
+        placements.append((key, .audio, track))
+      }
+
+      for placement in placements {
+        let available = CMTimeRangeGetIntersection(placement.track.timeRange, otherRange: slot)
+        guard available.duration > .zero else { continue }
+        let target = try compositionTrack(placement.key, placement.type)
+        try target.insertTimeRange(available, of: placement.track, at: cursorTime + available.start)
+        if placement.type == .video && target.preferredTransform == .identity {
+          target.preferredTransform = placement.track.preferredTransform
+        }
+      }
+
+      cursorTime = cursorTime + duration
+    }
+
+    guard cursorTime > .zero else {
+      throw flutterError(NativeErrorCode.videoFileMissing, "No recording segments to merge")
+    }
+    return composition
+  }
+
   static func mergeSegments(
     _ segmentURLs: [URL],
     to outputURL: URL,
@@ -402,41 +510,7 @@ enum RecordingSegmentMerger {
       "SCKBackend", "Segment merge inputs",
       context: ["segments": segmentURLs.map(segmentSummary)])
 
-    let composition = AVMutableComposition()
-    var cursorTime = CMTime.zero
-    var compositionTracks: [String: AVMutableCompositionTrack] = [:]
-
-    for segmentURL in segmentURLs {
-      let asset = AVURLAsset(url: segmentURL)
-      let duration = asset.duration
-
-      for (type, prefix) in [(AVMediaType.video, "video"), (AVMediaType.audio, "audio")] {
-        let tracks = asset.tracks(withMediaType: type)
-        for (index, track) in tracks.enumerated() {
-          let key = "\(prefix)-\(index)"
-          let compositionTrack =
-            compositionTracks[key]
-            ?? composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid)
-          guard let compositionTrack else {
-            throw flutterError(
-              NativeErrorCode.recordingError,
-              "Unable to create composition track for merged recording"
-            )
-          }
-          compositionTracks[key] = compositionTrack
-          try compositionTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: duration),
-            of: track,
-            at: cursorTime
-          )
-          if type == .video && compositionTrack.preferredTransform == .identity {
-            compositionTrack.preferredTransform = track.preferredTransform
-          }
-        }
-      }
-
-      cursorTime = cursorTime + duration
-    }
+    let composition = try buildComposition(segmentURLs)
 
     var lastError: Error?
 

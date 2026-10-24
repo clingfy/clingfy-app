@@ -10869,7 +10869,13 @@ final class RecordingSegmentMergerTests: XCTestCase {
   }
 
   /// A short HEVC .mov with an AAC track, BT.709-tagged like SCRecordingOutput.
-  private func makeSegment(_ name: String, seconds: Double = 0.5) throws -> URL {
+  /// `audioChannels` lists the audio tracks to write, one channel count each
+  /// (`[2, 1]` is stereo system audio plus a mono mic). `audioSeconds` makes
+  /// them shorter than the video, as real audio usually is by a few frames.
+  private func makeSegment(
+    _ name: String, seconds: Double = 0.5, audioChannels: [UInt32] = [1],
+    audioSeconds: Double? = nil
+  ) throws -> URL {
     let url = dir.appendingPathComponent(name)
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
     let width = 320
@@ -10890,14 +10896,16 @@ final class RecordingSegmentMergerTests: XCTestCase {
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height,
       ])
-    let audio = AVAssetWriterInput(
-      mediaType: .audio,
-      outputSettings: [
-        AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000,
-        AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000,
-      ])
+    let audioInputs = audioChannels.map { channels in
+      AVAssetWriterInput(
+        mediaType: .audio,
+        outputSettings: [
+          AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000,
+          AVNumberOfChannelsKey: channels, AVEncoderBitRateKey: 64000 * Int(channels),
+        ])
+    }
     writer.add(video)
-    writer.add(audio)
+    audioInputs.forEach { writer.add($0) }
     XCTAssertTrue(writer.startWriting())
     writer.startSession(atSourceTime: .zero)
 
@@ -10915,41 +10923,44 @@ final class RecordingSegmentMergerTests: XCTestCase {
       adaptor.append(pixels, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: 30))
     }
 
-    var asbd = AudioStreamBasicDescription(
-      mSampleRate: 48000, mFormatID: kAudioFormatLinearPCM,
-      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 4,
-      mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1, mBitsPerChannel: 32,
-      mReserved: 0)
-    var format: CMAudioFormatDescription?
-    CMAudioFormatDescriptionCreate(
-      allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
-      magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
-    var written = 0
-    let total = Int(seconds * 48000)
-    while written < total {
-      while !audio.isReadyForMoreMediaData { usleep(1000) }
-      let count = 1024
-      let samples = [Float](repeating: 0.05, count: count)
-      var block: CMBlockBuffer?
-      CMBlockBufferCreateWithMemoryBlock(
-        allocator: nil, memoryBlock: nil, blockLength: count * 4, blockAllocator: nil,
-        customBlockSource: nil, offsetToData: 0, dataLength: count * 4, flags: 0,
-        blockBufferOut: &block)
-      _ = samples.withUnsafeBytes {
-        CMBlockBufferReplaceDataBytes(
-          with: $0.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0,
-          dataLength: count * 4)
+    for (audio, channels) in zip(audioInputs, audioChannels) {
+      var asbd = AudioStreamBasicDescription(
+        mSampleRate: 48000, mFormatID: kAudioFormatLinearPCM,
+        mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+        mBytesPerPacket: 4 * channels, mFramesPerPacket: 1, mBytesPerFrame: 4 * channels,
+        mChannelsPerFrame: channels, mBitsPerChannel: 32, mReserved: 0)
+      var format: CMAudioFormatDescription?
+      CMAudioFormatDescriptionCreate(
+        allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
+        magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+      var written = 0
+      let total = Int((audioSeconds ?? seconds) * 48000)
+      while written < total {
+        while !audio.isReadyForMoreMediaData { usleep(1000) }
+        let count = min(1024, total - written)
+        let byteCount = count * 4 * Int(channels)
+        let samples = [Float](repeating: 0.05, count: count * Int(channels))
+        var block: CMBlockBuffer?
+        CMBlockBufferCreateWithMemoryBlock(
+          allocator: nil, memoryBlock: nil, blockLength: byteCount, blockAllocator: nil,
+          customBlockSource: nil, offsetToData: 0, dataLength: byteCount, flags: 0,
+          blockBufferOut: &block)
+        _ = samples.withUnsafeBytes {
+          CMBlockBufferReplaceDataBytes(
+            with: $0.baseAddress!, blockBuffer: block!, offsetIntoDestination: 0,
+            dataLength: byteCount)
+        }
+        var sample: CMSampleBuffer?
+        CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+          allocator: nil, dataBuffer: block!, formatDescription: format!, sampleCount: count,
+          presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: 48000),
+          packetDescriptions: nil, sampleBufferOut: &sample)
+        audio.append(sample!)
+        written += count
       }
-      var sample: CMSampleBuffer?
-      CMAudioSampleBufferCreateReadyWithPacketDescriptions(
-        allocator: nil, dataBuffer: block!, formatDescription: format!, sampleCount: count,
-        presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: 48000),
-        packetDescriptions: nil, sampleBufferOut: &sample)
-      audio.append(sample!)
-      written += count
+      audio.markAsFinished()
     }
     video.markAsFinished()
-    audio.markAsFinished()
     let done = expectation(description: "segment written")
     writer.finishWriting { done.fulfill() }
     wait(for: [done], timeout: 30)
@@ -11150,6 +11161,133 @@ final class RecordingSegmentMergerTests: XCTestCase {
     XCTAssertEqual(summary["codec"] as? String, "hvc1")
     XCTAssertEqual(summary["size"] as? String, "320x180")
     XCTAssertEqual(summary["audioTracks"] as? Int, 1)
+  }
+
+  // MARK: - Audio tracks matched by role
+
+  private func channels(_ track: AVAssetTrack) -> UInt32? {
+    track.formatDescriptions.first.flatMap {
+      CMAudioFormatDescriptionGetStreamBasicDescription($0 as! CMAudioFormatDescription)?.pointee
+        .mChannelsPerFrame
+    }
+  }
+
+  /// Where each segment's media landed on one composition track: the target
+  /// start, in seconds, of every edit that is not empty.
+  private func placedStarts(_ track: AVCompositionTrack) -> [Double] {
+    track.segments.filter { !$0.isEmpty }.map { ($0.timeMapping.target.start.seconds * 100).rounded() / 100 }
+  }
+
+  /// A short segment where no system audio arrived carries only the mic. Keyed
+  /// by position, that mic was spliced into the system-audio track.
+  func testAMissingSystemTrackDoesNotShiftTheMicIntoIt() throws {
+    let first = try makeSegment("a.mov", audioChannels: [2, 1])
+    let micOnly = try makeSegment("b.mov", audioChannels: [1])
+    let last = try makeSegment("c.mov", audioChannels: [2, 1])
+
+    let composition = try RecordingSegmentMerger.buildComposition([first, micOnly, last])
+    let audio = composition.tracks(withMediaType: .audio)
+    XCTAssertEqual(audio.count, 2, "one track per role")
+
+    let stereo = try XCTUnwrap(audio.first { channels($0) == 2 })
+    let mono = try XCTUnwrap(audio.first { channels($0) == 1 })
+    // Every source in each track is the same format: no mic in the system track.
+    for track in audio {
+      let formats = Set(track.segments.filter { !$0.isEmpty }.compactMap { segment -> UInt32? in
+        let source = AVURLAsset(url: try! XCTUnwrap(segment.sourceURL))
+        return source.tracks(withMediaType: .audio)
+          .first { $0.trackID == segment.sourceTrackID }.flatMap(channels)
+      })
+      XCTAssertEqual(formats.count, 1, "a track mixed formats: \(formats)")
+    }
+    XCTAssertEqual(placedStarts(mono), [0, 0.5, 1.0], "the mic is in all three parts")
+    XCTAssertEqual(placedStarts(stereo), [0, 1.0], "system audio skips the part it is missing from")
+  }
+
+  /// Audio a little shorter than its video is placed for its own length, not
+  /// read past its end for the segment's.
+  func testATrackShorterThanItsSegmentIsNotReadPastItsEnd() throws {
+    let a = try makeSegment("a.mov", seconds: 0.5, audioSeconds: 0.3)
+    let b = try makeSegment("b.mov", seconds: 0.5, audioSeconds: 0.3)
+
+    let composition = try RecordingSegmentMerger.buildComposition([a, b])
+    let audio = try XCTUnwrap(composition.tracks(withMediaType: .audio).first)
+    let placed = audio.segments.filter { !$0.isEmpty }
+    XCTAssertEqual(placed.count, 2)
+    for segment in placed {
+      XCTAssertLessThan(segment.timeMapping.target.duration.seconds, 0.4, "over-read")
+    }
+    XCTAssertEqual(placedStarts(audio), [0, 0.5], "the second part still starts at its segment")
+    XCTAssertEqual(composition.duration.seconds, 1.0, accuracy: 0.05)
+  }
+
+  /// A segment with audio and no picture keeps its place. The cursor, source
+  /// audio and camera timelines count its duration, so dropping it would put
+  /// every later part out of step with screen.mov.
+  func testASegmentWithNoVideoStillHoldsItsTime() throws {
+    let first = try makeSegment("a.mov", audioChannels: [1])
+    let audioOnly = dir.appendingPathComponent("b.m4a")
+    let audioOnlyWriter = try AVAssetWriter(outputURL: audioOnly, fileType: .m4a)
+    let input = AVAssetWriterInput(
+      mediaType: .audio,
+      outputSettings: [
+        AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 48000,
+        AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000,
+      ])
+    audioOnlyWriter.add(input)
+    XCTAssertTrue(audioOnlyWriter.startWriting())
+    audioOnlyWriter.startSession(atSourceTime: .zero)
+    var asbd = AudioStreamBasicDescription(
+      mSampleRate: 48000, mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, mBytesPerPacket: 4,
+      mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 1, mBitsPerChannel: 32,
+      mReserved: 0)
+    var format: CMAudioFormatDescription?
+    CMAudioFormatDescriptionCreate(
+      allocator: nil, asbd: &asbd, layoutSize: 0, layout: nil, magicCookieSize: 0,
+      magicCookie: nil, extensions: nil, formatDescriptionOut: &format)
+    var written = 0
+    while written < 24000 {
+      while !input.isReadyForMoreMediaData { usleep(1000) }
+      let count = 1024
+      var block: CMBlockBuffer?
+      CMBlockBufferCreateWithMemoryBlock(
+        allocator: nil, memoryBlock: nil, blockLength: count * 4, blockAllocator: nil,
+        customBlockSource: nil, offsetToData: 0, dataLength: count * 4, flags: 0,
+        blockBufferOut: &block)
+      CMBlockBufferFillDataBytes(with: 0, blockBuffer: block!, offsetIntoDestination: 0, dataLength: count * 4)
+      var sample: CMSampleBuffer?
+      CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: nil, dataBuffer: block!, formatDescription: format!, sampleCount: count,
+        presentationTimeStamp: CMTime(value: CMTimeValue(written), timescale: 48000),
+        packetDescriptions: nil, sampleBufferOut: &sample)
+      input.append(sample!)
+      written += count
+    }
+    input.markAsFinished()
+    let done = expectation(description: "audio-only written")
+    audioOnlyWriter.finishWriting { done.fulfill() }
+    wait(for: [done], timeout: 30)
+    let last = try makeSegment("c.mov", audioChannels: [1])
+
+    let composition = try RecordingSegmentMerger.buildComposition([first, audioOnly, last])
+    let video = try XCTUnwrap(composition.tracks(withMediaType: .video).first)
+    let audioOnlySeconds = AVURLAsset(url: audioOnly).duration.seconds
+    XCTAssertEqual(
+      placedStarts(video).last ?? 0, 0.5 + audioOnlySeconds,
+      accuracy: 0.02, "the last part starts after the audio-only part's time")
+  }
+
+  /// The whole merge still exports with a role missing from one part.
+  func testAMergeWithARoleMissingFromOnePartExports() async throws {
+    let first = try makeSegment("a.mov", audioChannels: [2, 1])
+    let micOnly = try makeSegment("b.mov", audioChannels: [1])
+    let out = dir.appendingPathComponent("merged.mov")
+
+    _ = try await RecordingSegmentMerger.mergeSegments([first, micOnly], to: out)
+    let merged = AVURLAsset(url: out)
+    XCTAssertEqual(merged.tracks(withMediaType: .audio).count, 2)
+    XCTAssertEqual(merged.duration.seconds, 1.0, accuracy: 0.1)
   }
 }
 

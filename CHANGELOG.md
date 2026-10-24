@@ -16,6 +16,7 @@
 - Windows reports microphone levels, so the quiet-mic warning can fire there. (#579)
 
 ### Recording (macOS)
+- **A paused take's microphone and system audio stay in their own tracks.** If one part had no system audio, the merge could splice the microphone into the system-audio track for that part, and audio a little shorter than its part was read past its end. Tracks are now matched by format and placed for their real length. (Microphone recorded into the screen file, i.e. with a mic selected.)
 - **A paused take's camera comes back at once on resume**, not a second late, and stays in sync with the screen. (#607, #608)
 - **A paused take no longer silently re-encodes as H.264**, and is never left unreachable when its parts will not join. (#605, #606)
 - **Pausing on macOS 13–14 no longer leaves a take that cannot be stopped.** (#609)
