@@ -2145,6 +2145,12 @@ final class ScreenRecorderFacade: NSObject {
       name: NSWorkspace.didWakeNotification, object: nil)
   }
   @objc private func devChanged(_ n: Notification) {
+    // AVCaptureDevice posts connect/disconnect on whatever thread noticed it,
+    // and this refreshes the mic monitor and tells Flutter.
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { [weak self] in self?.devChanged(n) }
+      return
+    }
     guard let dev = n.object as? AVCaptureDevice else { return }
     if dev.hasMediaType(.audio) {
       onDevicesChanged?()

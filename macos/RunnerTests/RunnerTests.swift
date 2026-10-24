@@ -8971,6 +8971,56 @@ final class CursorViewTests: XCTestCase {
   }
 }
 
+/// Flutter requires every send from native on the platform (main) thread. A
+/// live paused take logged "sent a message from native to Flutter on a
+/// non-platform thread" for the workflow channel.
+final class FlutterMainThreadTests: XCTestCase {
+  /// Sent from background queues, every event arrives on main, in the order
+  /// it was sent from each queue.
+  func testAnEventSentOffMainArrivesOnMainInOrder() {
+    var received: [Int] = []
+    var offMain = 0
+    let all = expectation(description: "all delivered")
+    all.expectedFulfillmentCount = 200
+    let sink = FlutterMainThread.eventSink { event in
+      if !Thread.isMainThread { offMain += 1 }
+      received.append(event as? Int ?? -1)
+      all.fulfill()
+    }
+    let queue = DispatchQueue(label: "test.capture.callbacks")
+    queue.async {
+      for i in 0..<200 { sink(i) }
+    }
+    wait(for: [all], timeout: 10)
+    XCTAssertEqual(offMain, 0, "every send must run on the main thread")
+    XCTAssertEqual(received, Array(0..<200), "one queue's sends keep their order")
+  }
+
+  /// Already on main, a send runs at once, so an event still reaches Dart
+  /// before the method reply that follows it.
+  func testAnEventSentOnMainIsDeliveredImmediately() {
+    var delivered = false
+    let sink = FlutterMainThread.eventSink { _ in delivered = true }
+    sink("now")
+    XCTAssertTrue(delivered, "no hop when already on main")
+  }
+
+  func testRunHopsOnlyWhenOffMain() {
+    var ranInline = false
+    FlutterMainThread.run { ranInline = true }
+    XCTAssertTrue(ranInline)
+
+    let hopped = expectation(description: "hopped to main")
+    DispatchQueue.global().async {
+      FlutterMainThread.run {
+        XCTAssertTrue(Thread.isMainThread)
+        hopped.fulfill()
+      }
+    }
+    wait(for: [hopped], timeout: 5)
+  }
+}
+
 final class RecordingProjectPathsEnclosingRootTests: XCTestCase {
   func testAFileOutsideAnyProjectHasNoEnclosingProject() {
     let url = URL(fileURLWithPath: "/tmp/not-a-project/clip.mov")

@@ -101,7 +101,7 @@ class UpdaterStreamHandler: NSObject, FlutterStreamHandler {
   func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
     -> FlutterError?
   {
-    UpdaterController.shared.eventSink = events
+    UpdaterController.shared.eventSink = FlutterMainThread.eventSink(events)
     return nil
   }
 
