@@ -468,20 +468,6 @@ chroma-key toggle during a recording reconfigures the session in other ways
 and was not checked. Projects recorded before this fix keep their empty segment
 lists; nothing repairs them.
 
-### The screen merger matches audio tracks by position, and inserts the whole segment length — code
-
-*Found 2026-10-17.* `RecordingSegmentMerger` keys composition tracks by each
-segment's track index (`audio-0`, `audio-1`), and inserts
-`[0, asset.duration]` of every track. If one segment lacks a track (a very short
-segment where no system audio arrived), later tracks shift and the mic and
-system audio can land in the wrong track. A track shorter than its segment is
-also over-read. `AudioSegmentMerger` already guards both cases: it clamps to
-`track.timeRange` and fills gaps.
-
-**To close:** match tracks by role or format rather than index, clamp each
-insert to the track's own time range, and skip segments with no video or zero
-duration. Add segments with a missing track to `RecordingSegmentMergerTests`.
-
 ### Camera segments have no merge fallback, and are orphaned on failure — code
 
 *Found 2026-10-17.* `CameraMergeUtility` uses passthrough only. On a failure the
@@ -1088,6 +1074,18 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **The screen merger matched audio tracks by position** (fixed 2026-10-25).
+  `RecordingSegmentMerger.buildComposition` now:
+  - keys audio by role (codec, channels, sample rate), so a part missing its
+    system audio no longer shifts the mic into that track;
+  - clamps every insert to the track's own range;
+  - skips only a segment with no duration. A segment with audio but no
+    picture keeps its time, because the cursor, source audio and camera
+    timelines count it.
+
+  Two identical formats still match by order. Live: a two-part take merged
+  by passthrough to exactly the sum of its parts.
 
 - **Native sends to Flutter happened off the main thread** (fixed 2026-10-24).
   `FlutterMainThread` (`PlayerEventHandler.swift`) wraps each event sink at
