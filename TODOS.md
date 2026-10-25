@@ -12,27 +12,6 @@ or move it to *Recently closed* at the bottom. Do not delete it.
 
 Loose ends last revised 2026-10-16 against `develop` at `abe470e` (1.2.0).
 
-## Editor — clip lane
-
-### Persistent scissors tool mode (Premiere-style razor)
-- **What:** A button-activated cut tool that stays active across multiple cuts without holding a modifier.
-- **Why:** Some users coming from Premiere/Final Cut expect a sticky "blade" tool (select tool ↔ razor tool).
-- **Context:** Deferred in the 2026-06-28 eng review of the scissors-split feature. We shipped modifier-click instead (hold Option → cut at pointer) because a persistent opaque overlay fought the timeline's scroll/pan and the trim-handle gestures, and put interaction state in lib/core where it didn't belong. The modifier-click approach delivers the same cut-at-pointer with none of those conflicts. See the design doc `*-scissors-split-design-*.md` in the gstack project dir for the full rationale (objections 1-4).
-- **Pros:** Familiar to pro-editor users; no key to hold for long cutting sessions.
-- **Cons:** Modal UX (the friction casual users complain about); reintroduces the gesture-conflict landmines the modifier approach avoided.
-- **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (mode state would live local in `_VideoTimelineState`, next to `_panModeEnabled`), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart` (a non-opaque hit layer inside `TimelineScrollableCanvas`).
-- **Depends on:** The modifier-click cut layer landing first (this is its evolution).
-- **Gate:** Only build on real user demand.
-
-### Frame-preview (previewPeekTo) on the clip lane during cut-hover
-- **What:** Extend the hover→`previewPeekTo` pipeline to the clip-lane region, not just the ruler, while cut-hovering.
-- **Why:** Today hover-peek is wired only on the ruler strip (`timeline_editor_viewport.dart:489-494`). With modifier-click cutting, hovering the lane shows a guide line but not the actual frame you're about to cut on — so cuts on the lane area are "blind."
-- **Context:** Raised by the outside-voice review (2026-06-28). Enhancement, not required for the scissors-split feature to work.
-- **Pros:** You see the exact frame under the cut point anywhere on the timeline, not just on the ruler.
-- **Cons:** More hover→native traffic on the lane; needs the same coalescing/peek-end hardening the ruler path already has.
-- **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (`onHoverSeek`/`previewPeekTo` wiring), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart`.
-- **Depends on:** Scissors-split cut layer (shares the cut-hover state).
-
 ## Editor — captions
 
 ### Arabic subtitles have not been checked in a real exported video — verify
@@ -48,69 +27,28 @@ and a two-line mixed cue. Export with burn-in plus an `.srt` file. Check the
 video and open the `.srt` in a player. Letters should join, and word order and
 punctuation should match how the editor shows the line.
 
-### Intel Macs are refused for subtitles while the copy promises a slow path — decide
+### ~~Intel Macs are refused for subtitles while the copy promises a slow path~~ — DONE (5a1ef67, closed #448 on 2026-10-26)
 
-*Open issue #448, the only open one of the 1.1.0 captions batch (#439–#465).*
+Decided: explicitly unsupported. The copy now says so in all three languages
+("Subtitles need a Mac with Apple silicon…"), and `docs/features.md` says
+"Requires Apple silicon". The capability's reason was renamed from
+`intelSlowPath`, a name that described what did not happen.
 
-**To close:** decide whether Intel Macs get subtitles (slowly) or are
-explicitly unsupported, and make the copy say the same thing as the code.
+### ~~Smaller caption follow-ups~~ — DONE 2026-10-26
+- **Caption migration with more than one cue:** now pinned. Three cues, Arabic
+  and mixed text and a two-line cue, survive in order with their text and times
+  (`post_state_store_test.dart`).
+- **Editing a two-line subtitle that mixes scripts:** moved to the feature
+  backlog. It needs a per-line editor, and export and preview are already
+  correct (#601).
 
-### Smaller caption follow-ups
-
-- **Editing a two-line subtitle that mixes scripts.** The editor's text field
-  has one direction for all lines, so line 2 shows in line 1's order while being
-  edited. Export and preview are correct (#601). Documented in
-  `post_captions_section.dart`. Fixing it would need a per-line editor.
-- **Caption migration is only tested with one cue.** The `post/state.json`
-  migration tests use a single-cue fixture (`test/core/timeline/post_state_store_test.dart:50-58`).
-  Optional: add a multi-cue fixture so "every cue survives" is pinned.
-
-### Word-level caption editing (click a word to edit, drag to retime)
-
-- **What:** Click an individual word in a caption to edit just that word, and drag
-  a word's boundary to retime it, rather than editing the whole cue as one string.
-- **Why:** `CaptionWord` (`lib/core/timeline/model/edit_track.dart:201-222`) exists
-  and its own doc comment says it "powers click-to-edit and reflow-on-split."
-  Half of that shipped: reflow-on-split uses the timings when a cue's audio is cut
-  in half. The click-to-edit half did not. Without this entry, the next person
-  reads that comment and assumes the feature exists.
-- **Context:** Deferred in the 2026-08-04 eng review (scope reduction R2). v1 ships
-  cue-level text editing, which satisfies the actual need — fixing a
-  mis-transcribed product name — at a fraction of the UI. Per-word timings are
-  stored by ASR regardless, so this is additive later, not a rewrite. The reason to
-  wait is that nobody has seen real transcription quality on real Clingfy
-  recordings yet; if Whisper turns out to be accurate enough that people rarely
-  edit, this is UI nobody wanted.
-- **Pros:** Precise corrections without retyping a sentence; retiming without
-  touching text.
-- **Cons:** Substantially more interaction surface (per-word hit targets, drag
-  handles inside a text run, RTL word order), and it fights the cue-level editor
-  you would already have shipped.
-- **Start at:** `lib/app/home/post_processing/widgets/post_captions_section.dart`
-  (once it exists), `CaptionWord` in `edit_track.dart:201`.
-- **Depends on:** the cue-level caption editing UI shipping first.
-- **Gate:** Only build on real user demand, same rule as the persistent-scissors
-  item above.
-- **Effort:** human ~2d / CC ~2h.
-
-### Subtitle translation — decide
-
-*Checked 2026-10-20.* Not started on either platform. Whisper's
-`large-v3-turbo` cannot translate, so this needs a second engine. The data
-model already has room for it: `Caption.translatedText` is serialized and
-never filled (`edit_track.dart:247-294`), and the transcribing model is
-recorded for "a future translation pass" (`edit_track.dart:367-369`).
-**To close:** choose the engine (on-device or cloud), then the UI: a target
-language, and a burn-in and sidecar per language.
-
-### Windows has no transcription engine — code
+### Windows has no transcription engine — code (Windows machine)
 
 Windows answers `captionsCapability` with `platformNotSupported`
 (`misc_router.cpp:99-112`), so auto-subtitles are macOS only.
-`docs/windows-port-editing-features.md:392` plans whisper.cpp.
-`docs/features.md` lists Auto-subtitles twice (lines 88 and 90) in different
-words; merge them while there.
-
+`docs/windows-port-editing-features.md:392` plans whisper.cpp. Brief it in
+`docs/windows-machine-work.md` when it is picked up. The duplicate
+Auto-subtitles row in `docs/features.md` is already merged into one.
 
 ## Export — colour
 
@@ -130,19 +68,12 @@ shadows in QuickTime against the screen. If shadows look right, close this. If
 they look lifted or crushed, reopen the curve decision. The code comment names
 the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
 
-### Smaller colour follow-ups
-
-- **The colour-curve decision only lives in code comments.** The 1.961 choice
-  is documented in `ColorTransferFunctions.swift:104-146` and in *RESOLVED (1.0.7)* below,
-  but there is no entry in `docs/decisions/`. Optional: write one, keeping the
-  "revisit if Windows or browser playback becomes the primary target" trigger.
-- **Full-range video buffers were deliberately not adopted.** The range was
-  measured as a non-issue: the file declares limited range and contains limited
-  range, and the earlier "full range" theory was a red herring (#372, closed).
-  The only written record is that closed PR. Optional: add one line to the *RESOLVED (1.0.7)*
-  entry below. Also note that moving to planar buffers would mean
-  reworking `clearPixelBuffer`, which currently memsets a 32BGRA buffer
-  (`LetterboxExporter.swift:275-281`).
+### ~~Smaller colour follow-ups~~ — DONE 2026-10-26
+- The 1.961 curve decision, with its revisit trigger, is now in
+  `docs/decisions/macos-export-transfer-curve.md`.
+- That record also notes why full-range buffers were not adopted (#372) and the
+  `clearPixelBuffer` rework they would need. The *RESOLVED (1.0.7)* entry below
+  points to it.
 
 ### Grade the validator's reference on the two CAMERA paths
 
@@ -241,6 +172,9 @@ which are the only recorded numbers for this defect.
 - **Caveat that is still true:** recordings made before 2026-08-02 hold P3 data
   under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
   and recorded in the CHANGELOG.
+- **Range:** full-range buffers were deliberately not adopted. The file
+  declares limited range and contains it (#372). See
+  `docs/decisions/macos-export-transfer-curve.md`.
 
 ## Export — GIF
 
@@ -289,22 +223,22 @@ Note the result here.
 
 ## Recording — capture (macOS)
 
-### Recording captures at full display resolution for every quality — decide
+### ~~Recording captures at full display resolution for every quality~~ — DECIDED 2026-10-26
 
-*From the 2026-07-30 camera/colour session (it was task #10).*
+The premise was wrong. `CaptureStartConfigBuilder` captures every recording at
+`.native`, and no UI sets a recording quality: `setRecordingQuality` has no
+Dart caller. The output size is chosen at export. So `.best` only ever runs
+at native size, where it is load-bearing: it makes a scaled HiDPI display
+sample its backing store instead of upscaling the point-size framebuffer.
 
-`captureResolution = .best` is set for every quality
-(`CaptureBackendScreenCaptureKit.swift:2071-2075`). The output size does follow
-the chosen quality, so a 720p recording is 720p. But on a 5K display, ScreenCaptureKit
-still samples the screen at 5K and downscales. That costs GPU, memory and power,
-and nobody has measured the sharpness it buys. The repo itself records this as
-unsettled: "Whether it should be conditional on quality is an open question,
-deliberately not decided by this test" (`macos/RunnerTests/RunnerTests.swift:8691-8696`).
+Kept `.best`, and recorded why in the test comment
+(`testNativeQualityStreamConfigurationKeepsExplicitPixelSize`). Also fixed: the
+metadata stamped the quality preference (`fhd` by default) on files captured
+at native size. It now stamps `native`, and nothing read the old value.
 
-**To close:** measure CPU/GPU, power and sharpness at 720p and 1080p on a 5K
-display with `.best` against `.automatic`/`.nominal`. Then either make it
-conditional on quality, or keep `.best` and record why. Either way, update that
-test comment.
+One take was measured on the built-in display, 3024×1964 at `.best`: app CPU
+43%, WindowServer 75%, GPU 50%, 510 MB. If quality presets ever drive capture
+again, revisit `.best` for output sizes below the display's point size.
 
 ### ~~Pause/resume segment merge may silently re-encode~~ — DONE 2026-10-17
 
@@ -453,24 +387,25 @@ Verified live on a paused take. Camera part 2 is 3.54s against the screen's
 the same wall-clock moment. An unpaused take maps screen 0 to camera 0.32s,
 which matches the camera starting 0.318s earlier.
 
-### Screen and camera segment times are stamped at different points — code
+### ~~Screen and camera segment times are stamped at different points~~ — DONE 2026-10-26
 
-*Found in review, 2026-10-19.* Camera sync now runs on the segment
-timestamps, so their accuracy matters. The screen stamps a segment's end
-before its recording output is removed, then derives the start as end minus
-duration, which lands early. The camera stamps the end after its file is
-written, which lands late. The result is a small systematic skew, tens to a
-few hundred milliseconds, on every camera take.
+Both sides are now timed from their start callbacks.
+- **Screen:** each segment starts when its recording output's
+  `recordingOutputDidStartRecording` fires, stamped before the hop to the main
+  actor, and ends one file duration later (`SegmentWallClock`). The old way,
+  without the callback, remains the fallback.
+- **Camera:** its stretches were already timed from `didStart`, `didPause`
+  and `didResume` (2026-10-19).
 
-**To close:** stamp both at the same point, ideally the start events
-(`recordingOutputDidStartRecording` / `didStartRecordingTo`). Measure with a
-clap or a flash on screen and camera.
+On a live paused take, the screen starts moved by 17 ms and 22 ms against the
+old derived times. The camera still starts 336 ms before the screen at the
+first start, and 54 ms after it at resume. Those are real start times, which
+camera sync maps, not stamping skew.
 
-*Camera side, 2026-10-19:* stretches inside one camera file are now timed from
-the `didStart` / `didPause` / `didResume` callbacks. Only the last stretch is
-still derived from the file's end (file duration minus the earlier stretches).
-On a live take, camera stretch 2 started 11ms after screen part 2. The screen
-side is unchanged.
+Not measured: whether a start callback matches the first frame, which needs
+a clap or a flash seen by both screen and camera. That is a by-eye check:
+- the camera bubble in sync with the screen after a resume;
+- in the editor and in an export.
 
 ### Pause and resume on a real macOS 13-14 Mac — verify
 
@@ -516,20 +451,26 @@ invalid-parameter error and this backend is the fallback.
 `if false, #available(macOS 15.0, *)`), and record. If it records, it was
 system state. If not, the new logs say why.
 
-### Other mid-recording overlay rebuilds may still stop the camera — verify
+### ~~Other mid-recording overlay rebuilds may still stop the camera~~ — DONE 2026-10-25 (#623)
 
-The shared preview layer covers every same-device rebuild: resume, display
-change, and the size change that rebuilds. A camera **device** change or a
-chroma-key toggle during a recording reconfigures the session in other ways
-and was not checked. Projects recorded before this fix keep their empty segment
-lists; nothing repairs them.
+The two rebuilds not checked are now deferred while a recording holds the
+camera (`CameraCaptureCoordinator`):
+- **A camera device change** waits for the end of the take. That covers a
+  pick made during a pause, and a hot-plug re-send.
+- **A chroma-key frame output** is not added mid-take; the bubble shows the
+  plain camera until the end.
+- **The recording connection's mirror** keeps the take's value.
 
-### Smaller capture follow-ups
+`CameraRecorderTests` pin each one. Projects recorded before the segment-list
+fix keep their empty lists, accepted: their camera falls back to the end-anchored
+window, as it always did.
 
-- **No native test that "no microphone" stays off.** The reland (#390) is on
-  develop and tested on the Dart side (`home_actions_permission_preflight_test.dart`),
-  and it passed on a device (#392). But no XCTest covers
-  `effectiveMicCaptureEnabled` (`ScreenRecorderFacade.swift:973`).
+### ~~Smaller capture follow-ups~~ — DONE 2026-10-26
+
+- **"No microphone" stays off:** native coverage existed for the predicate
+  (`CaptureStartConfigBuilderTests`: disabled, sentinel ids, an unknown
+  device). The facade wrapper that stamps `micEnabled` now has its own test,
+  `testTheFacadeRecordsNoMicrophoneForEveryWayOfChoosingNone`.
 
 ## Logging — macOS
 
@@ -999,7 +940,7 @@ cannot do it. Fold it into the camera on-device QA pass.
 *Swept 2026-10-20* from the roadmap and plan docs, the decision and Windows
 docs, the code (reserved modes, no-op handlers, hidden UI) and the history,
 then checked against the code: each item below is genuinely not done.
-Translation and Windows transcription are tracked under *Editor — captions*.
+Windows transcription is tracked under *Editor — captions*.
 Tags:
 - **code:** buildable as specified.
 - **idea:** needs a product decision first.
@@ -1008,6 +949,12 @@ Tags:
   for a brief in `docs/windows-machine-work.md` when one is picked up.
 
 ### Captions and on-device models
+
+- **Subtitle translation** — idea, macOS + Windows, not started (decide). Whisper's `large-v3-turbo` cannot translate, so this needs a second engine; `Caption.translatedText` is serialized and never filled. Choose the engine (on-device or cloud), then the UI: a target language, and a burn-in and sidecar per language. Moved from *Editor — captions* 2026-10-26. *Source:* lib/core/timeline/model/edit_track.dart:247-294, :367-369
+
+- **Word-level caption editing (click a word to edit, drag to retime)** — parked, macOS, deferred. `CaptionWord` timings are stored, and reflow-on-split uses them; click-to-edit was never built. Only on real user demand (2026-08-04 eng review, R2). *Source:* lib/core/timeline/model/edit_track.dart:201-222
+
+- **Per-line editor for a two-line subtitle that mixes scripts** — parked, macOS. The text field has one direction for all lines, so line 2 shows in line 1's order while being edited; export and preview are correct (#601). *Source:* lib/app/home/post_processing/widgets/post_captions_section.dart
 
 - **LocalModelManager as a real subsystem** — code, macOS + Windows, partial. Only per-variant reporting shipped. Still missing: per-variant delete (delete() removes every model), on-demand download with progress outside a transcription job, hash checks, versioning, offline state and per-model licence notes. DeepFilterNet, M2M-100 and Windows whisper.cpp all depend on it. *Source:* docs/editing-platform-plan.md:324-334; macos/Runner/Services/CaptionModelStore.swift:212; lib/core/bridges/native_bridge.dart:1141
 
@@ -1030,6 +977,10 @@ Tags:
 
 
 ### Editor
+
+- **Persistent scissors tool mode (Premiere-style razor)** — parked, macOS + Windows. Modifier-click cutting shipped instead (hold Option); a sticky blade tool fought the timeline's scroll/pan and trim gestures. Only on real user demand (2026-06-28 eng review). *Source:* lib/app/home/preview/widgets/video_timeline.dart; lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart
+
+- **Frame preview on the clip lane during cut-hover** — idea, macOS + Windows. Hover-peek is wired only on the ruler strip, so a modifier-click cut on the lane area does not show the frame first. Needs the ruler path's coalescing and peek-end hardening. *Source:* lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart:489-494
 
 - **One undo history across editing domains** — parked, macOS + Windows, parked. There are four separate EditSessions, so undoing a colour change cannot undo a clip split. Deliberately parked until a user complains. *Source:* docs/editing-platform-plan.md:31-36, :873-876, :912-914
 

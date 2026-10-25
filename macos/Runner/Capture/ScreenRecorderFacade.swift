@@ -374,7 +374,7 @@ final class ScreenRecorderFacade: NSObject {
     // Paused takes whose parts could not be joined when they stopped get
     // another try, in the background, while nothing has them open. Not in
     // the test host, which would repair the developer's own recordings.
-    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+    if !AppPaths.isRunningTests {
       SalvagedTakeRepairSweep.shared.start(rootURL: RecordingProjectPaths.projectsRoot()) {
         [weak self] in
         self?.state == .idle
@@ -600,7 +600,11 @@ final class ScreenRecorderFacade: NSObject {
           frameRate: frameRate,
           displayMode: context.displayMode,
           selectedAppWindowID: context.selectedAppWindowID,
-          recordingQuality: context.recordingQuality,
+          // What is captured: every recording is native size
+          // (CaptureStartConfigBuilder), and the output size is chosen at
+          // export. The quality preference used to be stamped here, so the
+          // metadata named a preset the file did not have.
+          recordingQuality: .native,
           cursorEnabledForRecording: context.effectiveCursorEnabledForRecording,
           cursorLinked: context.cursorLinked,
           excludeRecorderApp: context.excludeRecorderApp,

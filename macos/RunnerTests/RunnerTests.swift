@@ -9745,12 +9745,14 @@ final class ScreenRecorderFacadeStartFailureTests: XCTestCase {
   /// assertion below now pins `.best` rather than the default: it records
   /// what ships instead of leaving CI lying about it.
   ///
-  /// WHAT IS NOT SETTLED: `.best` is applied to EVERY quality, not just
-  /// native. At native it is inert — the requested size already is the native
-  /// size — but at 720p on a 5K display it makes ScreenCaptureKit capture at
-  /// full 5K and downscale, which costs GPU, memory and power for a sharpness
-  /// gain nobody has measured. Whether it should be conditional on quality is
-  /// an open question, deliberately not decided by this test.
+  /// SETTLED 2026-10-26: `.best` stays. Every recording is captured at
+  /// `.native` (`CaptureStartConfigBuilder` hardcodes it; no UI sets a
+  /// quality, and the output size is chosen at export), so the "720p on a 5K
+  /// display" cost never arises. At native size `.best` is what makes a
+  /// scaled HiDPI display sample its backing store; without it the stream
+  /// would sample the point-size framebuffer and upscale. If quality presets
+  /// ever drive capture again, revisit `.best` for sizes below the display's
+  /// point size.
   func testNativeQualityStreamConfigurationKeepsExplicitPixelSize() {
     let backend = CaptureBackendScreenCaptureKit()
     let streamConfig = backend._testMakeStreamConfiguration(
@@ -11310,6 +11312,24 @@ final class RecordingSegmentMergerTests: XCTestCase {
       userInfo: [NSLocalizedDescriptionKey: "Operation Stopped"])
     XCTAssertTrue(RecordingSegmentMerger.describe(ns).contains("-11838"))
     XCTAssertFalse(RecordingSegmentMerger.describe(flutter).contains("0x"))
+  }
+
+  /// A segment is placed from its recording output's start callback, as the
+  /// camera's stretches are, so camera sync compares like with like.
+  func testASegmentStartsWhenItsOutputSaidItStarted() {
+    let didStart = Date(timeIntervalSince1970: 100)
+    let finished = Date(timeIntervalSince1970: 104.3)
+    let placed = SegmentWallClock.resolve(didStartAt: didStart, finishedAt: finished, duration: 4)
+    XCTAssertEqual(placed.start, didStart)
+    XCTAssertEqual(placed.end, Date(timeIntervalSince1970: 104))
+  }
+
+  /// Without the callback, as before: it ends when it was finished.
+  func testASegmentWithoutAStartCallbackEndsWhenFinished() {
+    let finished = Date(timeIntervalSince1970: 104)
+    let placed = SegmentWallClock.resolve(didStartAt: nil, finishedAt: finished, duration: 4)
+    XCTAssertEqual(placed.start, Date(timeIntervalSince1970: 100))
+    XCTAssertEqual(placed.end, finished)
   }
 
   func testTheSalvageWarningSaysThePartsAreKept() {

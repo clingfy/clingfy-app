@@ -639,6 +639,17 @@ final class RecordingFailureRecoveryTests: XCTestCase {
     wait(for: [completion], timeout: 10.0)
   }
 
+  /// The test host must never see the developer's real workspace: a helper
+  /// that reset it by deleting the root wiped every dev recording once.
+  func testTestsNeverUseTheRealRecordingsFolder() {
+    XCTAssertTrue(AppPaths.isRunningTests)
+    let root = AppPaths.recordingsRoot().standardizedFileURL.path
+    XCTAssertTrue(
+      root.hasPrefix(URL(fileURLWithPath: NSTemporaryDirectory()).standardizedFileURL.path),
+      "tests use \(root)")
+    XCTAssertFalse(root.contains("Application Support"))
+  }
+
   func testStorageInfoProviderSnapshotCarriesThresholdsAndPaths() {
     let snapshot = StorageInfoProvider.buildSnapshot(
       captureDestinationURL: AppPaths.tempRoot(),
