@@ -68,19 +68,12 @@ shadows in QuickTime against the screen. If shadows look right, close this. If
 they look lifted or crushed, reopen the curve decision. The code comment names
 the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
 
-### Smaller colour follow-ups
-
-- **The colour-curve decision only lives in code comments.** The 1.961 choice
-  is documented in `ColorTransferFunctions.swift:104-146` and in *RESOLVED (1.0.7)* below,
-  but there is no entry in `docs/decisions/`. Optional: write one, keeping the
-  "revisit if Windows or browser playback becomes the primary target" trigger.
-- **Full-range video buffers were deliberately not adopted.** The range was
-  measured as a non-issue: the file declares limited range and contains limited
-  range, and the earlier "full range" theory was a red herring (#372, closed).
-  The only written record is that closed PR. Optional: add one line to the *RESOLVED (1.0.7)*
-  entry below. Also note that moving to planar buffers would mean
-  reworking `clearPixelBuffer`, which currently memsets a 32BGRA buffer
-  (`LetterboxExporter.swift:275-281`).
+### ~~Smaller colour follow-ups~~ — DONE 2026-10-26
+- The 1.961 curve decision, with its revisit trigger, is now in
+  `docs/decisions/macos-export-transfer-curve.md`.
+- That record also notes why full-range buffers were not adopted (#372) and the
+  `clearPixelBuffer` rework they would need. The *RESOLVED (1.0.7)* entry below
+  points to it.
 
 ### Grade the validator's reference on the two CAMERA paths
 
@@ -179,6 +172,9 @@ which are the only recorded numbers for this defect.
 - **Caveat that is still true:** recordings made before 2026-08-02 hold P3 data
   under a 709 tag. Re-exporting an old project still looks desaturated. Expected,
   and recorded in the CHANGELOG.
+- **Range:** full-range buffers were deliberately not adopted. The file
+  declares limited range and contains it (#372). See
+  `docs/decisions/macos-export-transfer-curve.md`.
 
 ## Export — GIF
 
