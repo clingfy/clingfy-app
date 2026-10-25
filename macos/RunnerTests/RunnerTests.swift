@@ -776,6 +776,72 @@ final class CameraRecorderTests: XCTestCase {
   /// overlay is re-shown after the camera segment starts, and a NEW preview
   /// layer adds a connection to the running session, which stops the movie
   /// output. Re-showing must hand back the same layer, adding nothing.
+  /// A camera chosen during a pause, or re-sent after a hot-plug, used to swap
+  /// the input mid-take, which stopped the recording. It waits now.
+  func testACameraChangeWaitsWhileRecording() {
+    XCTAssertTrue(
+      CameraCaptureCoordinator.defersPreviewDevice(
+        recording: true, hasInput: true, current: "cam-a", requested: "cam-b"))
+    XCTAssertFalse(
+      CameraCaptureCoordinator.defersPreviewDevice(
+        recording: true, hasInput: true, current: "cam-a", requested: "cam-a"))
+    XCTAssertFalse(
+      CameraCaptureCoordinator.defersPreviewDevice(
+        recording: false, hasInput: true, current: "cam-a", requested: "cam-b"),
+      "with no recording, swap at once")
+    XCTAssertFalse(
+      CameraCaptureCoordinator.defersPreviewDevice(
+        recording: true, hasInput: false, current: nil, requested: "cam-b"),
+      "with no input yet there is nothing to protect")
+  }
+
+  /// Turning chroma key on mid-take added a frame output, which reconfigured
+  /// the session and stopped the recording. It is added when the take ends.
+  func testChromaKeyTurnedOnMidTakeWaitsForTheEnd() {
+    let coordinator = CameraCaptureCoordinator()
+    coordinator._testSetRecordingActive(true)
+    coordinator.setSampleBufferHandler { _ in }
+    XCTAssertFalse(coordinator._testHasVideoDataOutput, "no output added mid-take")
+    XCTAssertTrue(coordinator._testPendingVideoDataOutput)
+
+    coordinator._testSetRecordingActive(false)
+    XCTAssertTrue(coordinator._testHasVideoDataOutput, "added once nothing records")
+    XCTAssertFalse(coordinator._testPendingVideoDataOutput)
+    coordinator.setSampleBufferHandler(nil)
+  }
+
+  /// Mid-take there is no frame output to add, so the overlay must not ask
+  /// for chroma key frames it would never get; it shows the plain preview.
+  func testFramesAreAvailableOnlyWhenAnOutputCanDeliverThem() {
+    let coordinator = CameraCaptureCoordinator()
+    XCTAssertTrue(coordinator.canDeliverFramesNow, "nothing recording: one can be added")
+    coordinator._testSetRecordingActive(true)
+    XCTAssertFalse(coordinator.canDeliverFramesNow, "mid-take with no output")
+    coordinator._testSetRecordingActive(false)
+  }
+
+  /// Hiding the preview drops a camera change that was waiting for the take
+  /// to end: the next show asks for the camera that is selected then.
+  func testHidingThePreviewDropsAWaitingCameraChange() {
+    let coordinator = CameraCaptureCoordinator()
+    coordinator._testPendingPreviewDeviceID = .some("cam-b")
+    coordinator.releasePreview()
+    XCTAssertNil(coordinator._testPendingPreviewDeviceID ?? nil)
+    XCTAssertTrue(coordinator._testPendingPreviewDeviceID == nil)
+  }
+
+  /// The recording connection keeps the take's mirror, which its metadata
+  /// records; a toggle mid-take reaches the preview only.
+  func testTheRecordingKeepsItsMirrorWhileTheToggleMoves() {
+    let coordinator = CameraCaptureCoordinator()
+    coordinator._testSetRecordingActive(true)
+    coordinator.setMirrored(true)  // CameraRecorder.begin, right after acquiring
+    coordinator.setMirrored(false)  // the user toggles mid-take
+    XCTAssertEqual(coordinator._testPinnedRecordingMirror, true)
+    coordinator._testSetRecordingActive(false)
+    XCTAssertNil(coordinator._testPinnedRecordingMirror, "released with the recording")
+  }
+
   func testReShowingThePreviewReusesTheSameLayer() {
     let coordinator = CameraCaptureCoordinator()
     let first = coordinator.makePreviewLayer()
@@ -1110,6 +1176,103 @@ final class CameraRecorderTests: XCTestCase {
     let first = result.metadata.segments.filter { $0.relativePath == file.lastPathComponent }
     XCTAssertEqual(first.count, 2)
     XCTAssertEqual(first.reduce(0) { $0 + ($1.durationSeconds ?? 0) }, media, accuracy: 0.001)
+  }
+
+  /// A take that fell back to a second file, with both files written as real
+  /// movies. Returns the recorder ready to stop, and the two files.
+  private func twoFileTake(
+    _ directory: URL, presets: [String]
+  ) throws -> (CameraRecorder, FakeCameraCoordinator, [URL]) {
+    let coordinator = FakeCameraCoordinator()
+    let recorder = CameraRecorder(coordinator: coordinator, mergePresets: presets)
+    run("begin") { recorder.begin(session: makeSession(in: directory), completion: $0) }
+    spin(0.2)
+    run("pause") { recorder.pause(completion: $0) }
+    try writeMovie(at: try XCTUnwrap(coordinator.startedURLs.last), seconds: 0.3)
+    coordinator.endFileOnItsOwn()
+    run("resume") { recorder.resume(completion: $0) }
+    try writeMovie(at: try XCTUnwrap(coordinator.startedURLs.last), seconds: 0.3)
+    coordinator.finishesOnStop = true
+    return (recorder, coordinator, coordinator.startedURLs)
+  }
+
+  private func stopOutcome(_ recorder: CameraRecorder) -> Result<CameraRecordingResult, Error>? {
+    let done = expectation(description: "stop")
+    var outcome: Result<CameraRecordingResult, Error>?
+    recorder.stop {
+      outcome = $0
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 30)
+    return outcome
+  }
+
+  /// When no attempt can join the parts, the camera is lost, but its parts
+  /// are kept and described, not left with nothing pointing at them.
+  func testCameraPartsThatCannotBeJoinedAreKeptWithAManifest() throws {
+    let directory = try makeDirectory()
+    let (recorder, _, files) = try twoFileTake(directory, presets: [])
+    XCTAssertEqual(files.count, 2)
+
+    guard case .failure = stopOutcome(recorder) else {
+      return XCTFail("with no way to join the parts, the stop must fail")
+    }
+    for file in files {
+      XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "part deleted: \(file)")
+    }
+    let manifestURL = directory.appendingPathComponent(CameraRecorder.unmergedManifestName)
+    let data = try Data(contentsOf: manifestURL)
+    let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    XCTAssertTrue(manifest["publishedSegmentIndex"] is NSNull)
+    let segments = try XCTUnwrap(manifest["segments"] as? [[String: Any]])
+    XCTAssertEqual(segments.map { $0["camera"] as? String },
+      files.map { "segments/\($0.lastPathComponent)" })
+    XCTAssertEqual(segments.map { $0["present"] as? Bool }, [true, true])
+    XCTAssertFalse((segments[0]["stretches"] as? [Any] ?? []).isEmpty, "the first part's stretches")
+  }
+
+  /// A second stop while the take is ending joins the first. It used to
+  /// replace the first caller's completion, leaving that caller unanswered,
+  /// and once the join was asynchronous it could merge a second time.
+  func testAStopDuringTheMergeGetsTheSameResult() throws {
+    let directory = try makeDirectory()
+    let (recorder, coordinator, _) = try twoFileTake(
+      directory, presets: CameraRecorder.mergePresetOrder)
+
+    var outcomes: [Result<CameraRecordingResult, Error>] = []
+    let both = expectation(description: "both stops answered")
+    both.expectedFulfillmentCount = 2
+    recorder.stop {
+      outcomes.append($0)
+      both.fulfill()
+    }
+    // Back to back: the second arrives while the first is still ending the
+    // file, which is when it used to replace the first caller's completion.
+    recorder.stop {
+      outcomes.append($0)
+      both.fulfill()
+    }
+    wait(for: [both], timeout: 30)
+
+    let urls = outcomes.compactMap { try? $0.get().rawURL }
+    XCTAssertEqual(urls.count, 2, "both callers get the join's result: \(outcomes)")
+    XCTAssertEqual(Set(urls).count, 1)
+    XCTAssertTrue(FileManager.default.fileExists(atPath: urls[0].path), "the merged file survives")
+    XCTAssertEqual(coordinator.releaseCount, 1, "the recording use is given back once")
+  }
+
+  /// A preset that cannot run falls through to the next, so the camera is
+  /// joined rather than lost at the first refusal.
+  func testCameraPartsFallThroughToTheNextPreset() throws {
+    let directory = try makeDirectory()
+    let (recorder, _, _) = try twoFileTake(
+      directory, presets: ["NotAnExportPreset", AVAssetExportPresetHighestQuality])
+
+    guard case .success(let result) = stopOutcome(recorder) else {
+      return XCTFail("the second preset must join the parts")
+    }
+    XCTAssertTrue(FileManager.default.fileExists(atPath: result.rawURL.path))
+    XCTAssertEqual(AVURLAsset(url: result.rawURL).duration.seconds, 0.6, accuracy: 0.15)
   }
 
   /// The pause and resume callbacks only arrive if the Objective-C selectors

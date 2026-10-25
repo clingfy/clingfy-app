@@ -364,6 +364,12 @@ merges into a temporary file, then renames it over `screen.mov`, rebuilds the
 cursor and audio sidecars, and updates the metadata. Cap the attempts, because
 a failure can be reproducible.
 
+Since 2026-10-25 a camera take whose parts cannot be joined does the same: its
+parts stay in `camera/segments` and `camera/segments.unmerged.json` describes
+them, including each file's stretches, the device and the mirror setting. That
+recording still opens without a camera, so a repair should rebuild it and
+restore the camera block in the metadata.
+
 ### ~~A cursor-merge failure throws away a screen merge that succeeded~~ — DONE 2026-10-19
 
 The cursor merge is now best effort, like the audio merge. A sidecar problem
@@ -467,18 +473,6 @@ change, and the size change that rebuilds. A camera **device** change or a
 chroma-key toggle during a recording reconfigures the session in other ways
 and was not checked. Projects recorded before this fix keep their empty segment
 lists; nothing repairs them.
-
-### Camera segments have no merge fallback, and are orphaned on failure — code
-
-*Found 2026-10-17.* `CameraMergeUtility` uses passthrough only. On a failure the
-camera track is dropped with a warning (the screen recording is salvaged), and
-its segment files stay on disk with nothing pointing at them.
-`CameraCaptureCoordinator.acquirePreview` can also swap the camera input during
-a pause with no guard against an active recording, which is the likeliest way
-to get segments that cannot pass through.
-
-**To close:** guard device swaps while recording, add the same HEVC fallback,
-and keep or clean up the segments explicitly.
 
 ### Smaller capture follow-ups
 
@@ -1074,6 +1068,19 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Camera segments had no merge fallback and were orphaned on failure**
+  (fixed 2026-10-25).
+  - While a recording holds the camera, `CameraCaptureCoordinator` defers
+    anything that would stop the take: a camera change (resume re-show,
+    hot-plug), a chroma-key frame output, and the recording connection's
+    mirror. It applies them when the take ends. Until then the overlay shows
+    the plain preview instead of an empty chroma bubble.
+  - The camera merge uses the screen merger's composition and tries
+    passthrough, then HEVC, then H.264.
+  - Parts that cannot be joined are kept, with a manifest.
+  - Review also found and fixed a second stop overwriting the first one's
+    completion.
 
 - **The screen merger matched audio tracks by position** (fixed 2026-10-25).
   `RecordingSegmentMerger.buildComposition` now:

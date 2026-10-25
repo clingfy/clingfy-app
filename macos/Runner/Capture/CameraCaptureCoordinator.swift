@@ -155,7 +155,50 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
     selectedDevice?.activeFormat.formatDescription.dimensions
   }
 
+  // While a recording holds the camera, nothing it records from may change.
+  // Swapping the input, adding an output or rewriting the recording
+  // connection reconfigures the session, and that stops the movie file
+  // output mid-take. Paths that did it: the overlay re-shown on resume with a
+  // camera chosen during the pause, Flutter re-sending the device after a
+  // hot-plug, chroma key or mirror toggled mid-take. A file stopped like that
+  // left camera parts that could not be joined. So those requests wait, and
+  // `releaseRecording` applies them.
+  private var pendingPreviewDeviceID: String??
+  private var pendingVideoDataOutput = false
+  private var pinnedRecordingMirror: Bool?
+
+  /// Whether a preview request for `requested` must wait for the recording
+  /// to end rather than swap the camera now. A nil id means the default.
+  static func defersPreviewDevice(
+    recording: Bool, hasInput: Bool, current: String?, requested: String?
+  ) -> Bool {
+    guard recording, hasInput else { return false }
+    let resolved = requested ?? AVCaptureDevice.default(for: .video)?.uniqueID
+    return resolved != current
+  }
+
   func acquirePreview(deviceID: String?) throws {
+    if Self.defersPreviewDevice(
+      recording: activeUses.contains(.recording), hasInput: input != nil,
+      current: currentDeviceID, requested: deviceID)
+    {
+      NativeLogger.i(
+        "CameraCoordinator", "Camera change deferred until the recording ends",
+        context: ["requested": deviceID ?? "default", "recording": currentDeviceID ?? "nil"])
+      pendingPreviewDeviceID = .some(deviceID)
+      activeUses.insert(.preview)
+      startRunningIfNeeded()
+      return
+    }
+    if activeUses.contains(.recording), input != nil {
+      // Same device: nothing to configure, and nothing may be touched. It also
+      // cancels a change asked for earlier in the take: picking camera B and
+      // then A again must not end the take on B.
+      pendingPreviewDeviceID = nil
+      activeUses.insert(.preview)
+      startRunningIfNeeded()
+      return
+    }
     try ensureConfigured(deviceID: deviceID)
     activeUses.insert(.preview)
     startRunningIfNeeded()
@@ -169,24 +212,58 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
 
     /// Test-only: whether the chroma-key frame output is attached.
     var _testHasVideoDataOutput: Bool { videoDataOutput != nil }
+
+    /// Test-only: what is waiting for the recording to end.
+    var _testPendingVideoDataOutput: Bool { pendingVideoDataOutput }
+    var _testPendingPreviewDeviceID: String?? {
+      get { pendingPreviewDeviceID }
+      set { pendingPreviewDeviceID = newValue }
+    }
+    var _testPinnedRecordingMirror: Bool? { pinnedRecordingMirror }
   #endif
+
+  /// Whether a frame output can deliver now: one is attached, or nothing is
+  /// recording, so one can be added.
+  var canDeliverFramesNow: Bool {
+    videoDataOutput != nil || !activeUses.contains(.recording)
+  }
 
   func releasePreview() {
     activeUses.remove(.preview)
+    pendingPreviewDeviceID = nil
     stopRunningIfIdle()
   }
 
   func acquireRecording(deviceID: String?) throws {
     try ensureConfigured(deviceID: deviceID)
+    // The preview layer joins the session as a connection. Made now, before
+    // any file is open, a later show mid-take reuses it instead of adding one.
+    if sharedPreviewLayer == nil {
+      sharedPreviewLayer = AVCaptureVideoPreviewLayer(session: session)
+    }
     activeUses.insert(.recording)
     startRunningIfNeeded()
   }
 
   func releaseRecording() {
     activeUses.remove(.recording)
-    // A chroma-key output left attached for the recording's sake (see
-    // configureVideoDataOutput) can go now that nothing is recording.
-    if sampleBufferHandler == nil { configureVideoDataOutput(enabled: false) }
+    pinnedRecordingMirror = nil
+    if let pending = pendingPreviewDeviceID {
+      pendingPreviewDeviceID = nil
+      if activeUses.contains(.preview) {
+        do {
+          try ensureConfigured(deviceID: pending)
+        } catch {
+          NativeLogger.w(
+            "CameraCoordinator", "Deferred camera change failed",
+            context: ["requested": pending ?? "default", "error": error.localizedDescription])
+        }
+      }
+    }
+    // Whatever chroma key asked for during the take: add the output now, or
+    // drop the one left attached for the recording's sake.
+    pendingVideoDataOutput = false
+    configureVideoDataOutput(enabled: sampleBufferHandler != nil)
     stopRunningIfIdle()
   }
 
@@ -217,6 +294,13 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
   }
 
   func setMirrored(_ mirrored: Bool) {
+    // The first value set after acquiring the recording is the take's own
+    // (CameraRecorder.begin sets it at once). Later toggles reach the preview
+    // and frame output only; the recording connection keeps the take's value,
+    // which is what its metadata records.
+    if activeUses.contains(.recording), pinnedRecordingMirror == nil {
+      pinnedRecordingMirror = mirrored
+    }
     isMirrored = mirrored
     updateMirrorOnConnections()
   }
@@ -272,6 +356,12 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
 
   private func configureVideoDataOutput(enabled: Bool) {
     if enabled {
+      if videoDataOutput == nil, activeUses.contains(.recording) {
+        // Adding an output mid-take stops the recording; add it at the end.
+        pendingVideoDataOutput = true
+        updateMirrorOnConnections()
+        return
+      }
       if videoDataOutput == nil {
         let output = AVCaptureVideoDataOutput()
         output.videoSettings = [
@@ -325,7 +415,7 @@ final class CameraCaptureCoordinator: NSObject, CameraCaptureCoordinating {
       connection.isVideoMirroringSupported
     {
       connection.automaticallyAdjustsVideoMirroring = false
-      connection.isVideoMirrored = isMirrored
+      connection.isVideoMirrored = pinnedRecordingMirror ?? isMirrored
     }
 
     if let connection = videoDataOutput?.connection(with: .video),
