@@ -461,6 +461,83 @@ final class SalvagedTakeRepairerTests: XCTestCase {
     XCTAssertTrue(repairer().needsRepair(projectRoot: project), "still due next launch")
   }
 
+  /// A repair stopped before it commits (a recording starting) changes
+  /// nothing and does not use up an attempt.
+  func testACancelledRepairChangesNothingAndKeepsItsAttempt() async throws {
+    let project = try makeProject()
+    let capture = RecordingProjectPaths.captureDirectoryURL(for: project)
+    try writeMovie(RecordingProjectPaths.screenVideoURL(for: project), seconds: 1)
+    let part = capture.appendingPathComponent("screen.segment-002.mov")
+    try writeMovie(part, seconds: 1)
+    try writeScreenMetadata(project, segments: [segment(1, start: 0, seconds: 1)])
+    try writeScreenManifest(
+      project, published: 1, records: [record(1, start: 0, seconds: 1), record(2, start: 2, seconds: 1)])
+    let repairer = repairer()
+
+    let task = Task { await repairer.repair(projectRoot: project) }
+    task.cancel()
+    let outcome = await task.value
+
+    XCTAssertEqual(outcome, .cancelled)
+    XCTAssertEqual(duration(RecordingProjectPaths.screenVideoURL(for: project)), 1, accuracy: 0.1)
+    XCTAssertTrue(exists(part))
+    XCTAssertFalse(exists(SalvagedTakeRepairer.stagingURL(for: project)))
+    let manifest = try json(SalvagedTakeRepairer.screenManifestURL(for: project))
+    XCTAssertEqual((manifest["repair"] as? [String: Any])?["attempts"] as? Int, 0)
+    XCTAssertTrue(repairer.needsRepair(projectRoot: project), "tried again next launch")
+  }
+
+  /// A recording starting stops the repair under way; the projects after it
+  /// wait for the next launch, and the report answers at once.
+  func testARecordingStartingStopsTheSweep() throws {
+    for _ in 0..<2 {
+      let project = try makeProject()
+      try writeScreenManifest(project, published: 1, records: [])
+    }
+    let sweep = SalvagedTakeRepairSweep.shared
+    let calls = Counter()
+    sweep._testSetRepair { _ in
+      calls.increment()
+      while !Task.isCancelled { try? await Task.sleep(nanoseconds: 10_000_000) }
+      return .cancelled
+    }
+
+    sweep.start(rootURL: root, repairer: repairer()) { true }
+    sweep.cancelCurrent()
+
+    let reported = expectation(description: "report")
+    sweep.whenFinished { paths in
+      XCTAssertEqual(paths, [])
+      reported.fulfill()
+    }
+    wait(for: [reported], timeout: 5)
+    XCTAssertEqual(calls.value, 1, "the second project waits for the next launch")
+  }
+
+  /// A repair that never finishes, and ignores being stopped, is left behind:
+  /// its Finder open and the startup report are released.
+  func testAStuckRepairIsLeftBehind() throws {
+    let project = try makeProject()
+    try writeScreenManifest(project, published: 1, records: [])
+    let sweep = SalvagedTakeRepairSweep.shared
+    sweep._testSetTimeouts(project: 0.2, grace: 0.2)
+    sweep._testSetRepair { _ in
+      Thread.sleep(forTimeInterval: 3)  // ignores the stop
+      return .repaired
+    }
+
+    sweep.start(rootURL: root, repairer: repairer()) { true }
+
+    let opened = expectation(description: "open released")
+    sweep.whenProjectIsFree(project.path) { opened.fulfill() }
+    let reported = expectation(description: "report")
+    sweep.whenFinished { paths in
+      XCTAssertEqual(paths, [], "a repair given up on is not reported")
+      reported.fulfill()
+    }
+    wait(for: [opened, reported], timeout: 2)
+  }
+
   // MARK: - Fixtures
 
   private func repairer(
@@ -687,4 +764,11 @@ final class SalvagedTakeRepairerTests: XCTestCase {
     try XCTUnwrap(
       try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
   }
+}
+
+private final class Counter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+  var value: Int { lock.withLock { count } }
+  func increment() { lock.withLock { count += 1 } }
 }

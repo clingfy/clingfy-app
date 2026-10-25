@@ -31,6 +31,10 @@ struct SalvagedTakeRepairer: @unchecked Sendable {
     case nothingToRepair
     case repaired
     case failed(String)
+    /// Stopped before committing (a recording started, or it ran too long).
+    /// Nothing changed and the attempt is not counted: the next launch
+    /// tries again.
+    case cancelled
   }
 
   static let maxAttempts = 3
@@ -141,6 +145,15 @@ struct SalvagedTakeRepairer: @unchecked Sendable {
     return writeJSON(manifest, to: url) ? attempt : nil
   }
 
+  /// Takes back an attempt that was cancelled rather than failed.
+  private func undoAttempt(at url: URL) {
+    guard var manifest = readJSON(url) else { return }
+    var repair = manifest["repair"] as? [String: Any] ?? [:]
+    repair["attempts"] = max(0, (repair["attempts"] as? Int ?? 1) - 1)
+    manifest["repair"] = repair
+    _ = writeJSON(manifest, to: url)
+  }
+
   private func recordFailure(_ message: String, in manifest: inout [String: Any], at url: URL) {
     var repair = manifest["repair"] as? [String: Any] ?? [:]
     repair["lastError"] = message
@@ -208,11 +221,21 @@ struct SalvagedTakeRepairer: @unchecked Sendable {
     var plan = CommitPlan()
     plan.dropCamera = cameraDropDue
     var failures: [String] = []
+    var attempted: [URL] = []
+    func cancelled() -> Outcome {
+      try? fileManager.removeItem(at: staging)
+      attempted.forEach(undoAttempt)
+      NativeLogger.i(
+        "Repair", "Repair stopped before committing; it is tried again at the next launch",
+        context: ["project": projectRoot.lastPathComponent])
+      return .cancelled
+    }
 
     // The camera first: the screen metadata written below names it.
     var restoredCamera: CameraRecordingMetadata?
     if var manifest = cameraManifest {
       if let attempt = recordAttempt(&manifest, at: cameraManifestURL) {
+        attempted.append(cameraManifestURL)
         do {
           restoredCamera = try await stageCamera(
             manifest, attempt: attempt, projectRoot: projectRoot, plan: &plan)
@@ -220,6 +243,7 @@ struct SalvagedTakeRepairer: @unchecked Sendable {
             plan.cameraVisible = visible
           }
         } catch {
+          if Task.isCancelled { return cancelled() }
           let message = RecordingSegmentMerger.describe(error)
           failures.append("camera: \(message)")
           recordFailure(message, in: &manifest, at: cameraManifestURL)
@@ -240,11 +264,13 @@ struct SalvagedTakeRepairer: @unchecked Sendable {
     if var manifest = screenManifest {
       if #available(macOS 15.0, *) {
         if let attempt = recordAttempt(&manifest, at: screenManifestURL) {
+          attempted.append(screenManifestURL)
           do {
             screenWasMissing = (manifest["publishedSegmentIndex"] as? Int) == nil
             screenSegments = try await stageScreen(
               manifest, attempt: attempt, projectRoot: projectRoot, plan: &plan)
           } catch {
+            if Task.isCancelled { return cancelled() }
             let message = RecordingSegmentMerger.describe(error)
             failures.append("screen: \(message)")
             recordFailure(message, in: &manifest, at: screenManifestURL)
@@ -286,6 +312,8 @@ struct SalvagedTakeRepairer: @unchecked Sendable {
     plan.repaired = repairedSomething
     plan.delete(RecordingProjectPaths.waveformURL(for: projectRoot), root: projectRoot)
 
+    // The last point at which stopping changes nothing.
+    if Task.isCancelled { return cancelled() }
     guard writeJSON(plan.json, to: Self.commitURL(for: projectRoot)) else {
       try? fileManager.removeItem(at: staging)
       return .failed("Could not write the commit plan")
@@ -816,8 +844,23 @@ private struct RepairError: LocalizedError {
 final class SalvagedTakeRepairSweep: @unchecked Sendable {
   static let shared = SalvagedTakeRepairSweep()
 
+  /// How long one project may take before the repair is stopped, so a
+  /// stuck export cannot hold its Finder open and the startup report for
+  /// the whole session. Generous: re-encoding an hour-long take takes a
+  /// while.
+  static let projectTimeout: TimeInterval = 30 * 60
+  /// After a stop, how long to wait for the repair to wind down before
+  /// moving on without it (an export that ignores the stop).
+  static let cancelGrace: TimeInterval = 10
+
   private(set) var isFinished = true
   private var pending: Set<String> = []
+  private var current: Task<SalvagedTakeRepairer.Outcome, Never>?
+  /// Bumped for each project, so a late result from one given up on is
+  /// ignored.
+  private var generation = 0
+  private var timeout: TimeInterval = SalvagedTakeRepairSweep.projectTimeout
+  private var grace: TimeInterval = SalvagedTakeRepairSweep.cancelGrace
   private var repaired: [String] = []
   private var finishWaiters: [([String]) -> Void] = []
   private var projectWaiters: [String: [() -> Void]] = [:]
@@ -868,13 +911,61 @@ final class SalvagedTakeRepairSweep: @unchecked Sendable {
       run(next, repairer: repairer, canStart: canStart)
       return
     }
-    Task.detached(priority: .utility) {
-      let outcome = await repairer.repair(projectRoot: root)
-      DispatchQueue.main.async {
-        if outcome == .repaired { self.repaired.append(root.path) }
-        self.done(root)
-        self.run(next, repairer: repairer, canStart: canStart)
-      }
+    generation += 1
+    let token = generation
+    let work = repairOverride
+    let task = Task.detached(priority: .utility) {
+      if let work { return await work(root) }
+      return await repairer.repair(projectRoot: root)
+    }
+    current = task
+    let advance: (SalvagedTakeRepairer.Outcome?) -> Void = { [weak self] outcome in
+      guard let self, self.generation == token else { return }
+      self.generation += 1
+      self.current = nil
+      if outcome == .repaired { self.repaired.append(root.path) }
+      self.done(root)
+      // After a stop for a recording, the rest wait for the next launch too.
+      self.run(next, repairer: repairer, canStart: outcome == .cancelled ? { false } : canStart)
+    }
+    Task.detached {
+      let outcome = await task.value
+      DispatchQueue.main.async { advance(outcome) }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+      guard let self, self.generation == token else { return }
+      NativeLogger.w(
+        "Repair", "Repair took too long; stopping it",
+        context: ["project": root.lastPathComponent, "seconds": Int(self.timeout)])
+      self.stopCurrent(token: token, advance: advance)
+    }
+    pendingAdvance = advance
+  }
+
+  private var pendingAdvance: ((SalvagedTakeRepairer.Outcome?) -> Void)?
+  /// Tests only: stands in for the repair, to make one that hangs or waits.
+  private var repairOverride: (@Sendable (URL) async -> SalvagedTakeRepairer.Outcome)?
+
+  /// Stops the repair under way: a recording is starting. It is tried again
+  /// at the next launch, and so are the projects after it.
+  func cancelCurrent() {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard current != nil else { return }
+    NativeLogger.i("Repair", "A recording is starting; stopping the launch repair")
+    stopCurrent(token: generation, advance: pendingAdvance)
+  }
+
+  private func stopCurrent(
+    token: Int, advance: ((SalvagedTakeRepairer.Outcome?) -> Void)?
+  ) {
+    current?.cancel()
+    // Normally the repair returns `.cancelled` at once and advances the
+    // sweep itself. One that ignores the stop is left behind after a grace
+    // period, so what waits on it is released.
+    DispatchQueue.main.asyncAfter(deadline: .now() + grace) { [weak self] in
+      guard let self, self.generation == token else { return }
+      NativeLogger.w("Repair", "A stopped repair did not wind down; moving on without it")
+      advance?(.cancelled)
     }
   }
 
@@ -908,7 +999,23 @@ final class SalvagedTakeRepairSweep: @unchecked Sendable {
   }
 
   #if DEBUG
+    func _testSetTimeouts(project: TimeInterval, grace: TimeInterval) {
+      timeout = project
+      self.grace = grace
+    }
+
+    func _testSetRepair(_ work: (@Sendable (URL) async -> SalvagedTakeRepairer.Outcome)?) {
+      repairOverride = work
+    }
+
     func _testReset() {
+      repairOverride = nil
+      current?.cancel()
+      current = nil
+      pendingAdvance = nil
+      generation += 1
+      timeout = Self.projectTimeout
+      grace = Self.cancelGrace
       isFinished = true
       pending = []
       repaired = []
