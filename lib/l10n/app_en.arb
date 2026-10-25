@@ -924,6 +924,15 @@
   "errRecordingFinalizeTimeout": "Saving the recording timed out.",
   "errPreviewTimeout": "Preview took too long to load.",
   "errInternalError": "An internal error occurred.",
+  "pausedRecordingRepairedNotice": "{count, plural, one{Clingfy joined the parts of a paused recording that could not be joined when it stopped.} other{Clingfy joined the parts of {count} paused recordings that could not be joined when they stopped.}}",
+  "@pausedRecordingRepairedNotice": {
+    "description": "Startup toast shown after the launch repair joins the parts of paused recordings that could not be joined when they stopped. Has an Open action for the newest one.",
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "recordingInterruptedNotice": "{count, plural, one{1 recording was interrupted and could not be recovered.} other{{count} recordings were interrupted and could not be recovered.}}",
   "@recordingInterruptedNotice": {
     "description": "Startup salvage toast shown after the native crash-recovery sweep finds recordings that were interrupted by a crash.",

@@ -1,14 +1,15 @@
-/// Phase 10.4 (Windows): result of the native startup crash-recovery
-/// sweep returned by `getStartupRecoveryReport`.
+/// Result of the native startup sweep returned by `getStartupRecoveryReport`.
 ///
-/// Wire shape (see the Windows bridge handler):
+/// Wire shape (see the Windows and macOS bridge handlers):
 /// ```
 /// {
 ///   "interruptedProjects": [
 ///     { "projectPath": String, "sessionId": String }
 ///   ],
 ///   "cleanedTempFileCount": int,
-///   "cleanedTempBytes": int
+///   "cleanedTempBytes": int,
+///   "repairedProjects": [String]   // macOS only: paused takes whose parts
+///                                  // were joined at launch
 /// }
 /// ```
 ///
@@ -42,6 +43,7 @@ class StartupRecoveryReport {
     required this.interruptedProjects,
     required this.cleanedTempFileCount,
     required this.cleanedTempBytes,
+    this.repairedProjects = const [],
   });
 
   static const StartupRecoveryReport empty = StartupRecoveryReport(
@@ -54,7 +56,12 @@ class StartupRecoveryReport {
   final int cleanedTempFileCount;
   final int cleanedTempBytes;
 
+  /// Project paths of paused recordings whose parts, which could not be
+  /// joined when they stopped, were joined by the launch repair.
+  final List<String> repairedProjects;
+
   bool get hasInterruptedProjects => interruptedProjects.isNotEmpty;
+  bool get hasRepairedProjects => repairedProjects.isNotEmpty;
   bool get hasCleanedTempFiles => cleanedTempFileCount > 0;
 
   static StartupRecoveryReport fromMap(Map<dynamic, dynamic>? raw) {
@@ -71,10 +78,16 @@ class StartupRecoveryReport {
       }
     }
 
+    final rawRepaired = raw['repairedProjects'];
+    final repaired = rawRepaired is List
+        ? rawRepaired.whereType<String>().where((p) => p.isNotEmpty).toList()
+        : const <String>[];
+
     return StartupRecoveryReport(
       interruptedProjects: projects,
       cleanedTempFileCount: _asInt(raw['cleanedTempFileCount']),
       cleanedTempBytes: _asInt(raw['cleanedTempBytes']),
+      repairedProjects: repaired,
     );
   }
 

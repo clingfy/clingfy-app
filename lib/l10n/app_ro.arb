@@ -897,6 +897,7 @@
   "errRecordingFinalizeTimeout": "Salvarea înregistrării a expirat.",
   "errPreviewTimeout": "Previzualizarea a durat prea mult să se încarce.",
   "errInternalError": "A apărut o eroare internă.",
+  "pausedRecordingRepairedNotice": "{count, plural, one{Părțile unei înregistrări cu pauză, care nu au putut fi unite la oprire, sunt acum unite.} few{Părțile a {count} înregistrări cu pauză, care nu au putut fi unite la oprire, sunt acum unite.} other{Părțile a {count} de înregistrări cu pauză, care nu au putut fi unite la oprire, sunt acum unite.}}",
   "recordingInterruptedNotice": "{count, plural, one{O înregistrare a fost întreruptă și nu a putut fi recuperată.} few{{count} înregistrări au fost întrerupte și nu au putut fi recuperate.} other{{count} de înregistrări au fost întrerupte și nu au putut fi recuperate.}}",
   "@recordingInterruptedNotice": {
     "placeholders": {

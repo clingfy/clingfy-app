@@ -284,6 +284,74 @@ void main() {
       },
     );
 
+    test('footage joined after the edits were saved is added at the end '
+        '(a paused take repaired at a later launch)', () async {
+      await PostStateStore.update(
+        projectDir.path,
+        (state) => state
+            .copyWith(durationMs: 10000)
+            .withTrack(
+              const ClipTrack(
+                clips: [
+                  Clip(
+                    id: 'clip_0',
+                    sourceInMs: 0,
+                    sourceOutMs: 4000,
+                    timelineStartMs: 0,
+                  ),
+                  Clip(
+                    id: 'clip_1',
+                    sourceInMs: 6000,
+                    sourceOutMs: 10000,
+                    timelineStartMs: 4000,
+                  ),
+                ],
+              ),
+            ),
+      );
+
+      final c = makeForProject(durationMs: 25000);
+      addTearDown(c.dispose);
+      await pumpEventQueue();
+
+      expect(c.clips, hasLength(3));
+      expect(c.clips.last.sourceInMs, 10000);
+      expect(c.clips.last.sourceOutMs, 25000);
+      expect(c.clips.last.timelineStartMs, 8000);
+      expect(c.editedDurationMs, 23000);
+      expect(
+        c.clips.map((clip) => clip.id).toSet(),
+        hasLength(3),
+        reason: 'the added clip gets a fresh id',
+      );
+    });
+
+    test('a recording the same length as when saved gains nothing', () async {
+      await PostStateStore.update(
+        projectDir.path,
+        (state) => state
+            .copyWith(durationMs: 10000)
+            .withTrack(
+              const ClipTrack(
+                clips: [
+                  Clip(
+                    id: 'clip_0',
+                    sourceInMs: 0,
+                    sourceOutMs: 4000,
+                    timelineStartMs: 0,
+                  ),
+                ],
+              ),
+            ),
+      );
+
+      final c = makeForProject(durationMs: 10100);
+      addTearDown(c.dispose);
+      await pumpEventQueue();
+
+      expect(c.clips, hasLength(1));
+    });
+
     test('restores persisted cuts and pushes them to native on open', () async {
       await seedPersistedClips(const [
         Clip(

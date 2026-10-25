@@ -371,6 +371,16 @@ final class ScreenRecorderFacade: NSObject {
     recordingStore.markInvalidReadyProjectsAsFailed()
     recordingStore.markInterruptedProjectsAsFailed()
 
+    // Paused takes whose parts could not be joined when they stopped get
+    // another try, in the background, while nothing has them open. Not in
+    // the test host, which would repair the developer's own recordings.
+    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+      SalvagedTakeRepairSweep.shared.start(rootURL: RecordingProjectPaths.projectsRoot()) {
+        [weak self] in
+        self?.state == .idle
+      }
+    }
+
     // Scan internal workspace on startup for diagnostics
     scanInternalWorkspaceOnStartup()
   }
@@ -2785,8 +2795,11 @@ final class ScreenRecorderFacade: NSObject {
         metadata.camera = MetadataSidecarWriter.cameraCaptureInfo(
           from: cameraResult, screenRawURL: publishedScreenURL)
       } else if shouldRecordSeparateCameraAsset {
+        Self.recordCameraVisibilityForRepair(
+          metadata.editorSeed.cameraVisible, projectRoot: projectRoot)
         metadata.camera = nil
         metadata.editorSeed.cameraVisible = false
+        Self.dropCameraFromProjectManifest(projectRoot: projectRoot)
       }
       try metadata.write(to: metaURL)
       NativeLogger.d(
@@ -2796,6 +2809,40 @@ final class ScreenRecorderFacade: NSObject {
       // If we can't update, log but don't fail - the recording is still valid
       NativeLogger.w(
         "Facade", "Could not update metadata end timestamp",
+        context: ["error": error.localizedDescription])
+    }
+  }
+
+  /// The camera parts were kept for a repair at a later launch. The take is
+  /// about to be shown without a camera, so the repair needs to know whether
+  /// it was shown before, to put it back as it was.
+  nonisolated static func recordCameraVisibilityForRepair(_ visible: Bool, projectRoot: URL) {
+    let url = SalvagedTakeRepairer.cameraManifestURL(for: projectRoot)
+    guard let data = try? Data(contentsOf: url),
+      var manifest = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+    else { return }
+    manifest[SalvagedTakeRepairer.cameraVisibleKey] = visible
+    guard
+      let updated = try? JSONSerialization.data(
+        withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+    else { return }
+    try? updated.write(to: url, options: .atomic)
+  }
+
+  /// A take that finished without its camera must not name camera/raw.mov in
+  /// project.json: opening it checks that every named file exists, so the
+  /// take was refused, and the next launch marked it failed. A repair that
+  /// rebuilds the camera names it again.
+  nonisolated static func dropCameraFromProjectManifest(projectRoot: URL) {
+    let url = RecordingProjectPaths.manifestURL(for: projectRoot)
+    guard var manifest = try? RecordingProjectManifest.read(from: url), manifest.camera != nil
+    else { return }
+    manifest.camera = nil
+    do {
+      try manifest.write(to: url)
+    } catch {
+      NativeLogger.w(
+        "Facade", "Could not drop the missing camera from project.json",
         context: ["error": error.localizedDescription])
     }
   }
@@ -2951,7 +2998,9 @@ final class ScreenRecorderFacade: NSObject {
   }
 
   func canClearCachedRecordings() -> Bool {
+    // Not while the launch repair is writing into a project, either.
     CachedRecordingsCleanupPolicy.canClear(recorderState: state)
+      && SalvagedTakeRepairSweep.shared.isFinished
   }
 
   func clearCachedRecordings() -> Int {
@@ -3057,6 +3106,13 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
   nonisolated static let cameraFinalizeSalvageWarning =
     "The camera track could not be saved, so this recording has no camera. "
     + "Your screen and audio were recorded and are ready to edit."
+
+  /// The same, when the camera's parts were kept: the next launch tries to
+  /// join them and put the camera back.
+  nonisolated static let cameraPartsKeptWarning =
+    "The camera track could not be joined, so this recording has no camera for now. "
+    + "Your screen and audio are ready to edit. Clingfy keeps the camera's parts "
+    + "and tries to join them again the next time it starts."
 
   /// Emits a recording warning outside the backend event path.
   func emitRecordingWarning(_ message: String) {
@@ -3337,7 +3393,12 @@ extension ScreenRecorderFacade: CaptureBackendEventHandling {
         )
         // Loud, but not destructive: the user has to know the camera track is
         // gone before they publish.
-        self.emitRecordingWarning(Self.cameraFinalizeSalvageWarning)
+        let partsKept = self.sessionState.activeRecordingProjectRoot.map {
+          FileManager.default.fileExists(
+            atPath: SalvagedTakeRepairer.cameraManifestURL(for: $0).path)
+        } ?? false
+        self.emitRecordingWarning(
+          partsKept ? Self.cameraPartsKeptWarning : Self.cameraFinalizeSalvageWarning)
         finalizeWithCameraResult(nil)
       }
     }

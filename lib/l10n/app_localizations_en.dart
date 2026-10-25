@@ -2714,6 +2714,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get errInternalError => 'An internal error occurred.';
 
   @override
+  String pausedRecordingRepairedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Clingfy joined the parts of $count paused recordings that could not be joined when they stopped.',
+      one:
+          'Clingfy joined the parts of a paused recording that could not be joined when it stopped.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String recordingInterruptedNotice(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

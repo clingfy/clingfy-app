@@ -2698,6 +2698,18 @@ class AppLocalizationsAr extends AppLocalizations {
   String get errInternalError => 'حدث خطأ داخلي.';
 
   @override
+  String pausedRecordingRepairedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'تم الآن دمج أجزاء $count تسجيلات متوقفة مؤقتًا تعذّر دمجها عند انتهائها.',
+      one: 'تم الآن دمج أجزاء تسجيل متوقف مؤقتًا تعذّر دمجها عند انتهائه.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String recordingInterruptedNotice(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

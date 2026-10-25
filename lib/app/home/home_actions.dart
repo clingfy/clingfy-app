@@ -21,7 +21,6 @@ import 'package:clingfy/app/home/home_prefs_store.dart';
 import 'package:clingfy/app/home/home_scope.dart';
 import 'package:clingfy/app/home/home_ui_state.dart';
 import 'package:clingfy/app/home/startup_recovery_notice.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:clingfy/core/permissions/models/recording_start_preflight.dart';
 import 'package:clingfy/ui/platform/widgets/desktop_pane_layout.dart';
 import 'package:clingfy/app/permissions/widgets/start_recording_permission_dialog.dart';
@@ -89,7 +88,7 @@ class HomeActions {
   }
 
   Future<void> announceStartupRecovery(BuildContext context) async {
-    if (!isWindows() || _startupRecoveryAnnounced) return;
+    if (_startupRecoveryAnnounced) return;
     _startupRecoveryAnnounced = true;
 
     final report = await nativeBridge.getStartupRecoveryReport();
@@ -118,13 +117,31 @@ class HomeActions {
 
     if (!context.mounted) return;
     final l10n = AppLocalizations.of(context)!;
+    if (report.hasRepairedProjects) {
+      Log.i(
+        'HomeActions',
+        'Startup repair joined paused recordings',
+        null,
+        null,
+        {'count': report.repairedProjects.length},
+      );
+    }
     final notice = buildStartupRecoveryNotice(
       report,
       interruptedMessage: l10n.recordingInterruptedNotice,
+      repairedMessage: l10n.pausedRecordingRepairedNotice,
+      openRepaired: (projectPath) => HomeUiNoticeAction(
+        label: l10n.open,
+        onPressed: () {
+          if (context.mounted) handleExternalProjectOpen(context, projectPath);
+        },
+      ),
     );
-    if (notice != null) {
-      uiState.setNotice(notice);
-    }
+    if (notice == null) return;
+    // The repair answers once it is done, which can be minutes in. Its good
+    // news does not cover a warning about the take just recorded.
+    if (notice.tone == HomeUiNoticeTone.info && uiState.notice != null) return;
+    uiState.setNotice(notice);
   }
 
   void clearToolbarErrors() {

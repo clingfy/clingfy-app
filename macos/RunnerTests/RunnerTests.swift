@@ -11315,7 +11315,7 @@ final class RecordingSegmentMergerTests: XCTestCase {
   func testTheSalvageWarningSaysThePartsAreKept() {
     let message = RecordingSegmentMerger.salvageWarning
     XCTAssertTrue(message.contains("one part"))
-    XCTAssertTrue(message.contains("capture folder"))
+    XCTAssertTrue(message.contains("next time it starts"))
   }
 
   func testTheSegmentSummaryNamesTheCodecAndSize() throws {

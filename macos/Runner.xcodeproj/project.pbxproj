@@ -136,6 +136,7 @@
 		7D1001022FA0000100A0B001 /* RecordingProjectManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D1001042FA0000100A0B001 /* RecordingProjectManifest.swift */; };
 		80187E677136AC16CC76ED14 /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B01053F62F931EDFDC4E9F77 /* Pods_RunnerTests.framework */; };
 		81CB5B49A932A3DC69059C83 /* MetadataSidecarWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */; };
+		5A1B2C3D4E5F60718293A4B6 /* SalvagedTakeRepairer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1B2C3D4E5F60718293A4B5 /* SalvagedTakeRepairer.swift */; };
 		82988B71EFD8E0C92461A1E0 /* GifExportPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 523922A25F5F34150B8F9459 /* GifExportPolicyTests.swift */; };
 		23FFD6BF8CD9534E1D1D0136 /* CaptionsServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4742537B3BE2184D595AC69E /* CaptionsServiceTests.swift */; };
 		56CF68D722DAC5D3C9DE48C6 /* CaptionsCapabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E099388158365388F64E5BAF /* CaptionsCapabilityTests.swift */; };
@@ -202,6 +203,7 @@
 		C044630E526C2B0738D521BA /* CaptureDestinationPreflightPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 08F6040D2F4D412CF5867FEF /* CaptureDestinationPreflightPolicy.swift */; };
 		C10B8946BA90CF3E63BE26C3 /* CanvasBackgroundTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3067B1BE4DCDFDBC61A9368D /* CanvasBackgroundTests.swift */; };
 		C1D2E3F40516273849A5B6C7 /* RecordingFailureRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */; };
+		5A1B2C3D4E5F60718293A4C6 /* SalvagedTakeRepairerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1B2C3D4E5F60718293A4C5 /* SalvagedTakeRepairerTests.swift */; };
 		011BFCE1AE814FBC848B4364 /* ColorTransferFunctionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12D56AF4674A474580B46BBF /* ColorTransferFunctionTests.swift */; };
 		C9F53A704E24243F7769EE2C /* StorageDiagnosticsServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFABA6A057D27E2AC4CDFEB6 /* StorageDiagnosticsServiceTests.swift */; };
 		CA37D1B1F3246B5C4E83878B /* NSColor+ARGB.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49998781A7ED783ED2315B93 /* NSColor+ARGB.swift */; };
@@ -482,10 +484,12 @@
 		C07C546166B52E67C8D2F881 /* RecordingIndicatorCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecordingIndicatorCoordinator.swift; sourceTree = "<group>"; };
 		C15C26A3F7B6D7C61763927A /* BackgroundPresetCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BackgroundPresetCatalog.swift; sourceTree = "<group>"; };
 		C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingFailureRecoveryTests.swift; sourceTree = "<group>"; };
+		5A1B2C3D4E5F60718293A4C5 /* SalvagedTakeRepairerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SalvagedTakeRepairerTests.swift; sourceTree = "<group>"; };
 		12D56AF4674A474580B46BBF /* ColorTransferFunctionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorTransferFunctionTests.swift; sourceTree = "<group>"; };
 		C2200342B4777D6C129AE306 /* Pods-RunnerTests.debug-dev.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug-dev.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug-dev.xcconfig"; sourceTree = "<group>"; };
 		C5F53265860D2AA59ECBD56F /* ScreenRecorderEventBridgeTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScreenRecorderEventBridgeTests.swift; sourceTree = "<group>"; };
 		C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MetadataSidecarWriter.swift; sourceTree = "<group>"; };
+		5A1B2C3D4E5F60718293A4B5 /* SalvagedTakeRepairer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SalvagedTakeRepairer.swift; sourceTree = "<group>"; };
 		CB4E0C29E30DA358A5C81FD4 /* OverlayUpdateDeduper.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = OverlayUpdateDeduper.swift; sourceTree = "<group>"; };
 		CB989167B352270D10F024F0 /* GifExportSession.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GifExportSession.swift; sourceTree = "<group>"; };
 		CC09958A111E0B11EB556C4E /* GraphicMeshBackgroundRenderer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GraphicMeshBackgroundRenderer.swift; sourceTree = "<group>"; };
@@ -605,6 +609,7 @@
 			isa = PBXGroup;
 			children = (
 				C7624E3F54B75567B79BEB96 /* MetadataSidecarWriter.swift */,
+				5A1B2C3D4E5F60718293A4B5 /* SalvagedTakeRepairer.swift */,
 				76F7D4904C8CB0412CE24890 /* RecordingProjectService.swift */,
 			);
 			name = Project;
@@ -656,6 +661,7 @@
 				C8DA5124749A41029F814803 /* AudioHardwareListenerTests.swift */,
 				7E9E3171FA6146B0B3C30EF1 /* PreRecordingBarWarningTests.swift */,
 				C1D2E3F40516273849A5B6C6 /* RecordingFailureRecoveryTests.swift */,
+				5A1B2C3D4E5F60718293A4C5 /* SalvagedTakeRepairerTests.swift */,
 				12D56AF4674A474580B46BBF /* ColorTransferFunctionTests.swift */,
 				331C80D7294CF71000263BE5 /* RunnerTests.swift */,
 				815246B6D0905FCBEA4C2BFE /* AudioLevelEstimatorTests.swift */,
@@ -1555,6 +1561,7 @@
 				D77D5BFFE51D430DBC279D47 /* AudioHardwareListenerTests.swift in Sources */,
 				9311CC42F28B4B52B721618D /* PreRecordingBarWarningTests.swift in Sources */,
 				C1D2E3F40516273849A5B6C7 /* RecordingFailureRecoveryTests.swift in Sources */,
+				5A1B2C3D4E5F60718293A4C6 /* SalvagedTakeRepairerTests.swift in Sources */,
 				011BFCE1AE814FBC848B4364 /* ColorTransferFunctionTests.swift in Sources */,
 				331C80D8294CF71000263BE5 /* RunnerTests.swift in Sources */,
 				DCD38ECB9B70DA6BE66ADC4D /* AudioLevelEstimatorTests.swift in Sources */,
@@ -1745,6 +1752,7 @@
 				A182380CC6315B176E68F111 /* ZoomQueryService.swift in Sources */,
 				4F72510E7C98E741BF80A496 /* PreviewSceneResolver.swift in Sources */,
 				81CB5B49A932A3DC69059C83 /* MetadataSidecarWriter.swift in Sources */,
+				5A1B2C3D4E5F60718293A4B6 /* SalvagedTakeRepairer.swift in Sources */,
 				01AAE1E4B799E6B85610A896 /* ExportPrep.swift in Sources */,
 				E119FE7B1D15945159EF746A /* CaptureTargetResolver.swift in Sources */,
 				DE60092E7B24A40FE3DA966F /* RecordingProjectService.swift in Sources */,

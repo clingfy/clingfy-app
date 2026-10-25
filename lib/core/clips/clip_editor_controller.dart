@@ -289,14 +289,35 @@ class ClipEditorController extends ChangeNotifier {
     final path = _projectPath;
     if (path == null || _durationMs <= 0) return seed;
 
-    final persisted = PostStateStore.load(path).trackOfType<ClipTrack>();
+    final state = PostStateStore.load(path);
+    final persisted = state.trackOfType<ClipTrack>();
     if (persisted == null) return seed;
 
     final restored = _sanitizePersistedClips(persisted.clips);
     if (restored == null) return seed;
 
     _advanceIdCounterPast(restored);
-    return restored;
+    return _withFootageAddedSince(restored, state.durationMs);
+  }
+
+  /// A recording can grow after its edits were saved: a paused take whose
+  /// parts could not be joined opens with its first part, and a later launch
+  /// joins the rest. The saved clips cover only that first part, so the
+  /// footage after it would be hidden; it is added as a clip at the end.
+  List<Clip> _withFootageAddedSince(List<Clip> clips, int savedDurationMs) {
+    const toleranceMs = 250;
+    if (savedDurationMs <= 0 || _durationMs - savedDurationMs <= toleranceMs) {
+      return clips;
+    }
+    return ClipTimeline.normalized([
+      ...clips,
+      Clip(
+        id: _nextId(),
+        sourceInMs: savedDurationMs,
+        sourceOutMs: _durationMs,
+        timelineStartMs: 0,
+      ),
+    ]);
   }
 
   /// Validates restored clips against the current recording. Rejects (returns

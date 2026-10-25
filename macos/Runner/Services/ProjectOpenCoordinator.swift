@@ -19,6 +19,14 @@ final class ProjectOpenCoordinator {
   }
 
   func enqueueProjectPath(_ projectPath: String) {
+    // A project being repaired at launch opens once its files are in place,
+    // not before, when the editor would load the part about to be replaced.
+    SalvagedTakeRepairSweep.shared.whenProjectIsFree(projectPath) { [weak self] in
+      self?.deliver(projectPath)
+    }
+  }
+
+  private func deliver(_ projectPath: String) {
     if let workflowEventSink {
       emit(projectPath: projectPath, sink: workflowEventSink)
       return
