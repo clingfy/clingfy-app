@@ -105,6 +105,37 @@ void main() {
     },
   );
 
+  test('every cue of a legacy transcript survives, in order', () {
+    legacy('captions_state.json').writeAsStringSync(
+      jsonEncode({
+        'version': 1,
+        'captions': [
+          {'id': 'c1', 'startMs': 0, 'endMs': 1000, 'text': 'hello'},
+          {
+            'id': 'c2',
+            'startMs': 1000,
+            'endMs': 2500,
+            'text': 'مرحبا Clingfy!',
+          },
+          {'id': 'c3', 'startMs': 2500, 'endMs': 4000, 'text': 'two\nlines'},
+        ],
+      }),
+    );
+
+    final captions = PostStateStore.load(
+      project.path,
+    ).trackOfType<CaptionTrack>()!.captions;
+
+    expect(captions.map((c) => c.id), ['c1', 'c2', 'c3']);
+    expect(captions.map((c) => c.text), [
+      'hello',
+      'مرحبا Clingfy!',
+      'two\nlines',
+    ]);
+    expect(captions.map((c) => c.startMs), [0, 1000, 2500]);
+    expect(captions.map((c) => c.endMs), [1000, 2500, 4000]);
+  });
+
   test(
     'a 1.0.5-era project — clips and canvas, no transcript — still opens',
     () {

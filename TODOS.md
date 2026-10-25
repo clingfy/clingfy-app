@@ -12,27 +12,6 @@ or move it to *Recently closed* at the bottom. Do not delete it.
 
 Loose ends last revised 2026-10-16 against `develop` at `abe470e` (1.2.0).
 
-## Editor — clip lane
-
-### Persistent scissors tool mode (Premiere-style razor)
-- **What:** A button-activated cut tool that stays active across multiple cuts without holding a modifier.
-- **Why:** Some users coming from Premiere/Final Cut expect a sticky "blade" tool (select tool ↔ razor tool).
-- **Context:** Deferred in the 2026-06-28 eng review of the scissors-split feature. We shipped modifier-click instead (hold Option → cut at pointer) because a persistent opaque overlay fought the timeline's scroll/pan and the trim-handle gestures, and put interaction state in lib/core where it didn't belong. The modifier-click approach delivers the same cut-at-pointer with none of those conflicts. See the design doc `*-scissors-split-design-*.md` in the gstack project dir for the full rationale (objections 1-4).
-- **Pros:** Familiar to pro-editor users; no key to hold for long cutting sessions.
-- **Cons:** Modal UX (the friction casual users complain about); reintroduces the gesture-conflict landmines the modifier approach avoided.
-- **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (mode state would live local in `_VideoTimelineState`, next to `_panModeEnabled`), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart` (a non-opaque hit layer inside `TimelineScrollableCanvas`).
-- **Depends on:** The modifier-click cut layer landing first (this is its evolution).
-- **Gate:** Only build on real user demand.
-
-### Frame-preview (previewPeekTo) on the clip lane during cut-hover
-- **What:** Extend the hover→`previewPeekTo` pipeline to the clip-lane region, not just the ruler, while cut-hovering.
-- **Why:** Today hover-peek is wired only on the ruler strip (`timeline_editor_viewport.dart:489-494`). With modifier-click cutting, hovering the lane shows a guide line but not the actual frame you're about to cut on — so cuts on the lane area are "blind."
-- **Context:** Raised by the outside-voice review (2026-06-28). Enhancement, not required for the scissors-split feature to work.
-- **Pros:** You see the exact frame under the cut point anywhere on the timeline, not just on the ruler.
-- **Cons:** More hover→native traffic on the lane; needs the same coalescing/peek-end hardening the ruler path already has.
-- **Start at:** `lib/app/home/preview/widgets/video_timeline.dart` (`onHoverSeek`/`previewPeekTo` wiring), `lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart`.
-- **Depends on:** Scissors-split cut layer (shares the cut-hover state).
-
 ## Editor — captions
 
 ### Arabic subtitles have not been checked in a real exported video — verify
@@ -55,62 +34,21 @@ punctuation should match how the editor shows the line.
 **To close:** decide whether Intel Macs get subtitles (slowly) or are
 explicitly unsupported, and make the copy say the same thing as the code.
 
-### Smaller caption follow-ups
+### ~~Smaller caption follow-ups~~ — DONE 2026-10-26
+- **Caption migration with more than one cue:** now pinned. Three cues, Arabic
+  and mixed text and a two-line cue, survive in order with their text and times
+  (`post_state_store_test.dart`).
+- **Editing a two-line subtitle that mixes scripts:** moved to the feature
+  backlog. It needs a per-line editor, and export and preview are already
+  correct (#601).
 
-- **Editing a two-line subtitle that mixes scripts.** The editor's text field
-  has one direction for all lines, so line 2 shows in line 1's order while being
-  edited. Export and preview are correct (#601). Documented in
-  `post_captions_section.dart`. Fixing it would need a per-line editor.
-- **Caption migration is only tested with one cue.** The `post/state.json`
-  migration tests use a single-cue fixture (`test/core/timeline/post_state_store_test.dart:50-58`).
-  Optional: add a multi-cue fixture so "every cue survives" is pinned.
-
-### Word-level caption editing (click a word to edit, drag to retime)
-
-- **What:** Click an individual word in a caption to edit just that word, and drag
-  a word's boundary to retime it, rather than editing the whole cue as one string.
-- **Why:** `CaptionWord` (`lib/core/timeline/model/edit_track.dart:201-222`) exists
-  and its own doc comment says it "powers click-to-edit and reflow-on-split."
-  Half of that shipped: reflow-on-split uses the timings when a cue's audio is cut
-  in half. The click-to-edit half did not. Without this entry, the next person
-  reads that comment and assumes the feature exists.
-- **Context:** Deferred in the 2026-08-04 eng review (scope reduction R2). v1 ships
-  cue-level text editing, which satisfies the actual need — fixing a
-  mis-transcribed product name — at a fraction of the UI. Per-word timings are
-  stored by ASR regardless, so this is additive later, not a rewrite. The reason to
-  wait is that nobody has seen real transcription quality on real Clingfy
-  recordings yet; if Whisper turns out to be accurate enough that people rarely
-  edit, this is UI nobody wanted.
-- **Pros:** Precise corrections without retyping a sentence; retiming without
-  touching text.
-- **Cons:** Substantially more interaction surface (per-word hit targets, drag
-  handles inside a text run, RTL word order), and it fights the cue-level editor
-  you would already have shipped.
-- **Start at:** `lib/app/home/post_processing/widgets/post_captions_section.dart`
-  (once it exists), `CaptionWord` in `edit_track.dart:201`.
-- **Depends on:** the cue-level caption editing UI shipping first.
-- **Gate:** Only build on real user demand, same rule as the persistent-scissors
-  item above.
-- **Effort:** human ~2d / CC ~2h.
-
-### Subtitle translation — decide
-
-*Checked 2026-10-20.* Not started on either platform. Whisper's
-`large-v3-turbo` cannot translate, so this needs a second engine. The data
-model already has room for it: `Caption.translatedText` is serialized and
-never filled (`edit_track.dart:247-294`), and the transcribing model is
-recorded for "a future translation pass" (`edit_track.dart:367-369`).
-**To close:** choose the engine (on-device or cloud), then the UI: a target
-language, and a burn-in and sidecar per language.
-
-### Windows has no transcription engine — code
+### Windows has no transcription engine — code (Windows machine)
 
 Windows answers `captionsCapability` with `platformNotSupported`
 (`misc_router.cpp:99-112`), so auto-subtitles are macOS only.
-`docs/windows-port-editing-features.md:392` plans whisper.cpp.
-`docs/features.md` lists Auto-subtitles twice (lines 88 and 90) in different
-words; merge them while there.
-
+`docs/windows-port-editing-features.md:392` plans whisper.cpp. Brief it in
+`docs/windows-machine-work.md` when it is picked up. The duplicate
+Auto-subtitles row in `docs/features.md` is already merged into one.
 
 ## Export — colour
 
@@ -1006,7 +944,7 @@ cannot do it. Fold it into the camera on-device QA pass.
 *Swept 2026-10-20* from the roadmap and plan docs, the decision and Windows
 docs, the code (reserved modes, no-op handlers, hidden UI) and the history,
 then checked against the code: each item below is genuinely not done.
-Translation and Windows transcription are tracked under *Editor — captions*.
+Windows transcription is tracked under *Editor — captions*.
 Tags:
 - **code:** buildable as specified.
 - **idea:** needs a product decision first.
@@ -1015,6 +953,12 @@ Tags:
   for a brief in `docs/windows-machine-work.md` when one is picked up.
 
 ### Captions and on-device models
+
+- **Subtitle translation** — idea, macOS + Windows, not started (decide). Whisper's `large-v3-turbo` cannot translate, so this needs a second engine; `Caption.translatedText` is serialized and never filled. Choose the engine (on-device or cloud), then the UI: a target language, and a burn-in and sidecar per language. Moved from *Editor — captions* 2026-10-26. *Source:* lib/core/timeline/model/edit_track.dart:247-294, :367-369
+
+- **Word-level caption editing (click a word to edit, drag to retime)** — parked, macOS, deferred. `CaptionWord` timings are stored, and reflow-on-split uses them; click-to-edit was never built. Only on real user demand (2026-08-04 eng review, R2). *Source:* lib/core/timeline/model/edit_track.dart:201-222
+
+- **Per-line editor for a two-line subtitle that mixes scripts** — parked, macOS. The text field has one direction for all lines, so line 2 shows in line 1's order while being edited; export and preview are correct (#601). *Source:* lib/app/home/post_processing/widgets/post_captions_section.dart
 
 - **LocalModelManager as a real subsystem** — code, macOS + Windows, partial. Only per-variant reporting shipped. Still missing: per-variant delete (delete() removes every model), on-demand download with progress outside a transcription job, hash checks, versioning, offline state and per-model licence notes. DeepFilterNet, M2M-100 and Windows whisper.cpp all depend on it. *Source:* docs/editing-platform-plan.md:324-334; macos/Runner/Services/CaptionModelStore.swift:212; lib/core/bridges/native_bridge.dart:1141
 
@@ -1037,6 +981,10 @@ Tags:
 
 
 ### Editor
+
+- **Persistent scissors tool mode (Premiere-style razor)** — parked, macOS + Windows. Modifier-click cutting shipped instead (hold Option); a sticky blade tool fought the timeline's scroll/pan and trim gestures. Only on real user demand (2026-06-28 eng review). *Source:* lib/app/home/preview/widgets/video_timeline.dart; lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart
+
+- **Frame preview on the clip lane during cut-hover** — idea, macOS + Windows. Hover-peek is wired only on the ruler strip, so a modifier-click cut on the lane area does not show the frame first. Needs the ruler path's coalescing and peek-end hardening. *Source:* lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart:489-494
 
 - **One undo history across editing domains** — parked, macOS + Windows, parked. There are four separate EditSessions, so undoing a colour change cannot undo a clip split. Deliberately parked until a user complains. *Source:* docs/editing-platform-plan.md:31-36, :873-876, :912-914
 
