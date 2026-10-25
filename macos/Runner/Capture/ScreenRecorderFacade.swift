@@ -600,7 +600,11 @@ final class ScreenRecorderFacade: NSObject {
           frameRate: frameRate,
           displayMode: context.displayMode,
           selectedAppWindowID: context.selectedAppWindowID,
-          recordingQuality: context.recordingQuality,
+          // What is captured: every recording is native size
+          // (CaptureStartConfigBuilder), and the output size is chosen at
+          // export. The quality preference used to be stamped here, so the
+          // metadata named a preset the file did not have.
+          recordingQuality: .native,
           cursorEnabledForRecording: context.effectiveCursorEnabledForRecording,
           cursorLinked: context.cursorLinked,
           excludeRecorderApp: context.excludeRecorderApp,

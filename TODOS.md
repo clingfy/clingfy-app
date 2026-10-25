@@ -223,22 +223,22 @@ Note the result here.
 
 ## Recording — capture (macOS)
 
-### Recording captures at full display resolution for every quality — decide
+### ~~Recording captures at full display resolution for every quality~~ — DECIDED 2026-10-26
 
-*From the 2026-07-30 camera/colour session (it was task #10).*
+The premise was wrong. `CaptureStartConfigBuilder` captures every recording at
+`.native`, and no UI sets a recording quality: `setRecordingQuality` has no
+Dart caller. The output size is chosen at export. So `.best` only ever runs
+at native size, where it is load-bearing: it makes a scaled HiDPI display
+sample its backing store instead of upscaling the point-size framebuffer.
 
-`captureResolution = .best` is set for every quality
-(`CaptureBackendScreenCaptureKit.swift:2071-2075`). The output size does follow
-the chosen quality, so a 720p recording is 720p. But on a 5K display, ScreenCaptureKit
-still samples the screen at 5K and downscales. That costs GPU, memory and power,
-and nobody has measured the sharpness it buys. The repo itself records this as
-unsettled: "Whether it should be conditional on quality is an open question,
-deliberately not decided by this test" (`macos/RunnerTests/RunnerTests.swift:8691-8696`).
+Kept `.best`, and recorded why in the test comment
+(`testNativeQualityStreamConfigurationKeepsExplicitPixelSize`). Also fixed: the
+metadata stamped the quality preference (`fhd` by default) on files captured
+at native size. It now stamps `native`, and nothing read the old value.
 
-**To close:** measure CPU/GPU, power and sharpness at 720p and 1080p on a 5K
-display with `.best` against `.automatic`/`.nominal`. Then either make it
-conditional on quality, or keep `.best` and record why. Either way, update that
-test comment.
+One take was measured on the built-in display, 3024×1964 at `.best`: app CPU
+43%, WindowServer 75%, GPU 50%, 510 MB. If quality presets ever drive capture
+again, revisit `.best` for output sizes below the display's point size.
 
 ### ~~Pause/resume segment merge may silently re-encode~~ — DONE 2026-10-17
 
