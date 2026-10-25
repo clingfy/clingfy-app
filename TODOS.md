@@ -453,24 +453,25 @@ Verified live on a paused take. Camera part 2 is 3.54s against the screen's
 the same wall-clock moment. An unpaused take maps screen 0 to camera 0.32s,
 which matches the camera starting 0.318s earlier.
 
-### Screen and camera segment times are stamped at different points — code
+### ~~Screen and camera segment times are stamped at different points~~ — DONE 2026-10-26
 
-*Found in review, 2026-10-19.* Camera sync now runs on the segment
-timestamps, so their accuracy matters. The screen stamps a segment's end
-before its recording output is removed, then derives the start as end minus
-duration, which lands early. The camera stamps the end after its file is
-written, which lands late. The result is a small systematic skew, tens to a
-few hundred milliseconds, on every camera take.
+Both sides are now timed from their start callbacks.
+- **Screen:** each segment starts when its recording output's
+  `recordingOutputDidStartRecording` fires, stamped before the hop to the main
+  actor, and ends one file duration later (`SegmentWallClock`). The old way,
+  without the callback, remains the fallback.
+- **Camera:** its stretches were already timed from `didStart`, `didPause`
+  and `didResume` (2026-10-19).
 
-**To close:** stamp both at the same point, ideally the start events
-(`recordingOutputDidStartRecording` / `didStartRecordingTo`). Measure with a
-clap or a flash on screen and camera.
+On a live paused take, the screen starts moved by 17 ms and 22 ms against the
+old derived times. The camera still starts 336 ms before the screen at the
+first start, and 54 ms after it at resume. Those are real start times, which
+camera sync maps, not stamping skew.
 
-*Camera side, 2026-10-19:* stretches inside one camera file are now timed from
-the `didStart` / `didPause` / `didResume` callbacks. Only the last stretch is
-still derived from the file's end (file duration minus the earlier stretches).
-On a live take, camera stretch 2 started 11ms after screen part 2. The screen
-side is unchanged.
+Not measured: whether a start callback matches the first frame, which needs
+a clap or a flash seen by both screen and camera. That is a by-eye check:
+- the camera bubble in sync with the screen after a resume;
+- in the editor and in an export.
 
 ### Pause and resume on a real macOS 13-14 Mac — verify
 

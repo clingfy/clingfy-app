@@ -188,6 +188,19 @@ final class RecordingOutputFinalizationWaiter {
   }
 }
 
+/// Where a screen segment sits in wall-clock time.
+enum SegmentWallClock {
+  /// From the recording output's start callback when it landed: start there,
+  /// end one file-duration later. Without it, as before: end at [finishedAt]
+  /// and start one duration earlier.
+  static func resolve(didStartAt: Date?, finishedAt: Date, duration: TimeInterval)
+    -> (start: Date, end: Date)
+  {
+    if let didStartAt { return (didStartAt, didStartAt.addingTimeInterval(duration)) }
+    return (finishedAt.addingTimeInterval(-duration), finishedAt)
+  }
+}
+
 private struct SegmentedRecordingArtifact {
   let index: Int
   let rawURL: URL
@@ -281,6 +294,10 @@ private final class RecordingSegmentContext {
   let cursorURL: URL?
   let recordingOutput: SCRecordingOutput
   let startedAt: Date
+  /// When the recording output said it started writing. The segment's start
+  /// in the metadata, which camera sync lines up with the camera's own
+  /// start callbacks; nil until the callback lands.
+  var didStartRecordingAt: Date?
   let finalizationWaiter = RecordingOutputFinalizationWaiter()
 
   init(
@@ -1626,7 +1643,12 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
 
     let fallbackDuration = max(0, finishedAt.timeIntervalSince(segment.startedAt))
     let duration = recordedDurationSeconds(for: segment.rawURL, fallback: fallbackDuration)
-    let startedAt = finishedAt.addingTimeInterval(-duration)
+    // Timed from the output's own start, as the camera times its stretches
+    // from its start callbacks, so the two line up. Deriving the start from
+    // an end stamped before the output was removed landed early by the time
+    // removal took.
+    let (startedAt, endedAt) = SegmentWallClock.resolve(
+      didStartAt: segment.didStartRecordingAt, finishedAt: finishedAt, duration: duration)
     if var session = segmentedSession {
       session.appendSegment(
         index: segment.index,
@@ -1636,7 +1658,7 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         systemAudioURL: segmentAudioArtifacts.first(where: { $0.kind == .systemAudio })?.url,
         recordedDuration: duration,
         startWallClock: startedAt,
-        endWallClock: finishedAt
+        endWallClock: endedAt
       )
       segmentedSession = session
     }
@@ -3083,12 +3105,15 @@ extension CaptureBackendScreenCaptureKit: SCStreamOutput {
 @available(macOS 15.0, *)
 extension CaptureBackendScreenCaptureKit: SCRecordingOutputDelegate {
   nonisolated func recordingOutputDidStartRecording(_ recordingOutput: SCRecordingOutput) {
+    // Stamped here, before the hop to the main actor, which can wait.
+    let startedAt = Date()
     Task { @MainActor in
       let outputID = ObjectIdentifier(recordingOutput)
       guard let context = self.segmentContextsByOutputID[outputID] else {
         NativeLogger.d("SCKBackend", "Ignoring stale recording start callback")
         return
       }
+      context.didStartRecordingAt = startedAt
       NativeLogger.i(
         "SCKBackend", "Recording segment started",
         context: ["segmentIndex": context.index, "rawURL": context.rawURL.path]

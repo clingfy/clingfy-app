@@ -11312,6 +11312,24 @@ final class RecordingSegmentMergerTests: XCTestCase {
     XCTAssertFalse(RecordingSegmentMerger.describe(flutter).contains("0x"))
   }
 
+  /// A segment is placed from its recording output's start callback, as the
+  /// camera's stretches are, so camera sync compares like with like.
+  func testASegmentStartsWhenItsOutputSaidItStarted() {
+    let didStart = Date(timeIntervalSince1970: 100)
+    let finished = Date(timeIntervalSince1970: 104.3)
+    let placed = SegmentWallClock.resolve(didStartAt: didStart, finishedAt: finished, duration: 4)
+    XCTAssertEqual(placed.start, didStart)
+    XCTAssertEqual(placed.end, Date(timeIntervalSince1970: 104))
+  }
+
+  /// Without the callback, as before: it ends when it was finished.
+  func testASegmentWithoutAStartCallbackEndsWhenFinished() {
+    let finished = Date(timeIntervalSince1970: 104)
+    let placed = SegmentWallClock.resolve(didStartAt: nil, finishedAt: finished, duration: 4)
+    XCTAssertEqual(placed.start, Date(timeIntervalSince1970: 100))
+    XCTAssertEqual(placed.end, finished)
+  }
+
   func testTheSalvageWarningSaysThePartsAreKept() {
     let message = RecordingSegmentMerger.salvageWarning
     XCTAssertTrue(message.contains("one part"))
