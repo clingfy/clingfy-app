@@ -583,30 +583,36 @@ enum AudioSegmentMerger {
       export.shouldOptimizeForNetworkUse = false
 
       do {
-        try await withCheckedThrowingContinuation {
-          (continuation: CheckedContinuation<Void, Error>) in
-          export.exportAsynchronously {
-            let export = exportBox.session
-            switch export.status {
-            case .completed:
-              continuation.resume(returning: ())
-            case .failed:
-              continuation.resume(
-                throwing: export.error
-                  ?? flutterError(NativeErrorCode.recordingError, "Source audio merge failed")
-              )
-            case .cancelled:
-              continuation.resume(
-                throwing: flutterError(NativeErrorCode.recordingError, "Source audio merge cancelled")
-              )
-            default:
-              continuation.resume(
-                throwing: flutterError(NativeErrorCode.recordingError, "Source audio merge incomplete")
-              )
+        try Task.checkCancellation()
+        try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            export.exportAsynchronously {
+              let export = exportBox.session
+              switch export.status {
+              case .completed:
+                continuation.resume(returning: ())
+              case .failed:
+                continuation.resume(
+                  throwing: export.error
+                    ?? flutterError(NativeErrorCode.recordingError, "Source audio merge failed")
+                )
+              case .cancelled:
+                continuation.resume(throwing: CancellationError())
+              default:
+                continuation.resume(
+                  throwing: flutterError(NativeErrorCode.recordingError, "Source audio merge incomplete")
+                )
+              }
             }
           }
+        } onCancel: {
+          exportBox.session.cancelExport()
         }
         return outputURL
+      } catch is CancellationError {
+        try? fileManager.removeItem(at: outputURL)
+        throw CancellationError()
       } catch {
         lastError = error
         if fileManager.fileExists(atPath: outputURL.path) {

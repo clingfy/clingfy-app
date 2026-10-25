@@ -515,6 +515,9 @@ enum RecordingSegmentMerger {
     var lastError: Error?
 
     for presetName in presets {
+      // A cancelled task (the launch repair, when a recording starts) stops
+      // here rather than trying the next, slower preset.
+      try Task.checkCancellation()
       guard let export = AVAssetExportSession(asset: composition, presetName: presetName) else {
         NativeLogger.w(
           "SCKBackend", "Segment merge preset unavailable", context: ["preset": presetName])
@@ -528,28 +531,30 @@ enum RecordingSegmentMerger {
       export.shouldOptimizeForNetworkUse = false
 
       do {
-        try await withCheckedThrowingContinuation {
-          (continuation: CheckedContinuation<Void, Error>) in
-          export.exportAsynchronously {
-            let export = exportBox.session
-            switch export.status {
-            case .completed:
-              continuation.resume(returning: ())
-            case .failed:
-              continuation.resume(
-                throwing: export.error
-                  ?? flutterError(NativeErrorCode.recordingError, "Segment merge failed")
-              )
-            case .cancelled:
-              continuation.resume(
-                throwing: flutterError(NativeErrorCode.recordingError, "Segment merge cancelled")
-              )
-            default:
-              continuation.resume(
-                throwing: flutterError(NativeErrorCode.recordingError, "Segment merge incomplete")
-              )
+        try await withTaskCancellationHandler {
+          try await withCheckedThrowingContinuation {
+            (continuation: CheckedContinuation<Void, Error>) in
+            export.exportAsynchronously {
+              let export = exportBox.session
+              switch export.status {
+              case .completed:
+                continuation.resume(returning: ())
+              case .failed:
+                continuation.resume(
+                  throwing: export.error
+                    ?? flutterError(NativeErrorCode.recordingError, "Segment merge failed")
+                )
+              case .cancelled:
+                continuation.resume(throwing: CancellationError())
+              default:
+                continuation.resume(
+                  throwing: flutterError(NativeErrorCode.recordingError, "Segment merge incomplete")
+                )
+              }
             }
           }
+        } onCancel: {
+          exportBox.session.cancelExport()
         }
         let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
         if presetName == AVAssetExportPresetPassthrough {
@@ -567,6 +572,9 @@ enum RecordingSegmentMerger {
             ])
         }
         return Outcome(url: outputURL, preset: presetName)
+      } catch is CancellationError {
+        try? fileManager.removeItem(at: outputURL)
+        throw CancellationError()
       } catch {
         NativeLogger.w(
           "SCKBackend", "Segment merge preset failed",

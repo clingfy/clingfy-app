@@ -400,22 +400,25 @@ Verified:
   repaired at launch in 0.2 s, by passthrough. Screen 8.6 s, system audio and
   camera restored, status ready, parts gone, notice logged.
 
-### A salvaged stop followed by its repair, live end to end — verify
+### ~~A salvaged stop followed by its repair, live end to end~~ — DONE 2026-10-26
 
-The repair was verified on a real take turned into a salvaged layout by hand.
-The run that should have made one with `CLINGFY_FORCE_SEGMENT_MERGE_FAILURE=1`
-did not start: the screen was locked ("Display not found in SCShareableContent").
-1. Record a paused take with that switch, in a debug dev build.
-2. Check that the warning says the parts are kept.
-3. Relaunch without the switch, and check that the take opens whole.
+A real paused take recorded with `CLINGFY_FORCE_SEGMENT_MERGE_FAILURE=1`
+published part 1 (3.84 s), set part 2 aside (4.14 s) with its cursor and
+system audio, and sent the warning. After a relaunch without the switch, the
+repair joined it into one 7.99 s `screen.mov` by passthrough. The take was
+ready, the parts were gone, and Flutter logged the notice.
 
-### Repair follow-ups — code
-- A repair export that never finishes holds a Finder open of that project, and
-  the startup report, for the session. Add a timeout that releases them.
-- A recording started during a launch repair competes with a re-encode already
-  under way. Only the next project waits.
-- Captions transcribed on the shorter take cover only its first part after the
-  repair; transcribing again covers the rest. Decide whether to say so.
+### ~~Repair follow-ups~~ — DONE 2026-10-26
+- **A stuck repair:** a project gets 30 minutes. The repair is then stopped:
+  both merge exports now cancel with their task, and nothing commits once
+  stopped. If it ignores the stop, it is left behind after 10 s, which
+  releases its Finder open and the startup report.
+- **A recording starting:** this now stops a repair under way, before it
+  commits. The attempt is not counted, and that project and the rest are
+  tried at the next launch.
+- **Captions:** decided, no message. A transcript made on the shorter take
+  still covers its first part, and transcribing again covers the rest, as
+  with any edit to the audio.
 
 ### ~~A cursor-merge failure throws away a screen merge that succeeded~~ — DONE 2026-10-19
 

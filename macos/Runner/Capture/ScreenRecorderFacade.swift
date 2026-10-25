@@ -3081,7 +3081,12 @@ extension ScreenRecorderFacade: RecordingLifecycleEffects {
   /// `applyIndicatorState()`, `updateCursorVisibility()`, etc.) that
   /// today live inline next to each `state = X` write.
   func didTransition(to newState: RecorderState, from previousState: RecorderState) {
-    // No-op: existing call sites still perform their own side effects inline.
+    // Existing call sites still perform their own side effects inline. The
+    // one added here: a recording starting stops a launch repair, which
+    // would otherwise compete with it for the encoder.
+    if newState == .starting, previousState != .starting {
+      SalvagedTakeRepairSweep.shared.cancelCurrent()
+    }
   }
 }
 
