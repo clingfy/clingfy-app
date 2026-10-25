@@ -374,7 +374,7 @@ final class ScreenRecorderFacade: NSObject {
     // Paused takes whose parts could not be joined when they stopped get
     // another try, in the background, while nothing has them open. Not in
     // the test host, which would repair the developer's own recordings.
-    if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+    if !AppPaths.isRunningTests {
       SalvagedTakeRepairSweep.shared.start(rootURL: RecordingProjectPaths.projectsRoot()) {
         [weak self] in
         self?.state == .idle

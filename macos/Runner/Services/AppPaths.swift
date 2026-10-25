@@ -19,11 +19,27 @@ enum AppPaths {
   /// - Safe from accidental user deletion
   /// - Works in both sandboxed and non-sandboxed builds
   static func recordingsRoot() -> URL {
-    let recordingsDir = applicationSupportRoot()
-      .appendingPathComponent("Recordings", isDirectory: true)
+    let recordingsDir =
+      testRecordingsRoot
+      ?? applicationSupportRoot().appendingPathComponent("Recordings", isDirectory: true)
     ensureDirectory(recordingsDir, label: "recordings workspace", excludeFromBackup: true)
     return recordingsDir
   }
+
+  /// Under XCTest the app is the test host, with the developer's real
+  /// workspace one call away. A test helper that reset "the workspace" by
+  /// deleting this root wiped every dev recording on 2026-10-25, and the
+  /// folder is excluded from backups. Tests get a folder of their own.
+  static let isRunningTests =
+    ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+  private static let testRecordingsRoot: URL? =
+    isRunningTests
+    ? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+      .appendingPathComponent(
+        "clingfy-test-recordings-\(ProcessInfo.processInfo.processIdentifier)",
+        isDirectory: true)
+    : nil
 
   /// Returns the root directory for internal log storage.
   /// Location: `~/Library/Application Support/<app-id>/Logs/`
