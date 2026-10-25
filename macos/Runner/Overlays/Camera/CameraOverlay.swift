@@ -748,7 +748,15 @@ final class CameraOverlay: NSObject {
     }
 
     // --- Pipeline Selection ---
-    if chromaKeyEnabled {
+    // Chroma key needs a frame output, and one cannot be added while the
+    // camera records (it would stop the take). Until it ends, show the plain
+    // preview, which needs nothing new, rather than an empty bubble. The
+    // pipeline records it as not keyed, so the next show rebuilds with it.
+    let useChromaKey = chromaKeyEnabled && captureCoordinator.canDeliverFramesNow
+    if chromaKeyEnabled && !useChromaKey {
+      NativeLogger.i("CameraOverlay", "Chroma key waits for the recording to end; showing the plain preview")
+    }
+    if useChromaKey {
       NativeLogger.d("CameraOverlay", "Setting up ChromaKey Pipeline")
       captureCoordinator.setSampleBufferHandler { [weak self] sampleBuffer in
         self?.processSampleBuffer(sampleBuffer)
@@ -878,7 +886,7 @@ final class CameraOverlay: NSObject {
     rootLayer.addSublayer(container)
 
     // Video Layer / Visuals
-    if chromaKeyEnabled {
+    if useChromaKey {
       container.backgroundColor = NSColor.clear.cgColor
       container.contentsGravity = .resizeAspectFill
     } else {
@@ -915,7 +923,7 @@ final class CameraOverlay: NSObject {
     panel.orderFrontRegardless()
 
     // Update active state tracking
-    self.activeChromaKeyEnabled = chromaKeyEnabled
+    self.activeChromaKeyEnabled = useChromaKey
     self.activeDeviceId = deviceId ?? "default"
 
     completion(nil)

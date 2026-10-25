@@ -138,23 +138,27 @@ private struct ActiveCameraSegment {
   var stopRequested = false
 }
 
+/// Joins a take's camera files. Most takes are one file (a pause pauses in
+/// place), which is simply moved. Several files come only from a fallback: a
+/// refused or unconfirmed pause or resume, or a file a device or format change
+/// ended. Those are the files most likely to differ, so this uses the screen
+/// merger's tested composition (audio matched by format, inserts clamped to
+/// each track) and does not stop at passthrough.
 private enum CameraMergeUtility {
   static func mergeSegments(
     _ segmentURLs: [URL],
     to outputURL: URL,
+    presets: [String],
     completion: @escaping (Result<URL, Error>) -> Void
   ) {
-    guard !segmentURLs.isEmpty else {
-      completion(.failure(flutterError(NativeErrorCode.videoFileMissing, "No camera segments to merge")))
-      return
-    }
-
-    let fileManager = FileManager.default
-    if fileManager.fileExists(atPath: outputURL.path) {
-      try? fileManager.removeItem(at: outputURL)
-    }
-
+    // One file, the common case, is moved here and now, as it always was: no
+    // asynchronous gap, and a leftover output that cannot be removed does not
+    // fail the take.
     if segmentURLs.count == 1 {
+      let fileManager = FileManager.default
+      if fileManager.fileExists(atPath: outputURL.path) {
+        try? fileManager.removeItem(at: outputURL)
+      }
       do {
         try fileManager.moveItem(at: segmentURLs[0], to: outputURL)
         completion(.success(outputURL))
@@ -163,85 +167,19 @@ private enum CameraMergeUtility {
       }
       return
     }
-
-    let composition = AVMutableComposition()
-    var timeline = CMTime.zero
-
-    do {
-      guard
-        let videoTrack = composition.addMutableTrack(
-          withMediaType: .video,
-          preferredTrackID: kCMPersistentTrackID_Invalid
-        )
-      else {
-        throw flutterError(NativeErrorCode.recordingError, "Unable to create merged camera video track")
-      }
-
-      var audioTrack: AVMutableCompositionTrack?
-
-      for segmentURL in segmentURLs {
-        let asset = AVURLAsset(url: segmentURL)
-        guard let sourceVideoTrack = asset.tracks(withMediaType: .video).first else {
-          throw flutterError(NativeErrorCode.videoFileMissing, "Missing camera segment video track")
+    Task {
+      do {
+        let outcome = try await RecordingSegmentMerger.mergeSegments(
+          segmentURLs, to: outputURL, presets: presets)
+        if let preset = outcome.preset, preset != AVAssetExportPresetPassthrough {
+          NativeLogger.w(
+            "CameraRecorder", "Camera parts did not pass through; re-encoded to join them",
+            context: ["preset": preset, "parts": segmentURLs.count])
         }
-        let duration = asset.duration
-        try videoTrack.insertTimeRange(
-          CMTimeRange(start: .zero, duration: duration),
-          of: sourceVideoTrack,
-          at: timeline
-        )
-        videoTrack.preferredTransform = sourceVideoTrack.preferredTransform
-
-        if let sourceAudioTrack = asset.tracks(withMediaType: .audio).first {
-          if audioTrack == nil {
-            audioTrack = composition.addMutableTrack(
-              withMediaType: .audio,
-              preferredTrackID: kCMPersistentTrackID_Invalid
-            )
-          }
-          try audioTrack?.insertTimeRange(
-            CMTimeRange(start: .zero, duration: duration),
-            of: sourceAudioTrack,
-            at: timeline
-          )
-        }
-
-        timeline = CMTimeAdd(timeline, duration)
+        DispatchQueue.main.async { completion(.success(outcome.url)) }
+      } catch {
+        DispatchQueue.main.async { completion(.failure(error)) }
       }
-
-      guard
-        let exportSession = AVAssetExportSession(
-          asset: composition,
-          presetName: AVAssetExportPresetPassthrough
-        )
-      else {
-        throw flutterError(NativeErrorCode.recordingError, "Unable to create camera export session")
-      }
-
-      exportSession.outputURL = outputURL
-      exportSession.outputFileType = .mov
-      exportSession.shouldOptimizeForNetworkUse = false
-      exportSession.exportAsynchronously {
-        DispatchQueue.main.async {
-          switch exportSession.status {
-          case .completed:
-            completion(.success(outputURL))
-          case .failed:
-            completion(
-              .failure(
-                exportSession.error
-                  ?? flutterError(NativeErrorCode.recordingError, "Camera segment merge failed")
-              )
-            )
-          case .cancelled:
-            completion(.failure(flutterError(NativeErrorCode.recordingError, "Camera segment merge cancelled")))
-          default:
-            completion(.failure(flutterError(NativeErrorCode.recordingError, "Camera segment merge incomplete")))
-          }
-        }
-      }
-    } catch {
-      completion(.failure(error))
     }
   }
 }
@@ -288,16 +226,26 @@ final class CameraRecorder: NSObject {
   /// in-place path and ending the file, which is what a pause used to do.
   private let pauseResumeTimeout: TimeInterval
 
+  /// Passthrough first; then re-encode, HEVC and then H.264 for a Mac without
+  /// an HEVC encoder. Injectable so a test can make every attempt fail.
+  static let mergePresetOrder = [
+    AVAssetExportPresetPassthrough, AVAssetExportPresetHEVCHighestQuality,
+    AVAssetExportPresetHighestQuality,
+  ]
+  private let mergePresets: [String]
+
   init(
     coordinator: CameraCaptureCoordinating,
     fileManager: FileManager = .default,
     segmentStartTimeout: TimeInterval = CameraRecorder.segmentStartTimeoutSeconds,
-    pauseResumeTimeout: TimeInterval = CameraRecorder.pauseResumeTimeoutSeconds
+    pauseResumeTimeout: TimeInterval = CameraRecorder.pauseResumeTimeoutSeconds,
+    mergePresets: [String] = CameraRecorder.mergePresetOrder
   ) {
     self.coordinator = coordinator
     self.fileManager = fileManager
     self.segmentStartTimeout = segmentStartTimeout
     self.pauseResumeTimeout = pauseResumeTimeout
+    self.mergePresets = mergePresets
     super.init()
   }
 
@@ -570,6 +518,15 @@ final class CameraRecorder: NSObject {
     }
 
     if let segment = activeSegment {
+      // A second stop while the first is still ending the file joins it.
+      // Replacing the first completion left its caller unanswered for good.
+      if let earlier = pendingStopCompletion {
+        pendingStopCompletion = { result in
+          earlier(result)
+          completion(result)
+        }
+        return
+      }
       pendingStopCompletion = completion
       // Still true while paused in place, which is what ends a paused file.
       if coordinator.isOutputRecording, !segment.stopRequested {
@@ -734,13 +691,37 @@ final class CameraRecorder: NSObject {
     completion(.failure(error))
   }
 
+  /// Completions waiting on a finalize already under way. A second stop, or
+  /// the stop backstop firing after the finish already finalized, would
+  /// otherwise merge again: the second merge deletes the file the first just
+  /// produced, and both report.
+  private var finalizeWaiters: [(Result<CameraRecordingResult, Error>) -> Void]?
+  /// The camera's recording use was given back when the files were done, so
+  /// the teardown must not give it back again.
+  private var recordingUseReleasedEarly = false
+
   private func finalizeStoppedRecording(
     completion: @escaping (Result<CameraRecordingResult, Error>) -> Void
   ) {
+    if finalizeWaiters != nil {
+      finalizeWaiters?.append(completion)
+      return
+    }
     guard let session = recordingSession else {
       completion(.failure(flutterError(NativeErrorCode.notRecording, "Camera recorder is not active")))
       return
     }
+    finalizeWaiters = [completion]
+    let completion: (Result<CameraRecordingResult, Error>) -> Void = { [weak self] result in
+      let waiters = self?.finalizeWaiters ?? []
+      self?.finalizeWaiters = nil
+      waiters.forEach { $0(result) }
+    }
+    // Every file is written. Give the camera back now rather than after the
+    // merge: a re-encode can take a while, and holding the recording use for it
+    // keeps camera changes waiting and the camera running for nothing.
+    coordinator.releaseRecording()
+    recordingUseReleasedEarly = true
 
     // Every stretch recorded into one file names that file, so merge each file
     // once, in order. Merging it once per stretch would repeat the take.
@@ -766,11 +747,16 @@ final class CameraRecorder: NSObject {
       context: ["segments": segmentURLs.count, "output": session.outputURL.path]
     )
 
-    CameraMergeUtility.mergeSegments(segmentURLs, to: session.outputURL) { [weak self] result in
+    CameraMergeUtility.mergeSegments(segmentURLs, to: session.outputURL, presets: mergePresets) {
+      [weak self] result in
       guard let self else { return }
 
       switch result {
       case .failure(let error):
+        // The take's camera is lost, but its parts are not: they stay in the
+        // segments folder, described by a manifest, instead of lying there
+        // with nothing pointing at them.
+        self.writeUnmergedManifest(for: session, segmentURLs: segmentURLs, error: error)
         self.finishWithFailure(error)
         completion(.failure(error))
       case .success(let mergedURL):
@@ -785,6 +771,52 @@ final class CameraRecorder: NSObject {
           completion(.failure(error))
         }
       }
+    }
+  }
+
+  /// The manifest beside the camera folder that says what the kept parts
+  /// are: the same shape the screen side writes, with each file's stretches
+  /// and the camera's details.
+  static let unmergedManifestName = RecordingSegmentMerger.unmergedManifestName
+
+  private func writeUnmergedManifest(
+    for session: CameraRecordingSession, segmentURLs: [URL], error: Error
+  ) {
+    let records: [[String: Any]] = segmentURLs.enumerated().map { index, url in
+      let name = url.lastPathComponent
+      let stretches = session.segments.filter { $0.relativePath == name }.map { segment -> [String: Any] in
+        [
+          "startWallClock": segment.startWallClock,
+          "endWallClock": segment.endWallClock,
+          "durationSeconds": segment.durationSeconds ?? 0,
+        ]
+      }
+      var record: [String: Any] = [
+        "index": index,
+        "camera": "segments/\(name)",
+        "present": fileManager.fileExists(atPath: url.path),
+        "stretches": stretches,
+        "mirroredRaw": session.mirroredRaw,
+      ]
+      if let deviceId = session.deviceId { record["deviceId"] = deviceId }
+      if let fps = session.nominalFrameRate { record["nominalFrameRate"] = fps }
+      return record
+    }
+    let manifestURL = session.segmentDirectoryURL.deletingLastPathComponent()
+      .appendingPathComponent(Self.unmergedManifestName)
+    guard
+      let data = RecordingSegmentMerger.unmergedManifest(
+        segments: records, publishedIndex: nil, reason: RecordingSegmentMerger.describe(error))
+    else { return }
+    do {
+      try data.write(to: manifestURL, options: .atomic)
+      NativeLogger.w(
+        "CameraRecorder", "Camera parts could not be joined; kept with a manifest",
+        context: ["manifest": manifestURL.path, "parts": segmentURLs.count])
+    } catch {
+      NativeLogger.e(
+        "CameraRecorder", "Could not write the camera parts manifest",
+        context: ["error": error.localizedDescription])
     }
   }
 
@@ -806,7 +838,8 @@ final class CameraRecorder: NSObject {
     lastSessionEnding = .finishedSuccessfully
     lastSessionEndedAt = Date()
     lastSessionSegmentCount = recordingSession?.segments.count ?? 0
-    coordinator.releaseRecording()
+    if !recordingUseReleasedEarly { coordinator.releaseRecording() }
+    recordingUseReleasedEarly = false
     recordingSession = nil
     activeSegment = nil
     pendingStartCompletion = nil
@@ -824,7 +857,8 @@ final class CameraRecorder: NSObject {
       "Camera recorder failed",
       context: ["error": error.localizedDescription]
     )
-    coordinator.releaseRecording()
+    if !recordingUseReleasedEarly { coordinator.releaseRecording() }
+    recordingUseReleasedEarly = false
     recordingSession = nil
     activeSegment = nil
     pendingStartCompletion = nil
