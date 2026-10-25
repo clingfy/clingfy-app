@@ -83,7 +83,13 @@ the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
   `clearPixelBuffer` rework they would need. The *RESOLVED (1.0.7)* entry below
   points to it.
 
-### Grade the validator's reference on the two CAMERA paths
+### Grade the validator's reference on the two CAMERA paths — decide, then code
+
+> **2026-10-26: waiting on the product question at the end of this entry.** Should the
+> pre-styled camera bubble receive the colour grade? The inline path leaves it ungraded and the
+> pre-styled path grades it. The validator can only be made to measure once the two paths agree
+> on that. Until then both paths skip validation under a grade, which never deletes a correct
+> export.
 
 The direct (screen-only) path is DONE: `evaluateFinalExportReferenceRender` now
 grades its own reference via `gradeReferenceImage`, so a graded export is measured
@@ -511,7 +517,15 @@ atomically, and was measured overwriting another writer's line.
 
 ## Editor - layout
 
-### The clips lane is below the fold in the editor, at every window height tested
+### The clips lane is below the fold in the editor, at every window height tested — verify (Windows machine)
+
+> **2026-10-26: clean on macOS at 2× scale, the "second machine, different scale" asked for below.**
+> A take was opened in the editor and the render tree dumped. At the default 1280×748 window,
+> the timeline starts at 483.4 in the 732-tall workspace column, and the viewport (offset 109,
+> 139.6 tall) ends at exactly 732. At the minimum 960×640 window, it starts at 349 of 592 and the
+> viewport (106.3 + 136.7) ends at exactly 592. No `_RenderLayoutBuilder was mutated` or overflow
+> was logged. The layout is shared Flutter code, so what is left is the original Windows sighting:
+> confirm on Windows at 125%, then close.
 
 > **STATUS 2026-09-15 — DOES NOT REPRODUCE on develop @ `a01467f`. Not closed.**
 > Re-measured with the same project and the same window size, and the ruler, clips
@@ -734,7 +748,7 @@ atomically, and was measured overwriting another writer's line.
 
 ## Windows — capture exclusion
 
-### The other four capture-excluded windows never re-verify WDA after a mutation
+### The other four capture-excluded windows never re-verify WDA after a mutation (Windows machine)
 
 - **What:** the ADR (`docs/decisions/windows-camera-bubble-renderer-architecture.md:123-126`) says to re-verify `GetWindowDisplayAffinity` after any unavoidable window mutation — the Electron #47834 lesson. The DComp camera overlay now does, at all three of its mutation sites. Four other capture-excluded windows still call `SetWindowDisplayAffinity` exactly once at creation and then mutate freely:
   - `camera_floating_overlay.cpp` — `SetWindowPos` (:425), `SetWindowRgn` (:393), `WM_EXITSIZEMOVE` drag path (:125)
@@ -764,7 +778,7 @@ display scaling the live bubble's border is proportionally thinner than at 100%.
 Separate surface, separate fix, and macOS shares the absolute constants — raise
 it with macOS in scope rather than diverging one platform at a time.
 
-### Should the live camera bubble hide while a recording is paused? (product call)
+### Should the live camera bubble hide while a recording is paused? — decide (product call, Windows)
 
 - **What:** `RecordingEngine::Pause` pauses the camera recorder and `CameraRecorder` drops every preview frame while paused, but nothing hides or stops the floating bubble. It stays on screen showing its last frame for an unbounded, user-controlled time.
 - **Why it is on this list and not already fixed:** it surfaced while closing the frameless-park gap, which needed to know every way frames stop. The park fix makes the stale-pixels case safe (a parked presenter now hides its own window), but a PAUSE is not a fault — the bubble is deliberately still up, showing a frozen frame. Whether that is correct is a product decision, not a bug fix, so it was left alone rather than changed unasked.
@@ -884,7 +898,7 @@ cannot do it. Fold it into the camera on-device QA pass.
 <details>
 <summary>Original item (kept for the reasoning, which still applies to the macOS-bundle case)</summary>
 
-### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only)
+### Camera intro/outro may run on a different time base in the preview vs the export (UNTRIMMED clips only) (Windows machine)
 
 - **What:** On a clip with no cuts, the preview and the export derive the animation clock from different sources, so a fade-in / slide-out could start and finish at slightly different absolute times on each side. Trimmed projects are NOT affected — both sides use the edited position and edited duration there, which is the case the animation port was built and reasoned about.
 - **The specific divergence.** Export rebases to the first decoded video frame: `frame_ms = (timestamp - first_video_hns) / 10000` and `camera_total_ms = (duration_hns - first_video_hns) / 10000` (`windows/runner/Capture/Export/export_pipeline.cpp:1097-1103`, `:1385-1394`). The preview uses the MediaPlayer's own clock: `CurrentPlaybackUs()` and `PlaybackSession().NaturalDuration()` (`windows/runner/preview/preview_engine.cpp:1434-1446`). Those agree only when the container's PTS base is zero.
@@ -910,7 +924,7 @@ cannot do it. Fold it into the camera on-device QA pass.
   `cameraOutroDurationMs` keys, so the inline preview never animated while the
   export did. Covered by `camera_composition_args_test.cpp`.
 
-### Log files lose their beginning while the app is still running
+### Log files lose their beginning while the app is still running (Windows machine)
 
 > **NARROWED 2026-09-30.** Two of the three evidence points turned out not to be
 > loss at all, and five candidate causes inside the app are now closed — four of
@@ -941,7 +955,7 @@ cannot do it. Fold it into the camera on-device QA pass.
 - **Start at:** `lib/core/logging/file_log_sink.dart`, `lib/core/logging/logger_service.dart:159`.
 - **Effort:** human ~2h / CC ~30min once the drop is caught in the act.
 
-### Confirm a Bluetooth SPEAKER is warned about
+### Confirm a Bluetooth SPEAKER is warned about — verify (needs a Bluetooth speaker, macOS)
 - **What:** Verify that a Bluetooth loudspeaker (not a headset) triggers the speaker-bleed warning.
 - **Why:** This is the last unresolved half of the old "disambiguate Bluetooth and USB routes" item. `AudioOutputRouteProbe` now prefers `kAudioStreamPropertyTerminalType`, which resolved the headset case on real hardware — a JBL WAVE100TWS earbud reports `'hdph'` and correctly produces no warning, verified live. A Bluetooth *speaker* has never been measured: if it reports `'spkr'` or a USB-AC speaker code it is already handled, but if it reports `'hdph'` or `0` the warning will be missed, and a missed warning ruins an unrepeatable take.
 - **Also unmeasured:** USB headsets and USB desk speakers. Both fall back to the transport type, which returns `unknown` for USB, i.e. no warning either way.
@@ -949,7 +963,7 @@ cannot do it. Fold it into the camera on-device QA pass.
 - **Start at:** `macos/Runner/Capture/Audio/AudioOutputRoute.swift` (`routeFromTerminalType`), `macos/RunnerTests/RunnerTests.swift` (`testTerminalTypeResolvesRoutesTransportTypeCannot`).
 - **Effort:** human ~15min / CC ~10min once a row exists.
 
-### Windows AAC profile-level is pinned to "2ch / 48 kHz" while the rate is configurable
+### Windows AAC profile-level is pinned to "2ch / 48 kHz" while the rate is configurable (Windows machine)
 - **What:** Both Media Foundation AAC writers hardcode `MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION = 0x29`, which specifies AAC-LC at **2 channels, 48 kHz**, while the surrounding encoder config (`mf_encoder_config.h`) validates and permits **44.1 kHz** as well.
 - **Why:** A 44.1 kHz export would declare a profile level that does not describe the stream it contains. Today nothing reaches that path, so this is latent, not live.
 - **Re-checked 2026-09-20, and the reason it is latent CHANGED.** This entry used to say WASAPI "hard-rejects any endpoint that is not 48 kHz float32 stereo". That stopped being true in #468, which opens the stream with `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM` so a 44.1 kHz interface records instead of failing — so the stated gate ("becomes real the moment WASAPI accepts a wider range") has already been crossed. It is still latent for a different reason: the shared-mode engine resamples INTO the canonical 48 kHz float32 stereo pipeline format, and both `AudioEncoderConfig` call sites (`recording_engine.cpp:519`, `export_pipeline.cpp:786`) use the 48 kHz default, so the encoder never sees another rate. The live trigger is now narrower and more specific: `AudioEncoderConfig::sample_rate_hz` being set to anything but 48000, not anything about the capture device.
