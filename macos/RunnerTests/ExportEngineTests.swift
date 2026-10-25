@@ -364,6 +364,68 @@ final class ExportEngineTests: XCTestCase {
     }
   }
 
+  /// Not a regression test: a visual proof, like `CaptionBurnInProofTests`.
+  /// Exports every `<size>-<label>.mov` in /tmp/clingfy-gif-proof as a GIF at
+  /// that size preset (small / medium / large) through the real engine, and
+  /// writes `<name>.gif` beside it for a human to judge dither, banding and
+  /// edges. Skips when the folder has no sources, so it never runs in CI.
+  func testExportsGifProofsForVisualInspection() throws {
+    let folder = URL(fileURLWithPath: "/tmp/clingfy-gif-proof")
+    let sources = ((try? FileManager.default.contentsOfDirectory(
+      at: folder, includingPropertiesForKeys: nil)) ?? [])
+      .filter { $0.pathExtension == "mov" }
+      .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    try XCTSkipIf(sources.isEmpty, "No GIF proof sources in \(folder.path)")
+
+    for source in sources {
+      let name = source.deletingPathExtension().lastPathComponent
+      let preset = String(name.split(separator: "-").first ?? "large")
+      let project = try makeProject(copying: source)
+      var input = makeAnyInput(
+        projectPath: project.rootURL.path, format: "gif", directoryOverride: folder.path,
+        filename: name)
+      input.gifSize = preset
+      var reply: Any?
+      let done = expectation(description: "\(name) gif")
+      let started = Date()
+      ExportEngine().export(input: input, dependencies: makeDeps { _ in project }) {
+        reply = $0
+        done.fulfill()
+      }
+      wait(for: [done], timeout: 600)
+      let path = try XCTUnwrap(reply as? String, "\(name): \(String(describing: reply))")
+      let gif = try decodeGif(path)
+      let bytes = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
+      print(
+        "GIF proof \(name): \(Int(gif.size.width))x\(Int(gif.size.height)), "
+          + "\(gif.frames.count) frames, \(String(format: "%.2f", gif.delays.reduce(0, +))) s, "
+          + "\(bytes / 1024) KB, \(String(format: "%.1f", Date().timeIntervalSince(started))) s to export"
+      )
+    }
+  }
+
+  /// A ready project whose screen.mov is a copy of [source].
+  private func makeProject(copying source: URL) throws -> RecordingProjectRef {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent("clingfy_gif_proof_\(UUID().uuidString)")
+    let projectRoot = root.appendingPathComponent(
+      RecordingProjectPaths.projectDirectoryName(for: "rec_gif_proof"), isDirectory: true)
+    addTeardownBlock { try? fm.removeItem(at: root) }
+    for directory in [
+      RecordingProjectPaths.captureDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.postDirectoryURL(for: projectRoot),
+      RecordingProjectPaths.derivedDirectoryURL(for: projectRoot),
+    ] {
+      try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+    var manifest = RecordingProjectManifest.create(
+      projectId: "rec_gif_proof", displayName: "Clingfy Test", includeCamera: false)
+    manifest.updateStatus(.ready)
+    try manifest.write(to: RecordingProjectPaths.manifestURL(for: projectRoot))
+    try fm.copyItem(at: source, to: RecordingProjectPaths.screenVideoURL(for: projectRoot))
+    return try RecordingProjectRef.open(projectPath: projectRoot.path)
+  }
+
   func testSinglePassGifMatchesTheTwoPassGif() throws {
     try assertSinglePassMatchesTwoPass(clips: [])
   }

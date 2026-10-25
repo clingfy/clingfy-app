@@ -31,6 +31,10 @@ final class CaptionBurnInProofTests: XCTestCase {
   /// Newest `.clingfyproj` in the dev app's recordings folder that has a
   /// readable `screen.mov`.
   private func newestRecordingScreenURL() -> URL? {
+    // An explicit source wins: `source.mov` in the proof folder. The dev
+    // recordings folder can be empty, and long cue lists need a long clip.
+    let explicit = proofDirectory.appendingPathComponent("source.mov")
+    if FileManager.default.fileExists(atPath: explicit.path) { return explicit }
     let recordings = FileManager.default.homeDirectoryForCurrentUser
       .appendingPathComponent(
         "Library/Application Support/com.clingfy.clingfy.dev/Recordings")

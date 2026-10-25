@@ -14,18 +14,26 @@ Loose ends last revised 2026-10-16 against `develop` at `abe470e` (1.2.0).
 
 ## Editor — captions
 
-### Arabic subtitles have not been checked in a real exported video — verify
+### ~~Arabic subtitles have not been checked in a real exported video~~ — DONE 2026-10-26
 
-*From the captions RTL fix, #601 (2026-10-16).*
+Checked by eye in a real export. `caption_proof_bitmaps.dart` now also renders
+"مرحبا Clingfy!" and a two-line mixed cue, and writes the `.srt` with the real
+serializer. `CaptionBurnInProofTests` burned them into a video through the
+export writer loop, and the frames were extracted and looked at:
+- the letters join;
+- an Arabic-first line reads right to left, with its "!" or "." at the left;
+- each line of a two-line cue has its own direction, the bidi rule for a
+  line break.
 
-The fix is proven by tests and by the subtitle bitmap the export burns in, but no
-one has exported a video with Arabic subtitles and watched it. In the test run
-the save dialog could not be driven.
+**Found and fixed: libass disagreed with the video.** The `.srt` played in
+libass (mpv, ffmpeg, many players) laid every line out left to right. So
+"مرحبا Clingfy" had the Arabic word on the left there, and on the right in the
+video. Right-to-left lines in the `.srt` and `.vtt` are now wrapped in an RTL
+embedding (U+202B … U+202C). Rendered with libass, all four cues now match the
+burn-in. Browsers and other bidi-rule players are unchanged.
 
-**To close:** in a dev build, add cues for pure Arabic, mixed ("مرحبا Clingfy!")
-and a two-line mixed cue. Export with burn-in plus an `.srt` file. Check the
-video and open the `.srt` in a player. Letters should join, and word order and
-punctuation should match how the editor shows the line.
+The editor's own text field still has one direction for a two-line mixed cue.
+That is the per-line editor parked in the backlog.
 
 ### ~~Intel Macs are refused for subtitles while the copy promises a slow path~~ — DONE (5a1ef67, closed #448 on 2026-10-26)
 
@@ -195,12 +203,27 @@ shared dialog refuses past it on both platforms. On macOS the exporter also
 refuses, with `EXPORT_GIF_TOO_LONG`. Windows has no native backstop yet.
 **Do this on a Windows machine:** **W2 in `docs/windows-machine-work.md`**.
 
-### GIF output checked by eye only at Small and Large — verify
+### ~~GIF output checked by eye only at Small and Large~~ — DONE 2026-10-26
 
-The 1.0.7 check (e3ece28) covered Large and Small on a 9.7 s clip, and a
-test proves the colour. **To close:** export Medium, a 4K source and a long
-clip, and judge dither, banding and edges. Export the colour reference chart
-as a GIF and compare.
+`ExportEngineTests.testExportsGifProofsForVisualInspection` exports every
+`<size>-<label>.mov` in `/tmp/clingfy-gif-proof` through the real single-pass
+engine; it skips when the folder is empty. The sources were made with ffmpeg:
+moving gradients, a Macbeth colour chart, large text and small text.
+
+| Source | Preset | GIF | Frames | Length | Size |
+|---|---|---|---|---|---|
+| 1080p, 8 s | Medium | 720×406 | 120 | 8.00 s | 1.7 MB |
+| 4K, 8 s | Large | 1080×608 | 120 | 8.00 s | 5.9 MB |
+| 1080p, 55 s | Medium | 720×406 | 825 | 55.00 s | 19.9 MB |
+
+- **Colour:** the 24 chart patches match the source as AVFoundation decodes
+  it, which is what the editor shows: mean 0.7, worst 2.0 code values.
+- **By eye at 3×:** gradients are smooth with faint wide steps and no noisy
+  dither. Edges are clean, with no halos. Small text is soft at Medium, as
+  expected from the downscale, but legible.
+- **Timing:** the long clip's delays add up to exactly 55.00 s.
+- **Size:** a long Medium GIF of moving gradients is about 20 MB. That is the
+  worst case for the format.
 
 ## Recording — camera (macOS)
 

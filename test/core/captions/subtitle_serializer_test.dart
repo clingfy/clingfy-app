@@ -296,4 +296,40 @@ hello there
     expect(SubtitleMode.fromWire('nonsense'), SubtitleMode.burnIn);
     expect(SubtitleMode.fromWire(null), SubtitleMode.burnIn);
   });
+
+  group('right-to-left lines', () {
+    const rle = '\u202B';
+    const pdf = '\u202C';
+    Caption cue(String text) =>
+        Caption(id: 'c', startMs: 0, endMs: 1000, text: text);
+
+    test('an Arabic-first line is wrapped in an RTL embedding, so libass '
+        'orders it as the burn-in does', () {
+      final srt = SubtitleSerializer.toSrt([cue('مرحبا Clingfy!')]);
+      expect(srt, contains('$rleمرحبا Clingfy!$pdf\n'));
+    });
+
+    test('a left-to-right line is left alone', () {
+      final srt = SubtitleSerializer.toSrt([cue('Hello مرحبا')]);
+      expect(srt, contains('\nHello مرحبا\n'));
+      expect(srt, isNot(contains(rle)));
+    });
+
+    test('each line of a two-line cue gets its own direction', () {
+      final srt = SubtitleSerializer.toSrt([
+        cue('سجّل شاشتك مع Clingfy.\nRecord your screen, ثم عدّل.'),
+      ]);
+      expect(
+        srt,
+        contains(
+          '$rleسجّل شاشتك مع Clingfy.$pdf\nRecord your screen, ثم عدّل.\n',
+        ),
+      );
+    });
+
+    test('WebVTT gets the same, after its markup is escaped', () {
+      final vtt = SubtitleSerializer.toWebVtt([cue('مرحبا <b>')]);
+      expect(vtt, contains('$rleمرحبا &lt;b&gt;$pdf\n'));
+    });
+  });
 }

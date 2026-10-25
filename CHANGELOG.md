@@ -6,6 +6,7 @@
 - **GIFs are capped at 60 seconds** of exported length (after cuts). The export dialog says so and disables Export, rather than producing a huge, slow GIF. (#614)
 
 ### Subtitles
+- **Arabic subtitle files play in the right order in mpv- and ffmpeg-style players.** Those players lay every line out left to right, so a `.srt` line like "مرحبا Clingfy" showed its words in the opposite order to the video. Right-to-left lines now carry a direction mark, so the file and the burned-in subtitles agree.
 - **Choose the speech model**, and switch it without restarting the app. (#597)
 - **A transcript records which model produced it**, and Settings › Storage names each speech model on disk with its real size. (#596, #593, #591)
 - **An Arabic-first subtitle burns in right to left**, matching its `.srt`. (#601)

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:clingfy/core/captions/caption_rasterizer.dart';
+import 'package:clingfy/core/captions/subtitle_serializer.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +53,20 @@ void main() {
         text: 'مرحبا بكم في كلينجفاي',
       ),
       Caption(id: 'cue_3', startMs: 13500, endMs: 17000, text: 'مرحبا Clingfy'),
+      // The cases TODOS asked a human to check in a real export (#601):
+      // trailing punctuation on a mixed line, and a two-line mixed cue.
+      Caption(
+        id: 'cue_4',
+        startMs: 17500,
+        endMs: 21000,
+        text: 'مرحبا Clingfy!',
+      ),
+      Caption(
+        id: 'cue_5',
+        startMs: 21500,
+        endMs: 25000,
+        text: 'سجّل شاشتك مع Clingfy.\nRecord your screen, ثم عدّل.',
+      ),
     ];
 
     // 1080p: matches what the Swift proof renders at.
@@ -72,6 +87,11 @@ void main() {
         )
         .join(',\n  ');
     File('${dir.path}/manifest.json').writeAsStringSync('[\n  $lines\n]\n');
+    // The sidecar a player shows next to the video, written by the real
+    // serializer, to compare word order with the burned-in line.
+    File(
+      '${dir.path}/burned-in.srt',
+    ).writeAsStringSync(SubtitleSerializer.toSrt(captions));
 
     expect(manifest.entries.length, captions.length);
     // ignore: avoid_print
