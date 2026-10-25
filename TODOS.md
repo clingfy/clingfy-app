@@ -14,18 +14,26 @@ Loose ends last revised 2026-10-16 against `develop` at `abe470e` (1.2.0).
 
 ## Editor — captions
 
-### Arabic subtitles have not been checked in a real exported video — verify
+### ~~Arabic subtitles have not been checked in a real exported video~~ — DONE 2026-10-26
 
-*From the captions RTL fix, #601 (2026-10-16).*
+Checked by eye in a real export. `caption_proof_bitmaps.dart` now also renders
+"مرحبا Clingfy!" and a two-line mixed cue, and writes the `.srt` with the real
+serializer. `CaptionBurnInProofTests` burned them into a video through the
+export writer loop, and the frames were extracted and looked at:
+- the letters join;
+- an Arabic-first line reads right to left, with its "!" or "." at the left;
+- each line of a two-line cue has its own direction, the bidi rule for a
+  line break.
 
-The fix is proven by tests and by the subtitle bitmap the export burns in, but no
-one has exported a video with Arabic subtitles and watched it. In the test run
-the save dialog could not be driven.
+**Found and fixed: libass disagreed with the video.** The `.srt` played in
+libass (mpv, ffmpeg, many players) laid every line out left to right. So
+"مرحبا Clingfy" had the Arabic word on the left there, and on the right in the
+video. Right-to-left lines in the `.srt` and `.vtt` are now wrapped in an RTL
+embedding (U+202B … U+202C). Rendered with libass, all four cues now match the
+burn-in. Browsers and other bidi-rule players are unchanged.
 
-**To close:** in a dev build, add cues for pure Arabic, mixed ("مرحبا Clingfy!")
-and a two-line mixed cue. Export with burn-in plus an `.srt` file. Check the
-video and open the `.srt` in a player. Letters should join, and word order and
-punctuation should match how the editor shows the line.
+The editor's own text field still has one direction for a two-line mixed cue.
+That is the per-line editor parked in the backlog.
 
 ### ~~Intel Macs are refused for subtitles while the copy promises a slow path~~ — DONE (5a1ef67, closed #448 on 2026-10-26)
 

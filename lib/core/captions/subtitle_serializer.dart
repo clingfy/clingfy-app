@@ -1,4 +1,6 @@
+import 'package:clingfy/core/captions/caption_direction.dart';
 import 'package:clingfy/core/timeline/model/edit_track.dart';
+import 'package:flutter/painting.dart' show TextDirection;
 
 /// Where subtitles go when a project is exported.
 ///
@@ -67,7 +69,7 @@ abstract final class SubtitleSerializer {
         ..write(' --> ')
         ..write(_timestamp(_endOf(cue), decimalSeparator: ','))
         ..write(_newline)
-        ..write(_sanitizeText(cue.text))
+        ..write(_directed(_sanitizeText(cue.text)))
         ..write(_newline)
         ..write(_newline);
     }
@@ -90,7 +92,7 @@ abstract final class SubtitleSerializer {
         ..write(' --> ')
         ..write(_timestamp(_endOf(cue), decimalSeparator: '.'))
         ..write(_newline)
-        ..write(_escapeWebVttMarkup(_sanitizeText(cue.text)))
+        ..write(_directed(_escapeWebVttMarkup(_sanitizeText(cue.text))))
         ..write(_newline)
         ..write(_newline);
     }
@@ -166,6 +168,25 @@ abstract final class SubtitleSerializer {
         .where((line) => line.isNotEmpty);
     return lines.join(_newline);
   }
+
+  /// Each right-to-left line wrapped in an RTL embedding (U+202B … U+202C).
+  ///
+  /// The burn-in lays a line out by its first strong character, the Unicode
+  /// bidi rule, and so do browsers. libass (mpv, ffmpeg, many players) gives
+  /// every line a left-to-right base instead, so the same file showed
+  /// "مرحبا Clingfy" with the Arabic word on the left there and on the right
+  /// in the video. The embedding makes libass order the line right to left,
+  /// and changes nothing where the bidi rule already applies: it is not a
+  /// strong character, so the line's direction is still its first letter's.
+  /// Left-to-right lines are untouched.
+  static String _directed(String text) => text
+      .split(_newline)
+      .map(
+        (line) => captionTextDirection(line) == TextDirection.rtl
+            ? '\u202B$line\u202C'
+            : line,
+      )
+      .join(_newline);
 
   /// Escapes the three characters WebVTT reads as markup.
   ///
