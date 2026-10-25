@@ -27,12 +27,12 @@ and a two-line mixed cue. Export with burn-in plus an `.srt` file. Check the
 video and open the `.srt` in a player. Letters should join, and word order and
 punctuation should match how the editor shows the line.
 
-### Intel Macs are refused for subtitles while the copy promises a slow path — decide
+### ~~Intel Macs are refused for subtitles while the copy promises a slow path~~ — DONE (5a1ef67, closed #448 on 2026-10-26)
 
-*Open issue #448, the only open one of the 1.1.0 captions batch (#439–#465).*
-
-**To close:** decide whether Intel Macs get subtitles (slowly) or are
-explicitly unsupported, and make the copy say the same thing as the code.
+Decided: explicitly unsupported. The copy now says so in all three languages
+("Subtitles need a Mac with Apple silicon…"), and `docs/features.md` says
+"Requires Apple silicon". The capability's reason was renamed from
+`intelSlowPath`, a name that described what did not happen.
 
 ### ~~Smaller caption follow-ups~~ — DONE 2026-10-26
 - **Caption migration with more than one cue:** now pinned. Three cues, Arabic
