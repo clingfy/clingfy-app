@@ -4954,6 +4954,12 @@ abstract class AppLocalizations {
   /// **'An internal error occurred.'**
   String get errInternalError;
 
+  /// Startup toast shown after the launch repair joins the parts of paused recordings that could not be joined when they stopped. Has an Open action for the newest one.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{Clingfy joined the parts of a paused recording that could not be joined when it stopped.} other{Clingfy joined the parts of {count} paused recordings that could not be joined when they stopped.}}'**
+  String pausedRecordingRepairedNotice(int count);
+
   /// Startup salvage toast shown after the native crash-recovery sweep finds recordings that were interrupted by a crash.
   ///
   /// In en, this message translates to:

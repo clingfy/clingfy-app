@@ -1390,13 +1390,14 @@ class NativeBridge {
     }
   }
 
-  /// Phase 10.4 (Windows-only): runs the native startup crash-recovery
-  /// sweep and reports what it found — interrupted recording projects plus
-  /// how many orphaned temp files/bytes were cleaned.
+  /// Reports what the native startup sweep found. Windows: interrupted
+  /// recording projects plus how many orphaned temp files/bytes were cleaned.
+  /// macOS: the paused recordings whose parts were joined at launch; it
+  /// answers once that repair is over.
   ///
-  /// Returns null on macOS (MissingPluginException), when the native side
-  /// rejects the call (any PlatformException), or on any other failure —
-  /// callers simply skip the salvage notice. Never throws.
+  /// Returns null without a native handler (MissingPluginException), when
+  /// the native side rejects the call (any PlatformException), or on any
+  /// other failure — callers simply skip the salvage notice. Never throws.
   Future<StartupRecoveryReport?> getStartupRecoveryReport() async {
     try {
       final raw = await _nativeBridge.invokeMethod<Map<dynamic, dynamic>>(

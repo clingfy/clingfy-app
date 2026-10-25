@@ -16,6 +16,7 @@
 - Windows reports microphone levels, so the quiet-mic warning can fire there. (#579)
 
 ### Recording (macOS)
+- **A paused take whose parts could not be joined is joined at the next launch.** The editor showed only its first part; Clingfy now tries again in the background, screen and camera, says so when it is done, and offers to open it. Edits already made keep their place, and the joined footage is added at the end. A take that lost its camera also opens again: the project used to name the missing camera file, so it was refused.
 - **Changing the camera, chroma key or mirror mid-take no longer stops the camera recording.** Those changes now wait until the take ends; until then the bubble shows the plain camera. A camera take split into parts that will not pass through is re-encoded to join them, and if even that fails the parts are kept rather than lost.
 - **A paused take's microphone and system audio stay in their own tracks.** If one part had no system audio, the merge could splice the microphone into the system-audio track for that part, and audio a little shorter than its part was read past its end. Tracks are now matched by format and placed for their real length. (Microphone recorded into the screen file, i.e. with a mic selected.)
 - **A paused take's camera comes back at once on resume**, not a second late, and stays in sync with the screen. (#607, #608)

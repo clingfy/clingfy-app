@@ -296,6 +296,24 @@ void main() {
       expect(report.cleanedTempBytes, 1024);
       expect(report.hasInterruptedProjects, isTrue);
       expect(report.hasCleanedTempFiles, isTrue);
+      expect(report.repairedProjects, isEmpty, reason: 'Windows sends none');
+    });
+
+    test('getStartupRecoveryReport parses the projects macOS joined at '
+        'launch, dropping entries that are not paths', () async {
+      overrideScreenRecorder(
+        (call) async => <String, Object?>{
+          'interruptedProjects': <Object?>[],
+          'cleanedTempFileCount': 0,
+          'cleanedTempBytes': 0,
+          'repairedProjects': ['/r/a.clingfyproj', 7, '', null],
+        },
+      );
+
+      final report = await NativeBridge.instance.getStartupRecoveryReport();
+
+      expect(report!.repairedProjects, ['/r/a.clingfyproj']);
+      expect(report.hasRepairedProjects, isTrue);
     });
 
     test('getStartupRecoveryReport degrades malformed payloads to '
@@ -329,7 +347,7 @@ void main() {
     });
 
     test('getStartupRecoveryReport returns null on MissingPluginException '
-        '(macOS has no handler)', () async {
+        '(an old native build without the handler)', () async {
       clearScreenRecorder();
 
       final report = await NativeBridge.instance.getStartupRecoveryReport();

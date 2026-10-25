@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   String message(int count) => '$count recording(s) interrupted';
 
-  test('no report (macOS / native failure) produces no notice', () {
+  test('no report (native failure) produces no notice', () {
     expect(
       buildStartupRecoveryNotice(null, interruptedMessage: message),
       isNull,
@@ -58,5 +58,70 @@ void main() {
     // Warning notices stay until dismissed — same as 10.2 recording
     // warnings (HomeUiState gives warnings no auto-dismiss).
     expect(notice.autoDismissAfter, isNull);
+  });
+
+  group('paused recordings joined at launch', () {
+    String repaired(int count) => '$count joined';
+
+    test('produce an info notice that opens the newest one', () {
+      const report = StartupRecoveryReport(
+        interruptedProjects: [],
+        cleanedTempFileCount: 0,
+        cleanedTempBytes: 0,
+        repairedProjects: [
+          '/r/rec_2026-10-20_10-00-00_a.clingfyproj',
+          '/r/rec_2026-10-24_09-00-00_b.clingfyproj',
+          '/r/rec_2026-10-22_10-00-00_c.clingfyproj',
+        ],
+      );
+      String? opened;
+
+      final notice = buildStartupRecoveryNotice(
+        report,
+        interruptedMessage: message,
+        repairedMessage: repaired,
+        openRepaired: (path) =>
+            HomeUiNoticeAction(label: 'Open', onPressed: () => opened = path),
+      );
+
+      expect(notice, isNotNull);
+      expect(notice!.message, '3 joined');
+      expect(notice.tone, HomeUiNoticeTone.info);
+      notice.action!.onPressed();
+      expect(opened, '/r/rec_2026-10-24_09-00-00_b.clingfyproj');
+    });
+
+    test('give way to interrupted recordings, which are worse news', () {
+      const report = StartupRecoveryReport(
+        interruptedProjects: [
+          InterruptedRecordingProject(projectPath: '/r/x', sessionId: 'x'),
+        ],
+        cleanedTempFileCount: 0,
+        cleanedTempBytes: 0,
+        repairedProjects: ['/r/y'],
+      );
+
+      final notice = buildStartupRecoveryNotice(
+        report,
+        interruptedMessage: message,
+        repairedMessage: repaired,
+      );
+
+      expect(notice!.tone, HomeUiNoticeTone.warning);
+    });
+
+    test('without a message for them, produce no notice', () {
+      const report = StartupRecoveryReport(
+        interruptedProjects: [],
+        cleanedTempFileCount: 0,
+        cleanedTempBytes: 0,
+        repairedProjects: ['/r/y'],
+      );
+
+      expect(
+        buildStartupRecoveryNotice(report, interruptedMessage: message),
+        isNull,
+      );
+    });
   });
 }

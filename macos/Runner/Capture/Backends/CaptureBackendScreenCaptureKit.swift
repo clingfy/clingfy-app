@@ -688,7 +688,7 @@ enum RecordingSegmentMerger {
   /// as `cameraFinalizeSalvageWarning` is.
   static let salvageWarning =
     "This paused recording's parts could not be joined, so the editor shows one part of it. "
-    + "The other parts are saved, untouched, in the project's capture folder."
+    + "The other parts are kept, and Clingfy tries to join them again the next time it starts."
 
   /// One segment's format, for the merge log: codec, size and tracks.
   static func segmentSummary(_ url: URL) -> [String: Any] {
@@ -716,31 +716,55 @@ enum RecordingSegmentMerger {
   }
 }
 
-private enum CursorSegmentMerger {
-  static func mergeSegments(
+enum CursorSegmentMerger {
+  /// One part's cursor file and the time it fills on the joined timeline.
+  struct Part {
+    let index: Int
+    let url: URL?
+    let duration: TimeInterval
+  }
+
+  fileprivate static func mergeSegments(
     _ segments: [SegmentedRecordingArtifact],
     expectsCursorSidecars: Bool,
     outputURL: URL,
     fileManager: FileManager = .default
   ) throws {
     guard expectsCursorSidecars else { return }
+    try mergeParts(
+      segments.sorted(by: { $0.index < $1.index }).map {
+        Part(index: $0.index, url: $0.cursorURL, duration: $0.recordedDuration)
+      },
+      outputURL: outputURL, fileManager: fileManager)
+  }
 
+  /// Joins cursor files end to end, each part's frames offset by the
+  /// durations before it. A part without a file throws, unless
+  /// [missingPartsAreEmpty]: a repair joining parts long after the take keeps
+  /// the cursor of every part it has and leaves a gap for the one it lacks,
+  /// rather than losing the cursor of the whole recording.
+  static func mergeParts(
+    _ parts: [Part],
+    outputURL: URL,
+    missingPartsAreEmpty: Bool = false,
+    fileManager: FileManager = .default
+  ) throws {
     var mergedSprites: [CursorSprite] = []
     var mergedFrames: [CursorFrame] = []
     var spriteMap: [CursorSpriteSignature: Int] = [:]
     var timeOffset: TimeInterval = 0
 
-    for segment in segments.sorted(by: { $0.index < $1.index }) {
-      guard let cursorURL = segment.cursorURL else {
+    for part in parts {
+      guard let cursorURL = part.url, fileManager.fileExists(atPath: cursorURL.path) else {
+        if missingPartsAreEmpty {
+          timeOffset += part.duration
+          continue
+        }
         throw flutterError(
           NativeErrorCode.cursorFileMissing,
-          "Missing cursor sidecar path for segment \(segment.index)"
-        )
-      }
-      guard fileManager.fileExists(atPath: cursorURL.path) else {
-        throw flutterError(
-          NativeErrorCode.cursorFileMissing,
-          "Missing cursor sidecar for segment \(segment.index)"
+          part.url == nil
+            ? "Missing cursor sidecar path for segment \(part.index)"
+            : "Missing cursor sidecar for segment \(part.index)"
         )
       }
 
@@ -782,7 +806,7 @@ private enum CursorSegmentMerger {
         )
       }
 
-      timeOffset += segment.recordedDuration
+      timeOffset += part.duration
     }
 
     let mergedRecording = CursorRecording(sprites: mergedSprites, frames: mergedFrames)

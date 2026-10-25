@@ -897,6 +897,7 @@
   "errRecordingFinalizeTimeout": "انتهت مهلة حفظ التسجيل.",
   "errPreviewTimeout": "استغرق تحميل المعاينة وقتًا طويلًا.",
   "errInternalError": "حدث خطأ داخلي.",
+  "pausedRecordingRepairedNotice": "{count, plural, one{تم الآن دمج أجزاء تسجيل متوقف مؤقتًا تعذّر دمجها عند انتهائه.} other{تم الآن دمج أجزاء {count} تسجيلات متوقفة مؤقتًا تعذّر دمجها عند انتهائها.}}",
   "recordingInterruptedNotice": "{count, plural, one{انقطع تسجيل واحد ولم يكن من الممكن استرداده.} two{انقطع تسجيلان ولم يكن من الممكن استردادهما.} few{انقطعت {count} تسجيلات ولم يكن من الممكن استردادها.} many{انقطع {count} تسجيلًا ولم يكن من الممكن استرداده.} other{انقطع {count} تسجيل ولم يكن من الممكن استرداده.}}",
   "@recordingInterruptedNotice": {
     "placeholders": {

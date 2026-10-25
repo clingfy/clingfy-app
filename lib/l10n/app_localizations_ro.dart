@@ -2746,6 +2746,21 @@ class AppLocalizationsRo extends AppLocalizations {
   String get errInternalError => 'A apărut o eroare internă.';
 
   @override
+  String pausedRecordingRepairedNotice(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other:
+          'Părțile a $count de înregistrări cu pauză, care nu au putut fi unite la oprire, sunt acum unite.',
+      few:
+          'Părțile a $count înregistrări cu pauză, care nu au putut fi unite la oprire, sunt acum unite.',
+      one:
+          'Părțile unei înregistrări cu pauză, care nu au putut fi unite la oprire, sunt acum unite.',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String recordingInterruptedNotice(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

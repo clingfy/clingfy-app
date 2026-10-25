@@ -90,6 +90,15 @@ class MainFlutterWindow: NSWindow {
         self.screenRecorder.getAudioSources(result: result)
       case FlutterToNativeMethod.getAudioOutputRoute:
         self.screenRecorder.getAudioOutputRoute(result: result)
+      case FlutterToNativeMethod.getStartupRecoveryReport:
+        SalvagedTakeRepairSweep.shared.whenFinished { repaired in
+          result([
+            "interruptedProjects": [],
+            "cleanedTempFileCount": 0,
+            "cleanedTempBytes": 0,
+            "repairedProjects": repaired,
+          ])
+        }
       case "setAudioSource":
         let args = call.arguments as? [String: Any]
         self.screenRecorder.setAudioSource(id: args?["id"] as? String, result: result)
@@ -493,7 +502,8 @@ class MainFlutterWindow: NSWindow {
           result(
             FlutterError(
               code: "RECORDINGS_IN_USE",
-              message: "Cached recordings cannot be cleared while recording is active.",
+              message:
+                "Cached recordings cannot be cleared while recording is active or a recording is being repaired.",
               details: nil))
           return
         }

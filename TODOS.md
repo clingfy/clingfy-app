@@ -355,20 +355,67 @@ deleted by the failure path.
 Known gap: on a camera take, the camera's sync after a salvage is not right.
 See "The recording metadata never lists its segments" below.
 
-### Rejoin the parts a salvaged recording set aside — code
+### ~~Rejoin the parts a salvaged recording set aside~~ — DONE 2026-10-25
 
-*Follow-up to the item above.* A salvaged take opens with its first part only.
-`capture/segments.unmerged.json` lists everything needed to join the rest: the
-files, durations and wall-clock times. Add a repair at launch, or on open, that
-merges into a temporary file, then renames it over `screen.mov`, rebuilds the
-cursor and audio sidecars, and updates the metadata. Cap the attempts, because
-a failure can be reproducible.
+At launch, `SalvagedTakeRepairSweep` (in `Capture/Project/SalvagedTakeRepairer.swift`)
+gives every project with a `segments.unmerged.json` another try, in the
+background and one project at a time.
+- **Screen:** it joins the parts with passthrough, then HEVC, then H.264 (the
+  stop had no H.264 step). It rebuilds the cursor and audio on the same
+  measured durations and rewrites `screen.segments` and `endedAt`.
+- **Camera:** it joins the camera parts and rebuilds `camera/meta.json` from
+  the manifest and the start stub. It restores the camera block, and the
+  editor's camera visibility as it was. The stop now notes that visibility in
+  the camera manifest before turning the camera off.
+- **Status:** a take whose join failed outright, or that a later launch marked
+  failed, becomes ready again.
 
-Since 2026-10-25 a camera take whose parts cannot be joined does the same: its
-parts stay in `camera/segments` and `camera/segments.unmerged.json` describes
-them, including each file's stretches, the device and the mirror setting. That
-recording still opens without a camera, so a repair should rebuild it and
-restore the camera block in the metadata.
+How it stays safe:
+- Everything is built in `.repair/`, and `commit.json` is written before
+  anything moves. A move that fails stops the commit before any part is
+  deleted, and the commit is retried at the next launch.
+- A part before the published one stays out, so edits made on the published
+  part do not shift.
+- So do parts, or cursor and audio files, that cannot be used. They stay on
+  disk, and the manifest is kept, marked joined, listing them.
+- Attempts are capped at three, plus one per new app version. A camera out of
+  attempts is dropped from `project.json`, so the take still opens.
+- A Finder open of a project being repaired waits for it. Clearing cached
+  recordings is refused until the sweep ends. A recording running at launch
+  defers the repair to the next launch.
+- Flutter learns what was joined from `getStartupRecoveryReport`, which macOS
+  now answers. The notice has an Open button.
+- Clip edits saved on the shorter take get the joined footage as a clip at
+  the end.
+
+Also fixed: a stop that dropped the camera left `camera/raw.mov` named in
+`project.json`. Finder refused the take, and the next launch marked it failed.
+
+Verified:
+- 15 `SalvagedTakeRepairerTests`, plus Dart tests for the report, the notice
+  and the clip growth.
+- Breaking the commit stop, the published-part rule, the later camera drop and
+  the clip growth each fails its test.
+- Live: a real paused camera take was split into a salvaged layout and
+  repaired at launch in 0.2 s, by passthrough. Screen 8.6 s, system audio and
+  camera restored, status ready, parts gone, notice logged.
+
+### A salvaged stop followed by its repair, live end to end — verify
+
+The repair was verified on a real take turned into a salvaged layout by hand.
+The run that should have made one with `CLINGFY_FORCE_SEGMENT_MERGE_FAILURE=1`
+did not start: the screen was locked ("Display not found in SCShareableContent").
+1. Record a paused take with that switch, in a debug dev build.
+2. Check that the warning says the parts are kept.
+3. Relaunch without the switch, and check that the take opens whole.
+
+### Repair follow-ups — code
+- A repair export that never finishes holds a Finder open of that project, and
+  the startup report, for the session. Add a timeout that releases them.
+- A recording started during a launch repair competes with a re-encode already
+  under way. Only the next project waits.
+- Captions transcribed on the shorter take cover only its first part after the
+  repair; transcribing again covers the rest. Decide whether to say so.
 
 ### ~~A cursor-merge failure throws away a screen merge that succeeded~~ — DONE 2026-10-19
 

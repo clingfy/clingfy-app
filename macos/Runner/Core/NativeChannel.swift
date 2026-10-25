@@ -28,6 +28,10 @@ enum FlutterToNativeMethod {
   /// default audio-output device, so the recording UI can warn about
   /// speaker -> mic bleed before a take.
   static let getAudioOutputRoute = "getAudioOutputRoute"
+  /// Answers once the launch sweep is over: `{interruptedProjects: [],
+  /// cleanedTempFileCount: 0, cleanedTempBytes: 0, repairedProjects: [path]}`,
+  /// the Windows report's shape plus the paused takes whose parts were joined.
+  static let getStartupRecoveryReport = "getStartupRecoveryReport"
 
   /// Returns what the speech model costs on disk plus whether it can be
   /// removed right now. Asked for lazily by the storage page, never on a timer.
