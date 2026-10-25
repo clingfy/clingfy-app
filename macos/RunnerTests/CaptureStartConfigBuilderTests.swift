@@ -14,6 +14,25 @@ final class CaptureStartConfigBuilderTests: XCTestCase {
 
   // MARK: - resolveAudioDevice sentinel filter
 
+  /// "No microphone" stays off all the way to the metadata: the facade's
+  /// `effectiveMicCaptureEnabled` is what stamps `micEnabled`, and it must
+  /// agree with the device the capture path resolves (#390).
+  func testTheFacadeRecordsNoMicrophoneForEveryWayOfChoosingNone() {
+    let facade = ScreenRecorderFacade()
+    for id in [nil, "", "__none__", "not-a-real-device-uid"] as [String?] {
+      XCTAssertFalse(
+        facade.effectiveMicCaptureEnabled(audioDeviceID: id, disableMicrophone: false),
+        "\(id ?? "nil") must not record a microphone")
+    }
+    let realMic = AVCaptureDevice.default(for: .audio)?.uniqueID
+    XCTAssertFalse(
+      facade.effectiveMicCaptureEnabled(audioDeviceID: realMic, disableMicrophone: true),
+      "disabling wins over a real device")
+    if let realMic {
+      XCTAssertTrue(facade.effectiveMicCaptureEnabled(audioDeviceID: realMic, disableMicrophone: false))
+    }
+  }
+
   func testResolveAudioDeviceReturnsNilWhenMicrophoneIsDisabled() {
     let sut = CaptureStartConfigBuilder()
     XCTAssertNil(

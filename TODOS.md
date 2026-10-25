@@ -517,20 +517,26 @@ invalid-parameter error and this backend is the fallback.
 `if false, #available(macOS 15.0, *)`), and record. If it records, it was
 system state. If not, the new logs say why.
 
-### Other mid-recording overlay rebuilds may still stop the camera — verify
+### ~~Other mid-recording overlay rebuilds may still stop the camera~~ — DONE 2026-10-25 (#623)
 
-The shared preview layer covers every same-device rebuild: resume, display
-change, and the size change that rebuilds. A camera **device** change or a
-chroma-key toggle during a recording reconfigures the session in other ways
-and was not checked. Projects recorded before this fix keep their empty segment
-lists; nothing repairs them.
+The two rebuilds not checked are now deferred while a recording holds the
+camera (`CameraCaptureCoordinator`):
+- **A camera device change** waits for the end of the take. That covers a
+  pick made during a pause, and a hot-plug re-send.
+- **A chroma-key frame output** is not added mid-take; the bubble shows the
+  plain camera until the end.
+- **The recording connection's mirror** keeps the take's value.
 
-### Smaller capture follow-ups
+`CameraRecorderTests` pin each one. Projects recorded before the segment-list
+fix keep their empty lists, accepted: their camera falls back to the end-anchored
+window, as it always did.
 
-- **No native test that "no microphone" stays off.** The reland (#390) is on
-  develop and tested on the Dart side (`home_actions_permission_preflight_test.dart`),
-  and it passed on a device (#392). But no XCTest covers
-  `effectiveMicCaptureEnabled` (`ScreenRecorderFacade.swift:973`).
+### ~~Smaller capture follow-ups~~ — DONE 2026-10-26
+
+- **"No microphone" stays off:** native coverage existed for the predicate
+  (`CaptureStartConfigBuilderTests`: disabled, sentinel ids, an unknown
+  device). The facade wrapper that stamps `micEnabled` now has its own test,
+  `testTheFacadeRecordsNoMicrophoneForEveryWayOfChoosingNone`.
 
 ## Logging — macOS
 
