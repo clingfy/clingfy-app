@@ -203,12 +203,27 @@ shared dialog refuses past it on both platforms. On macOS the exporter also
 refuses, with `EXPORT_GIF_TOO_LONG`. Windows has no native backstop yet.
 **Do this on a Windows machine:** **W2 in `docs/windows-machine-work.md`**.
 
-### GIF output checked by eye only at Small and Large — verify
+### ~~GIF output checked by eye only at Small and Large~~ — DONE 2026-10-26
 
-The 1.0.7 check (e3ece28) covered Large and Small on a 9.7 s clip, and a
-test proves the colour. **To close:** export Medium, a 4K source and a long
-clip, and judge dither, banding and edges. Export the colour reference chart
-as a GIF and compare.
+`ExportEngineTests.testExportsGifProofsForVisualInspection` exports every
+`<size>-<label>.mov` in `/tmp/clingfy-gif-proof` through the real single-pass
+engine; it skips when the folder is empty. The sources were made with ffmpeg:
+moving gradients, a Macbeth colour chart, large text and small text.
+
+| Source | Preset | GIF | Frames | Length | Size |
+|---|---|---|---|---|---|
+| 1080p, 8 s | Medium | 720×406 | 120 | 8.00 s | 1.7 MB |
+| 4K, 8 s | Large | 1080×608 | 120 | 8.00 s | 5.9 MB |
+| 1080p, 55 s | Medium | 720×406 | 825 | 55.00 s | 19.9 MB |
+
+- **Colour:** the 24 chart patches match the source as AVFoundation decodes
+  it, which is what the editor shows: mean 0.7, worst 2.0 code values.
+- **By eye at 3×:** gradients are smooth with faint wide steps and no noisy
+  dither. Edges are clean, with no halos. Small text is soft at Medium, as
+  expected from the downscale, but legible.
+- **Timing:** the long clip's delays add up to exactly 55.00 s.
+- **Size:** a long Medium GIF of moving gradients is about 20 MB. That is the
+  worst case for the format.
 
 ## Recording — camera (macOS)
 
