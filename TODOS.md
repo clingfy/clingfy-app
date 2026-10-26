@@ -85,11 +85,21 @@ the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
 
 ### Grade the validator's reference on the two CAMERA paths — decide, then code
 
-> **2026-10-26: waiting on the product question at the end of this entry.** Should the
-> pre-styled camera bubble receive the colour grade? The inline path leaves it ungraded and the
-> pre-styled path grades it. The validator can only be made to measure once the two paths agree
-> on that. Until then both paths skip validation under a grade, which never deletes a correct
-> export.
+> **2026-10-26: decided, the bubble stays ungraded.** Only the screen is graded, as in the
+> live preview.
+>
+> **Part 1 is done:** every camera now renders inline. A mapping pass found the *pre-styled* path
+> unreachable in production since #33. The path that really graded the bubble was the plain
+> square camera, with no border, shadow or mirror: it skipped the inline renderer, and the writer
+> graded the whole canvas, bubble and padding included.
+> `testASquareCameraRendersInlineSoTheGradeSkipsTheBubble` pins the fix. Under the old routing,
+> exposure −1 took the bubble from 0.99 to 0.35 red and the padding from 0.50 to 0.18.
+>
+> **Part 2 is next:** grade the inline validator's reference at the screen seat, with the
+> `.colorSpace` fix, and measure it with a graded-vs-identity sweep before removing the skip.
+> Then delete the dead pre-styled branch and `validateFinalStyledCameraExport` (item 2 below)
+> instead of fixing them. No-camera exports still grade their background; that matches the
+> writer and differs from the preview. Record it separately.
 
 The direct (screen-only) path is DONE: `evaluateFinalExportReferenceRender` now
 grades its own reference via `gradeReferenceImage`, so a graded export is measured
