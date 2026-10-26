@@ -3820,6 +3820,60 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(fittedRect.height, destinationRect.height, accuracy: 1.0)
   }
 
+  /// A screen-only export grades the screen, not the padding or the canvas
+  /// background, as in the live preview: the composition renders the screen
+  /// on a transparent canvas and the writer puts the background under it
+  /// after the grade.
+  func testAScreenOnlyExportLeavesThePaddingUngraded() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL, size: CGSize(width: 320, height: 180), durationSeconds: 1.0,
+      color: NSColor(calibratedWhite: 0.8, alpha: 1.0))
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360), padding: 40.0, cornerRadius: 12.0,
+      backgroundColor: 0xFF80_8080, backgroundImagePath: nil, cursorSize: 1.0,
+      showCursor: false, zoomEnabled: false, zoomFactor: 1.0, followStrength: 0.15,
+      fpsHint: 30, fitMode: "fit", audioGainDb: 0.0, audioVolumePercent: 100.0)
+    let result = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL), cameraAsset: nil, params: params,
+        cameraParams: nil, cursorRecording: nil))
+    XCTAssertNotNil(result.canvasBackgroundInWriter, "the writer composites the background")
+
+    func render(_ grade: ColorGrade, _ name: String) throws -> CGImage {
+      let url = tempDir.appendingPathComponent(name)
+      let done = expectation(description: name)
+      var outcome: Result<URL, Error>?
+      LetterboxExporter()._testRenderFinalExport(result: result, outputURL: url, colorGrade: grade) {
+        outcome = $0
+        done.fulfill()
+      }
+      wait(for: [done], timeout: 60.0)
+      return try sampleFrameImage(url: try XCTUnwrap(try outcome?.get()), time: 0.5)
+    }
+    let identity = try render(.identity, "identity.mov")
+    let graded = try render(
+      ColorGrade(
+        autoEnabled: false, exposure: -1.0, contrast: 0, saturation: 0, temperature: 0,
+        tint: 0),
+      "graded.mov")
+    func luma(_ image: CGImage, _ rect: CGRect) throws -> Double {
+      try averageColorMetrics(
+        for: try XCTUnwrap(bestCropImage(for: image, canvasSize: params.targetSize, cropRect: rect)),
+        ignoreTransparentPixels: false
+      ).luma
+    }
+    let margin = CGRect(x: 4, y: 4, width: 24, height: 24)
+    let screen = CGRect(x: 260, y: 140, width: 120, height: 80)
+    XCTAssertGreaterThan(try luma(identity, margin), 0.4, "the background is drawn")
+    XCTAssertEqual(try luma(graded, margin), try luma(identity, margin), accuracy: 0.01,
+      "the padding is not graded")
+    XCTAssertGreaterThan(
+      try luma(identity, screen) - luma(graded, screen), 0.10, "the screen is graded")
+  }
+
   /// Every camera, a plain square one included, renders inline, where only
   /// the screen is graded. A square camera used to take the layer-instruction
   /// path, and the writer then graded the whole canvas, bubble and padding
@@ -12490,6 +12544,13 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
       fixture: .lightUI, cornerRadius: 0.0, label: "inline camera (circle)", camera: .circle)
   }
 
+  /// A screen-only export over padding and a background: the writer puts the
+  /// background under the graded screen, and the reference must too.
+  func testGradeMarginsWithPaddingOnALightModeUIFixture() throws {
+    try runSweep(
+      fixture: .lightUI, cornerRadius: 16.0, label: "screen only, padded", padding: 48.0)
+  }
+
   func testGradeMarginsWithASquareCameraOnADarkModeUIFixture() throws {
     try runSweep(
       fixture: .darkUI, cornerRadius: 0.0, label: "inline camera (square)", camera: .square)
@@ -12498,7 +12559,8 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
   // MARK: - The sweep
 
   private func runSweep(
-    fixture: FixtureKind, cornerRadius: Double, label: String, camera: CameraShape? = nil
+    fixture: FixtureKind, cornerRadius: Double, label: String, camera: CameraShape? = nil,
+    padding: Double = 0.0
   ) throws {
     let tempDir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -12511,10 +12573,11 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
       fixture: fixture
     )
 
-    let backgroundColor: Int? = camera != nil ? 0xFF33_3340 : (cornerRadius > 0 ? 0xFF10_1010 : nil)
+    let backgroundColor: Int? =
+      camera != nil || padding > 0 ? 0xFF33_3340 : (cornerRadius > 0 ? 0xFF10_1010 : nil)
     let params = CompositionParams(
       targetSize: CGSize(width: 960, height: 540),
-      padding: camera != nil ? 48.0 : 0.0,
+      padding: camera != nil ? 48.0 : padding,
       cornerRadius: cornerRadius,
       backgroundColor: backgroundColor,
       backgroundImagePath: nil,

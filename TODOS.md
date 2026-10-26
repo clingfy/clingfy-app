@@ -992,8 +992,6 @@ Tags:
 
 - **Delete the dead pre-styled camera pass** — code, macOS, cleanup. `CameraStyledIntermediatePipeline.runStyledPass` (~700 lines) and the `cameraAssetIsPreStyled` / `placementSourceRect` plumbing through `CameraPreparedIntermediate`, `LetterboxExporter` and `CompositionBuilder` are unreachable since #33. `requiresPrepass` is chroma key only, and that branch returns `false`. Two tests still build pre-styled compositions by hand (`testIntroAnimationAppliesToPreStyledCameraAsset`). *Source:* macos/Runner/Capture/Export/CameraStyledIntermediatePipeline.swift:49-196; CompositionBuilder.swift:2515-2531
 
-- **No-camera exports grade their background and padding; the preview does not** — idea, macOS (decide). The single-source writer grades the whole composed canvas, while the live preview grades only the screen player item. Camera exports now match the preview. Decide whether no-camera exports should too. *Source:* macos/Runner/Capture/Export/LetterboxExporter.swift (writer, non-inline branch); InlinePreviewView.swift:3650-3662
-
 - **Metal/CIImage replacement for AVVideoCompositionCoreAnimationTool** — parked, macOS, parked. A future spike. The ~100-CALayer ceiling has never been hit, so nothing is blocked on it. *Source:* docs/editing-platform-plan.md:852-855
 
 - **Finish the ScreenRecorderFacade strangler (coordinators into RecordingEngine)** — code, macOS, not planned. The facade is still a ~3,000-line orchestrator. Moving the camera, overlay, cursor and indicator coordinators into RecordingEngine was judged a large slice with little payoff. *Source:* docs/windows-port-inventory.md:485-503
@@ -1060,6 +1058,14 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **No-camera exports graded their background and padding, unlike the preview**
+  (fixed 2026-10-26, decided: grade the screen only). The composition now renders
+  the screen on a transparent canvas, and the writer composites the ungraded
+  background under it after the grade; the validator does the same.
+  `testAScreenOnlyExportLeavesThePaddingUngraded` pins it (under the old path,
+  exposure −1 took the padding from 0.50 to 0.18), and a padded sweep in
+  `ColorGradeValidatorMarginTests` measures the validator.
 
 - **Camera segments had no merge fallback and were orphaned on failure**
   (fixed 2026-10-25).

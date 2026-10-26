@@ -1341,7 +1341,10 @@ final class InlineCameraRenderer {
     )
   }
 
-  private static func makeBackgroundImage(
+  /// The canvas background as a Core Image image: preset, image, colour, or
+  /// black. Also used by the screen-only writer, which composites it under
+  /// the graded screen.
+  static func makeBackgroundImage(
     renderSize: CGSize,
     backgroundColor: Int?,
     backgroundImagePath: String?,

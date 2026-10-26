@@ -1923,19 +1923,34 @@ final class CompositionBuilder {
     let debugInfo: ExportDebugInfo
     let validationInfo: ExportValidationInfo?
     let inlineCameraRenderPlan: InlineCameraRenderPlan?
+    /// The canvas background the WRITER composites under the screen, AFTER
+    /// the colour grade, so the grade touches the screen only, as in the live
+    /// preview. Set for a screen-only export, whose composition renders the
+    /// screen on a transparent canvas; a camera export does the same through
+    /// its inline renderer. Carried here, not passed separately, so the
+    /// writer and the validator always use the background that was built.
+    let canvasBackgroundInWriter: CanvasBackground?
+
+    struct CanvasBackground {
+      let color: Int?
+      let imagePath: String?
+      let preset: CanvasBackgroundPreset?
+    }
 
     init(
       asset: AVAsset,
       videoComposition: AVVideoComposition,
       debugInfo: ExportDebugInfo,
       validationInfo: ExportValidationInfo?,
-      inlineCameraRenderPlan: InlineCameraRenderPlan? = nil
+      inlineCameraRenderPlan: InlineCameraRenderPlan? = nil,
+      canvasBackgroundInWriter: CanvasBackground? = nil
     ) {
       self.asset = asset
       self.videoComposition = videoComposition
       self.debugInfo = debugInfo
       self.validationInfo = validationInfo
       self.inlineCameraRenderPlan = inlineCameraRenderPlan
+      self.canvasBackgroundInWriter = canvasBackgroundInWriter
     }
   }
 
@@ -2058,7 +2073,7 @@ final class CompositionBuilder {
         cursorRecording: cursorRecording,
         previewProfile: nil,
         forExport: true,
-        renderPass: .finalOutput,
+        renderPass: .finalOutputOverWriterBackground,
         debugSource: "export_single_source"
       )
     else {
@@ -2076,7 +2091,10 @@ final class CompositionBuilder {
           appliesScreenZoomInAnimationTool: false,
           screenZoomIsPrecomposited: false
         ),
-      validationInfo: nil
+      validationInfo: nil,
+      canvasBackgroundInWriter: .init(
+        color: params.backgroundColor, imagePath: params.backgroundImagePath,
+        preset: params.backgroundPreset)
     )
   }
 
@@ -2191,6 +2209,9 @@ final class CompositionBuilder {
 
   private enum ExportRenderPass {
     case finalOutput
+    /// The final output with a transparent canvas: the writer composites the
+    /// background after the grade (`canvasBackgroundInWriter`).
+    case finalOutputOverWriterBackground
     case screenPrepass
   }
 
@@ -2270,7 +2291,7 @@ final class CompositionBuilder {
 
     let instruction = AVMutableVideoCompositionInstruction()
     instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
-    if forExport, renderPass == .screenPrepass {
+    if forExport, renderPass != .finalOutput {
       instruction.backgroundColor = CGColor(red: 0, green: 0, blue: 0, alpha: 0)
     } else if let backgroundColor = params.backgroundColor {
       instruction.backgroundColor = exportBackgroundColor(backgroundColor)
@@ -2319,7 +2340,7 @@ final class CompositionBuilder {
         forceVisibleRegionMask: false,
         zoomApplicationMode: .compositeVideoLayer,
         includeRoundedMask: true,
-        backgroundMode: renderPass == .screenPrepass ? .transparent : .resolvedOutput,
+        backgroundMode: renderPass == .finalOutput ? .resolvedOutput : .transparent,
         renderCursorOverlay: rendersCursorOverlay,
         debugSource: debugSource
       )
