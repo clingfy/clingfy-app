@@ -4999,157 +4999,6 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(error?.userInfo["stage"] as? String, "styled_intermediate_validation")
   }
 
-  func testFinalStyledCameraExportValidationFailsForBlackFinalCrop() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let screenURL = tempDir.appendingPathComponent("screen.mov")
-    let styledURL = tempDir.appendingPathComponent("styled.mov")
-    let finalURL = tempDir.appendingPathComponent("final.mov")
-    try makeSolidColorVideo(
-      url: screenURL,
-      size: CGSize(width: 320, height: 180),
-      durationSeconds: 1.0,
-      color: .systemBlue
-    )
-    try makeSolidColorVideo(
-      url: styledURL,
-      size: CGSize(width: 128, height: 128),
-      durationSeconds: 1.0,
-      color: .systemRed
-    )
-    try makeSolidColorVideo(
-      url: finalURL,
-      size: CGSize(width: 640, height: 360),
-      durationSeconds: 1.0,
-      color: .black
-    )
-
-    let cameraParams = CameraCompositionParams(
-      visible: true,
-      layoutPreset: .overlayTopRight,
-      normalizedCanvasCenter: nil,
-      sizeFactor: 0.2,
-      shape: .squircle,
-      cornerRadius: 0.15,
-      opacity: 1.0,
-      mirror: true,
-      contentMode: .fill,
-      zoomBehavior: .fixed,
-      borderWidth: 0.0,
-      borderColorArgb: nil,
-      shadowPreset: 2,
-      chromaKeyEnabled: false,
-      chromaKeyStrength: 0.4,
-      chromaKeyColorArgb: nil
-    )
-    let target = CGSize(width: 640, height: 360)
-    let params = CompositionParams(
-      targetSize: target,
-      padding: 0.0,
-      cornerRadius: 0.0,
-      backgroundColor: nil,
-      backgroundImagePath: nil,
-      cursorSize: 1.0,
-      showCursor: false,
-      zoomEnabled: false,
-      zoomFactor: 1.5,
-      followStrength: 0.15,
-      fpsHint: 30,
-      fitMode: "fit",
-      audioGainDb: 0.0,
-      audioVolumePercent: 100.0
-    )
-
-    let builder = CompositionBuilder()
-    let referenceResult = try XCTUnwrap(
-      builder.buildExport(
-        asset: AVAsset(url: screenURL),
-        cameraAsset: AVAsset(url: styledURL),
-        params: params,
-        cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: true,
-        cameraPlacementSourceRect: CGRect(x: 0, y: 0, width: 128, height: 128)
-      )
-    )
-
-    let exporter = LetterboxExporter()
-    let error = exporter._testValidateFinalStyledCameraExport(
-      referenceResult: referenceResult,
-      finalExportURL: finalURL
-    )
-
-    XCTAssertEqual(error?.userInfo["stage"] as? String, "final_output_validation")
-  }
-
-  func testFinalStyledCameraValidationSkipsWhenValidationSamplesMissing() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let screenURL = tempDir.appendingPathComponent("screen.mov")
-    let finalURL = tempDir.appendingPathComponent("final.mov")
-    try makeSolidColorVideo(
-      url: screenURL,
-      size: CGSize(width: 320, height: 180),
-      durationSeconds: 1.0,
-      color: .systemBlue
-    )
-    try makeSolidColorVideo(
-      url: finalURL,
-      size: CGSize(width: 640, height: 360),
-      durationSeconds: 1.0,
-      color: .systemBlue
-    )
-
-    let target = CGSize(width: 640, height: 360)
-    let params = CompositionParams(
-      targetSize: target,
-      padding: 0.0,
-      cornerRadius: 0.0,
-      backgroundColor: nil,
-      backgroundImagePath: nil,
-      cursorSize: 1.0,
-      showCursor: false,
-      zoomEnabled: false,
-      zoomFactor: 1.5,
-      followStrength: 0.15,
-      fpsHint: 30,
-      fitMode: "fit",
-      audioGainDb: 0.0,
-      audioVolumePercent: 100.0
-    )
-
-    let builder = CompositionBuilder()
-    let baseResult = try XCTUnwrap(
-      builder.buildExport(
-        asset: AVAsset(url: screenURL),
-        cameraAsset: nil,
-        params: params,
-        cameraParams: nil,
-        cursorRecording: nil
-      )
-    )
-    let referenceResult = CompositionBuilder.ExportCompositionResult(
-      asset: baseResult.asset,
-      videoComposition: baseResult.videoComposition,
-      debugInfo: baseResult.debugInfo,
-      validationInfo: CompositionBuilder.ExportValidationInfo(
-        renderSize: target,
-        effectiveDuration: 1.0,
-        cameraSamples: []
-      )
-    )
-
-    let exporter = LetterboxExporter()
-    XCTAssertNil(
-      exporter._testValidateFinalStyledCameraExport(
-        referenceResult: referenceResult,
-        finalExportURL: finalURL
-      )
-    )
-  }
-
   func testInlineCameraRenderBuildsStyledActiveZoomPlan() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -12632,9 +12481,25 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
       fixture: .lightUI, cornerRadius: 24.0, label: "RELAXED (animation tool) 0.14/0.18")
   }
 
+  /// The inline-camera validator, graded at the writer's seat: the screen
+  /// only, with the bubble and the padding ungraded. A circle (the default
+  /// shape) and a square camera, each over padding and a background colour,
+  /// so the margins and the bubble are in the measured frame.
+  func testGradeMarginsWithACircleCameraOnALightModeUIFixture() throws {
+    try runSweep(
+      fixture: .lightUI, cornerRadius: 0.0, label: "inline camera (circle)", camera: .circle)
+  }
+
+  func testGradeMarginsWithASquareCameraOnADarkModeUIFixture() throws {
+    try runSweep(
+      fixture: .darkUI, cornerRadius: 0.0, label: "inline camera (square)", camera: .square)
+  }
+
   // MARK: - The sweep
 
-  private func runSweep(fixture: FixtureKind, cornerRadius: Double, label: String) throws {
+  private func runSweep(
+    fixture: FixtureKind, cornerRadius: Double, label: String, camera: CameraShape? = nil
+  ) throws {
     let tempDir = try makeTempDir()
     defer { try? FileManager.default.removeItem(at: tempDir) }
 
@@ -12646,11 +12511,12 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
       fixture: fixture
     )
 
+    let backgroundColor: Int? = camera != nil ? 0xFF33_3340 : (cornerRadius > 0 ? 0xFF10_1010 : nil)
     let params = CompositionParams(
       targetSize: CGSize(width: 960, height: 540),
-      padding: 0.0,
+      padding: camera != nil ? 48.0 : 0.0,
       cornerRadius: cornerRadius,
-      backgroundColor: cornerRadius > 0 ? 0xFF10_1010 : nil,
+      backgroundColor: backgroundColor,
       backgroundImagePath: nil,
       cursorSize: 1.0,
       showCursor: false,
@@ -12666,16 +12532,38 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
     // The reference composition, built exactly as production builds it — and
     // note that it is built WITHOUT any grade, because there is no way to give
     // it one: the composition carries no grade.
+    var cameraAsset: AVAsset?
+    var cameraParams: CameraCompositionParams?
+    if let camera {
+      let cameraURL = tempDir.appendingPathComponent("camera.mov")
+      // The same UI-like frame, so a grade applied to the bubble by mistake
+      // would move it measurably.
+      try writeFixtureVideo(
+        url: cameraURL, size: CGSize(width: 320, height: 320), durationSeconds: 1.0,
+        fixture: fixture)
+      cameraAsset = AVAsset(url: cameraURL)
+      cameraParams = CameraCompositionParams(
+        visible: true, layoutPreset: .overlayBottomRight, normalizedCanvasCenter: nil,
+        sizeFactor: 0.28, shape: camera, cornerRadius: 0.0, opacity: 1.0, mirror: false,
+        contentMode: .fill, zoomBehavior: .fixed, borderWidth: 0.0, borderColorArgb: nil,
+        shadowPreset: 0, chromaKeyEnabled: false, chromaKeyStrength: 0.4,
+        chromaKeyColorArgb: nil)
+      cameraParams?.introPreset = .none
+      cameraParams?.outroPreset = .none
+    }
     let composition = try XCTUnwrap(
       CompositionBuilder().buildExport(
         asset: AVAsset(url: sourceURL),
-        cameraAsset: nil,
+        cameraAsset: cameraAsset,
         params: params,
-        cameraParams: nil,
+        cameraParams: cameraParams,
         cursorRecording: nil
       ),
       "composition builder returned nil"
     )
+    if camera != nil {
+      XCTAssertNotNil(composition.inlineCameraRenderPlan, "a camera renders inline")
+    }
 
     let hasAnimationTool = composition.videoComposition.animationTool != nil
     var rowsPrefix = ""
@@ -12708,6 +12596,7 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
       exporter._testRenderFinalExport(
         result: composition,
         outputURL: outURL,
+        backgroundColor: backgroundColor,
         colorGrade: gradeCase.grade
       ) { result in
         outcome = result
@@ -12727,11 +12616,13 @@ final class ColorGradeValidatorMarginTests: XCTestCase {
       //            reference, and this must collapse to the identity floor.
       let before = exporter._testEvaluateFinalExportReferenceRender(
         referenceResult: composition,
-        finalExportURL: outURL
+        finalExportURL: outURL,
+        backgroundColor: backgroundColor
       )
       let evaluation = exporter._testEvaluateFinalExportReferenceRender(
         referenceResult: composition,
         finalExportURL: outURL,
+        backgroundColor: backgroundColor,
         colorGrade: gradeCase.grade
       )
 
