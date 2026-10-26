@@ -83,92 +83,32 @@ the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
   `clearPixelBuffer` rework they would need. The *RESOLVED (1.0.7)* entry below
   points to it.
 
-### Grade the validator's reference on the two CAMERA paths — decide, then code
+### ~~Grade the validator's reference on the two CAMERA paths~~ — DONE 2026-10-26
 
-> **2026-10-26: decided, the bubble stays ungraded.** Only the screen is graded, as in the
-> live preview.
->
-> **Part 1 is done:** every camera now renders inline. A mapping pass found the *pre-styled* path
-> unreachable in production since #33. The path that really graded the bubble was the plain
-> square camera, with no border, shadow or mirror: it skipped the inline renderer, and the writer
-> graded the whole canvas, bubble and padding included.
-> `testASquareCameraRendersInlineSoTheGradeSkipsTheBubble` pins the fix. Under the old routing,
-> exposure −1 took the bubble from 0.99 to 0.35 red and the padding from 0.50 to 0.18.
->
-> **Part 2 is next:** grade the inline validator's reference at the screen seat, with the
-> `.colorSpace` fix, and measure it with a graded-vs-identity sweep before removing the skip.
-> Then delete the dead pre-styled branch and `validateFinalStyledCameraExport` (item 2 below)
-> instead of fixing them. No-camera exports still grade their background; that matches the
-> writer and differs from the preview. Record it separately.
+**Decided:** the camera bubble stays ungraded on export; only the screen is graded, as
+in the live preview.
 
-The direct (screen-only) path is DONE: `evaluateFinalExportReferenceRender` now
-grades its own reference via `gradeReferenceImage`, so a graded export is measured
-again instead of skipped. Measured across the whole slider range, every grade
-collapses onto the identity floor — light-mode SLIDER MAX went 0.2784 → 0.0032,
-exposure −1.00 went 0.4789 → 0.0015, and the worst residual anywhere is 0.0252 on
-the dark fixture against a 0.18 budget. `ColorGradeValidatorMarginTests` pins it.
-
-**Two paths still SKIP when a grade is active, and both should eventually measure.**
-
-**1. The inline-camera reference** (`evaluateFinalExportReferenceRender`, the
-`inlineCameraRenderPlan != nil` branch).
-- Its reference is not a sampled composition frame but a re-composite via
-  `InlineCameraRenderer.makeCompositedImage`, and the writer grades only the SCREEN
-  sub-image there — `CameraStyledIntermediatePipeline.swift:927-932` deliberately
-  leaves the camera bubble and resolved background ungraded to match the live
-  preview. So the grade has to go on the screen input, not the composite.
-- **Watch the margins.** Inline compositions render the screen on a transparent
-  background. If `AVAssetImageGenerator` hands back an OPAQUE image, grading it
-  grades the padding margins too — pixels the writer effectively leaves alone
-  because alpha-0 survives its filter chain. Measure `screenImage.alphaInfo` and the
-  minimum alpha in the margin on a padded fixture BEFORE grading the whole frame.
-- **There is also a pre-existing colour-space wrinkle here**, worth fixing in the
-  same pass: the branch feeds a GenericRGB-tagged CGImage straight into
-  `CIImage(cgImage:)`, so Core Image applies a gamma-1.8 → sRGB conversion the
-  writer never does (pure blue 0,0,255 → 5,51,255, up to ~0.2 — wider than the
-  budget). Declare `.colorSpace: VideoColorPipeline.workingColorSpace`
-  unconditionally so identity and graded share one baseline, and re-baseline the
-  inline exporter tests in the same change rather than keeping a known-wrong
-  ungraded path for byte-identity's sake.
-
-**2. `validateFinalStyledCameraExport`.**
-- Same skip, and it also deletes the export.
-- It CROPS to the camera bubble, and the two sides are cropped out of images at very
-  different resolutions: the reference off the composition, the final off a 64-capped
-  sample. `cropCandidates` scales the rect by image width and snaps with `.integral`,
-  so on a 960x540 canvas a 160px bubble becomes an ~11px window whose rounding is ~9%
-  of the crop — and a grade multiplies that misalignment by its own gain. The direct
-  path has no crop and no such amplifier, so do NOT assume the direct path's 0.0252
-  residual carries over.
-- `_testValidateFinalStyledCameraExport` does not accept a `colorGrade` yet. Add it
-  (plus `captions:`/`keptRanges:`) and build a pre-styled-camera fixture —
-  `cameraAsset:` non-nil with `cameraParams:` set so `comp.validationInfo` is
-  populated and `comp.inlineCameraRenderPlan == nil` — then print that validator's
-  crop-pair deltas per grade alongside an identity control. If the graded row is more
-  than ~3x its own identity control, the crop alignment is the cause and the bubble
-  crop needs padding, not a looser threshold.
-
-**Do not un-skip either one without a fixture that measures it first.** Un-skipping a
-validator that calls `removeFileIfExists` with nothing measured behind it is exactly
-how the original defect shipped.
-
-**Do not "fix" this by forcing full-resolution reference sampling.** That was tried on
-paper and is backwards: the final file is always sampled with `videoComposition: nil`,
-so it is ALWAYS 64-capped by `sampleFrameImage`, and it was graded at full resolution
-by the writer before that. Both sides are already grade-then-downsample in that order,
-which is what has to match — forcing the reference full-size breaks the symmetry.
-
-**Still unanswered:** should the pre-styled camera bubble receive the grade at all?
-The inline path explicitly does not grade it; the pre-styled path grades it as part of
-the whole canvas. Those disagree today, and that is a product question, not a
-validator one.
-
-**Resolved 2026-10-14:** the dead `CompositionParams.colorGrade` field is gone. It had
-one writer and no reader. The decision it was waiting on is settled by what shipped: the
-grade is applied in the export writer loop (`LetterboxExporter`), and the validator
-receives it as its own argument. If the composition ever becomes grade-aware, add the
-field back together with the code that reads it. `docs/editing-platform-plan.md` now names
-the writer loop as the colour exception to the `CompositionBuilder` bake seat.
+- **Part 1 (#629): every camera renders inline.** A plain square camera skipped the
+  inline renderer, and the writer graded the whole canvas, bubble and padding included.
+  It now renders inline, where only the screen is graded.
+  `testASquareCameraRendersInlineSoTheGradeSkipsTheBubble` pins this. Under the old
+  routing, exposure −1 took the bubble from 0.99 to 0.35 red.
+- **Part 2: the inline validator measures graded exports.** Its reference grades the
+  screen sub-image before the camera and background are composited, as
+  `InlineCameraRenderer.render` does. The screen is declared in the working colour
+  space; a bare `CIImage(cgImage:)` read the generator's GenericRGB tag and applied a
+  gamma-1.8 conversion the writer never does. The skip is gone.
+  - `ColorGradeValidatorMarginTests` now sweeps every grade with a circle camera on the
+    light fixture and a square camera on the dark one, both over padding and a
+    background.
+  - Identity floor: 0.0155 / 0.0143. Worst graded residual: 0.0245, under 2× the floor,
+    against a 0.14 / 0.18 budget.
+  - An ungraded reference would read up to 0.31 and delete the export. Removing the
+    screen grade from the reference fails the sweep.
+- **The pre-styled branch was dead.** Nothing in production has produced
+  `cameraAssetIsPreStyled == true` since #33. So `validateFinalStyledCameraExport`, its
+  crop logic, its test seam and its two tests were removed rather than fixed. The styled
+  pass itself is listed in the backlog for a cleanup PR.
 
 ### RESOLVED (1.0.7) — exported video did not match the inline preview's colour
 
@@ -1049,6 +989,10 @@ Tags:
 
 
 ### Engine and tech debt
+
+- **Delete the dead pre-styled camera pass** — code, macOS, cleanup. `CameraStyledIntermediatePipeline.runStyledPass` (~700 lines) and the `cameraAssetIsPreStyled` / `placementSourceRect` plumbing through `CameraPreparedIntermediate`, `LetterboxExporter` and `CompositionBuilder` are unreachable since #33. `requiresPrepass` is chroma key only, and that branch returns `false`. Two tests still build pre-styled compositions by hand (`testIntroAnimationAppliesToPreStyledCameraAsset`). *Source:* macos/Runner/Capture/Export/CameraStyledIntermediatePipeline.swift:49-196; CompositionBuilder.swift:2515-2531
+
+- **No-camera exports grade their background and padding; the preview does not** — idea, macOS (decide). The single-source writer grades the whole composed canvas, while the live preview grades only the screen player item. Camera exports now match the preview. Decide whether no-camera exports should too. *Source:* macos/Runner/Capture/Export/LetterboxExporter.swift (writer, non-inline branch); InlinePreviewView.swift:3650-3662
 
 - **Metal/CIImage replacement for AVVideoCompositionCoreAnimationTool** — parked, macOS, parked. A future spike. The ~100-CALayer ceiling has never been hit, so nothing is blocked on it. *Source:* docs/editing-platform-plan.md:852-855
 

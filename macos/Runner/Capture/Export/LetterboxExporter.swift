@@ -1054,270 +1054,6 @@ final class LetterboxExporter {
     return bestPair
   }
 
-  private func validateFinalStyledCameraExport(
-    referenceAsset: AVAsset,
-    referenceComposition: AVVideoComposition,
-    validationInfo: CompositionBuilder.ExportValidationInfo,
-    finalExportAsset: AVAsset,
-    captions: [CaptionCueTrack.Cue] = [],
-    keptRanges: [ClipKeptRange] = [],
-    colorGrade: ColorGrade = .identity
-  ) -> NSError? {
-    // Still skipped when a grade is active, deliberately, while
-    // `evaluateFinalExportReferenceRender` now grades its reference on the
-    // direct path.
-    //
-    // This validator CROPS to the camera bubble, and the two sides are cropped
-    // out of images at very different resolutions: the reference off the
-    // composition, the final off a 64-capped sample. `cropCandidates` scales
-    // the crop rect by the image width and snaps it with `.integral`, so on a
-    // 960x540 canvas a 160px bubble becomes an ~11px window whose rounding is
-    // ~9% of the crop -- and a grade multiplies whatever that misalignment
-    // costs by its own gain. The direct path has no crop and no such
-    // amplifier.
-    //
-    // So this needs its own fixture before it can be trusted to measure rather
-    // than delete, and there is none: no test in the suite drives a pre-styled
-    // camera export through this validator with a grade, and
-    // `_testValidateFinalStyledCameraExport` does not even accept one.
-    // Un-skipping a validator that calls `removeFileIfExists` with nothing
-    // measured behind it is how the original defect shipped. See TODOS.md.
-    guard colorGrade.isIdentity else {
-      NativeLogger.i(
-        "Export",
-        "Final styled camera colour validation skipped: colour grade active",
-        context: ["exposure": colorGrade.exposure, "saturation": colorGrade.saturation]
-      )
-      return nil
-    }
-
-    // The same two corrections `validateFinalExportReferenceRender` already
-    // carries, and for the same reasons -- this validator crops to the camera
-    // bubble, but a wide caption over a bottom-corner bubble lands inside that
-    // crop, and it deletes the export when the numbers disagree.
-    let referenceDurationSeconds = referenceAsset.duration.seconds
-    let captionFreeSample =
-      referenceDurationSeconds.isFinite && referenceDurationSeconds > 0
-      ? CaptionCueTrack.captionFreeSample(
-        cues: captions,
-        keptRanges: keptRanges,
-        sourceDurationMs: Int(referenceDurationSeconds * 1000.0),
-        frameDurationMs: max(
-          Int(referenceComposition.frameDuration.seconds * 1000.0), 1)
-      )
-      : nil
-    if !captions.isEmpty, captionFreeSample == nil {
-      NativeLogger.w(
-        "Export",
-        "Skipped final camera validation: every frame carries a caption the reference render does not",
-        context: ["cues": captions.count]
-      )
-      return nil
-    }
-
-    // Two timebases, because the reference composition stays in source time
-    // while the written file is compacted onto the edited timeline. Taking the
-    // `min` of the two used to paper over that by sampling whichever asset was
-    // shorter, which on any cut export compares two different moments.
-    let referenceSampleTime: CMTime
-    let finalSampleTime: CMTime
-    if let captionFreeSample {
-      referenceSampleTime = CMTime(
-        seconds: min(
-          Double(captionFreeSample.referenceMs) / 1000.0,
-          max(referenceDurationSeconds - 0.001, 0.0)),
-        preferredTimescale: 600)
-      finalSampleTime = CMTime(
-        seconds: min(
-          Double(captionFreeSample.finalMs) / 1000.0,
-          max(finalExportAsset.duration.seconds - 0.001, 0.0)),
-        preferredTimescale: 600)
-    } else {
-      let reference = validationSampleTime(for: referenceAsset)
-      let final = validationSampleTime(for: finalExportAsset)
-      let shared = min(reference.seconds, final.seconds)
-      referenceSampleTime = CMTime(seconds: shared, preferredTimescale: 600)
-      finalSampleTime = referenceSampleTime
-    }
-    let sampleTimeSeconds = referenceSampleTime.seconds
-    let sampleTime = referenceSampleTime
-    guard let resolvedSample = validationInfo.resolvedCameraSample(at: sampleTimeSeconds) else {
-      NativeLogger.w(
-        "Export",
-        "Skipping final camera validation: no validation samples available",
-        context: [
-          "sampleTimeSeconds": sampleTimeSeconds,
-          "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
-          "cameraSampleCount": validationInfo.cameraSamples.count,
-        ]
-      )
-      return nil
-    }
-    guard resolvedSample.isTrustworthy, let resolvedFrame = resolvedSample.cameraFrame else {
-      NativeLogger.w(
-        "Export",
-        "Skipping final camera validation: unresolved camera frame at sample time",
-        context: [
-          "sampleTimeSeconds": sampleTimeSeconds,
-          "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
-          "cameraSampleCount": validationInfo.cameraSamples.count,
-          "zoomActiveAtSample": resolvedSample.zoomActive,
-          "usedInterpolation": resolvedSample.usedInterpolation,
-          "resolvedCameraFrame": resolvedSample.cameraFrame.map(NSStringFromRect) ?? "nil",
-        ]
-      )
-      return nil
-    }
-
-    do {
-      let sampledReferenceImage = try sampleFrameImage(
-        asset: referenceAsset,
-        videoComposition: referenceComposition,
-        at: sampleTime
-      )
-      let finalImage = try sampleFrameImage(
-        asset: finalExportAsset, at: finalSampleTime)
-      let finalEncodedSize = orientedSize(for: finalExportAsset)
-        ?? CGSize(width: finalImage.width, height: finalImage.height)
-
-      // Same two corrections as `validateFinalExportReferenceRender`, which
-      // this validator was missing entirely. Retag both sides so
-      // `analyzeFrameColorMetrics`' CGContext.draw does not convert a
-      // GenericRGB-tagged reference into sRGB (a lift of up to 0.075), then
-      // encode the reference so it sits in the same transfer space as the file.
-      // This validator only ever runs on a pre-styled camera export, which is
-      // always written by the encoding render path, so the bias was pure — both
-      // errors pushed the same way and the correct export was the one that
-      // looked wrong.
-      let normalizedReference =
-        normalizeForColorAnalysis(sampledReferenceImage) ?? sampledReferenceImage
-      let referenceImage =
-        encodeReferenceForFinalComparison(normalizedReference) ?? normalizedReference
-      let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
-
-      guard let cropPair = bestAlignedCropPair(
-        referenceImage: referenceImage,
-        finalImage: normalizedFinal,
-        cropRect: resolvedFrame,
-        canvasSize: validationInfo.renderSize
-      ) else {
-        NativeLogger.w(
-          "Export",
-          "Skipping final camera validation: unable to derive aligned crop pair",
-          context: [
-            "sampleTimeSeconds": sampleTimeSeconds,
-            "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
-            "finalEncodedSize": "\(Int(finalEncodedSize.width))x\(Int(finalEncodedSize.height))",
-            "resolvedCameraFrame": NSStringFromRect(resolvedFrame),
-            "zoomActiveAtSample": resolvedSample.zoomActive,
-            "usedInterpolation": resolvedSample.usedInterpolation,
-          ]
-        )
-        return nil
-      }
-
-      guard cropPair.referenceContentMetrics.nonBlackVisibleRatio >= 0.05 else {
-        return nil
-      }
-
-      let requiredNonBlackRatio = max(0.01, cropPair.referenceContentMetrics.nonBlackVisibleRatio * 0.2)
-      let validationContext: [String: Any] = [
-        "sampleTimeSeconds": sampleTimeSeconds,
-        "compositionRenderSize": "\(Int(validationInfo.renderSize.width))x\(Int(validationInfo.renderSize.height))",
-        "finalEncodedSize": "\(Int(finalEncodedSize.width))x\(Int(finalEncodedSize.height))",
-        "resolvedCameraFrame": NSStringFromRect(resolvedFrame),
-        "referenceCropPixelRect": NSStringFromRect(cropPair.reference.pixelRect),
-        "finalCropPixelRect": NSStringFromRect(cropPair.final.pixelRect),
-        "selectedCropOrientation": cropPair.reference.flipY ? "flippedY" : "nativeY",
-        "zoomActiveAtSample": resolvedSample.zoomActive,
-        "usedInterpolation": resolvedSample.usedInterpolation,
-      ]
-
-      NativeLogger.d(
-        "Export",
-        "Final styled camera validation metrics",
-        context: validationContext.merging(
-          [
-            "referenceCropNonBlackRatio": cropPair.referenceContentMetrics.nonBlackVisibleRatio,
-            "finalCropNonBlackRatio": cropPair.finalContentMetrics.nonBlackVisibleRatio,
-            "requiredNonBlackRatio": requiredNonBlackRatio,
-          ],
-          uniquingKeysWith: { _, new in new }
-        )
-      )
-
-      guard cropPair.finalContentMetrics.nonBlackVisibleRatio >= requiredNonBlackRatio else {
-        return makeAdvancedCameraExportError(
-          stage: .finalOutputValidation,
-          reason: "The final exported camera region rendered blank or black video.",
-          context: validationContext.merging(
-            [
-              "referenceCropNonBlackRatio": cropPair.referenceContentMetrics.nonBlackVisibleRatio,
-              "finalCropNonBlackRatio": cropPair.finalContentMetrics.nonBlackVisibleRatio,
-              "requiredNonBlackRatio": requiredNonBlackRatio,
-            ],
-            uniquingKeysWith: { _, new in new }
-          )
-        )
-      }
-
-      if let referenceColorMetrics = cropPair.referenceColorMetrics,
-        let finalCropColorMetrics = cropPair.finalColorMetrics
-      {
-        logColorDriftIfNeeded(
-          category: "Export",
-          message: "Final styled camera color validation metrics",
-          reference: referenceColorMetrics,
-          candidate: finalCropColorMetrics,
-          extraContext: validationContext
-        )
-
-        // Use the shared resolver rather than the strict 0.10/0.10 constants.
-        // This validator's reference composition normally carries an animation
-        // tool, and `animationToolValidationThresholds` exists because those
-        // references are noisier — holding the styled-camera path to a tighter
-        // bar than the general final-export path was an accident of it having
-        // been written with the constants inlined.
-        let thresholds = validationThresholds(for: referenceComposition)
-        let maxChannelDelta = finalCropColorMetrics.maxAverageChannelDelta(comparedTo: referenceColorMetrics)
-        let lumaDelta = abs(finalCropColorMetrics.averageLuma - referenceColorMetrics.averageLuma)
-        if lumaDelta > thresholds.lumaFailure
-          || maxChannelDelta > thresholds.channelFailure
-        {
-          return makeAdvancedCameraExportError(
-            stage: .finalOutputValidation,
-            reason: "The final exported camera region drifted materially in brightness or color.",
-            context: validationContext.merging(
-              [
-                "referenceAverageLuma": referenceColorMetrics.averageLuma,
-                "finalAverageLuma": finalCropColorMetrics.averageLuma,
-                "lumaDelta": finalCropColorMetrics.averageLuma - referenceColorMetrics.averageLuma,
-                "maxChannelDelta": maxChannelDelta,
-                "lumaFailureThreshold": thresholds.lumaFailure,
-                "channelFailureThreshold": thresholds.channelFailure,
-              ],
-              uniquingKeysWith: { _, new in new }
-            )
-          )
-        }
-      } else {
-        NativeLogger.w(
-          "Export",
-          "Skipping final camera color validation: crop color metrics unavailable",
-          context: validationContext
-        )
-      }
-
-      return nil
-    } catch {
-      return makeAdvancedCameraExportError(
-        stage: .finalOutputValidation,
-        reason: "The final export validator could not sample the exported file.",
-        context: ["error": error.localizedDescription]
-      )
-    }
-  }
-
   private func validateScreenPrepassIntermediate(
     rawScreenAsset: AVAsset,
     prepassScreenAsset: AVAsset
@@ -1518,32 +1254,10 @@ final class LetterboxExporter {
     // real fix is to grade the reference at the matching seat (whole frame on
     // the direct path, screen sub-image only on the inline-camera path) and
     // restore the check; this parameter is where that lands.
-    // The INLINE-CAMERA reference is still skipped when a grade is active.
-    // Its reference is not a sampled composition frame but a re-composite
-    // (`InlineCameraRenderer.makeCompositedImage` below), and the writer
-    // grades only the SCREEN sub-image there, deliberately leaving the camera
-    // bubble and the resolved background ungraded to match the live preview
-    // (`CameraStyledIntermediatePipeline`). Grading that reference correctly
-    // means reproducing that seat, and no fixture in the suite renders this
-    // branch with a grade -- un-skipping a validator that calls
-    // `removeFileIfExists` with nothing measured behind it is how the original
-    // defect shipped. The direct path below IS measured, and is graded.
-    guard colorGrade.isIdentity || inlineCameraRenderPlan == nil else {
-      NativeLogger.i(
-        "Export",
-        "Final export reference-render colour validation skipped: graded inline-camera composite",
-        context: [
-          "exposure": colorGrade.exposure,
-          "contrast": colorGrade.contrast,
-          "saturation": colorGrade.saturation,
-          "temperature": colorGrade.temperature,
-          "tint": colorGrade.tint,
-        ]
-      )
-      return FinalExportReferenceEvaluation(
-        lumaDelta: nil, maxChannelDelta: nil, error: nil)
-    }
-
+    // The INLINE-CAMERA reference is graded at the writer's seat below: the
+    // screen sub-image only, before the camera and the background are
+    // composited, as `InlineCameraRenderer.render` does. Measured by
+    // `ColorGradeValidatorMarginTests`' inline-camera sweeps.
     do {
       let referenceDurationSeconds = referenceAsset.duration.seconds
       let finalDurationSeconds = finalExportAsset.duration.seconds
@@ -1626,8 +1340,19 @@ final class LetterboxExporter {
           backgroundImagePath: backgroundImagePath,
           backgroundPreset: backgroundPreset
         )
+        // Declared in the working space, as the writer's source images are:
+        // the generator hands back GenericRGB-tagged images, and a bare
+        // `CIImage(cgImage:)` would apply a gamma-1.8 conversion the writer
+        // never does (pure blue 0,0,255 -> 5,51,255).
+        let rawScreen = CIImage(
+          cgImage: screenImage,
+          options: [.colorSpace: VideoColorPipeline.workingColorSpace])
+        // The writer grades only the screen; the bubble and the background
+        // stay as the preview shows them.
+        let screenForReference =
+          colorGrade.isIdentity ? rawScreen : ColorGradeRenderer.apply(rawScreen, grade: colorGrade)
         let composedImage = renderer.makeCompositedImage(
-          screenImage: CIImage(cgImage: screenImage),
+          screenImage: screenForReference,
           cameraSourceImage: cameraSourceImage,
           presentationTime: sampleTime,
           plan: inlineCameraRenderPlan
@@ -1680,12 +1405,9 @@ final class LetterboxExporter {
       // the whole difference the user asked for is charged to a budget sized
       // for transfer error -- by a validator that deletes what it rejects.
       //
-      // Only the DIRECT path reaches here with a live grade: the guard at the
-      // top returns early for a graded inline-camera composite, so this is not
-      // the shared seat it looks like. Keep the two together if that guard
-      // ever changes, or the inline reference gets graded twice -- screen
-      // twice, bubble and background once, which is the same asymmetry with a
-      // different sign.
+      // The inline-camera reference was graded above, on its screen only;
+      // grading the composite again here would grade the screen twice and
+      // the bubble and background once. So only the DIRECT path grades here.
       //
       // Sampling resolution deliberately untouched. The final file is always
       // sampled with `videoComposition: nil`, so it is always 64-capped by
@@ -1695,7 +1417,7 @@ final class LetterboxExporter {
       // grade-then-downsample, in that order, which is what has to match --
       // forcing the reference full-size would break the symmetry, not fix it.
       let gradedReference: CGImage
-      if colorGrade.isIdentity {
+      if colorGrade.isIdentity || inlineCameraRenderPlan != nil {
         gradedReference = normalizedReference
       } else if let graded = gradeReferenceImage(normalizedReference, grade: colorGrade) {
         gradedReference = graded
@@ -3890,29 +3612,6 @@ final class LetterboxExporter {
             return
           }
 
-          if cameraAssetIsPreStyled,
-            let validationInfo = comp.validationInfo,
-            let validationError = self.validateFinalStyledCameraExport(
-              referenceAsset: comp.asset,
-              referenceComposition: comp.videoComposition,
-              validationInfo: validationInfo,
-              finalExportAsset: AVAsset(url: finalURL),
-              captions: captions,
-              keptRanges: keptRanges,
-              colorGrade: colorGrade
-            )
-          {
-            NativeLogger.e(
-              "Export",
-              "Final styled camera export validation failed",
-              context: validationError.userInfo
-            )
-            self.removeFileIfExists(finalURL)
-            self.cleanupTemporaryArtifacts()
-            completion(.failure(validationError))
-            return
-          }
-
           self.cleanupTemporaryArtifacts()
           completion(.success(finalURL))
 
@@ -4419,19 +4118,6 @@ final class LetterboxExporter {
       rawCameraAsset: AVAsset(url: rawCameraURL),
       styledCameraAsset: AVAsset(url: styledCameraURL),
       placementSourceRect: placementSourceRect
-    )
-  }
-
-  func _testValidateFinalStyledCameraExport(
-    referenceResult: CompositionBuilder.ExportCompositionResult,
-    finalExportURL: URL
-  ) -> NSError? {
-    guard let validationInfo = referenceResult.validationInfo else { return nil }
-    return validateFinalStyledCameraExport(
-      referenceAsset: referenceResult.asset,
-      referenceComposition: referenceResult.videoComposition,
-      validationInfo: validationInfo,
-      finalExportAsset: AVAsset(url: finalExportURL)
     )
   }
 
