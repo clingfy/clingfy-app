@@ -2524,7 +2524,11 @@ final class CompositionBuilder {
             normalizedTrackSourceRect(from: $0, fullSourceSize: fullNormalizedCameraSourceSize)
           }
           let effectiveDuration = screenDuration
-          let shouldInlineCameraRender = !cameraAssetIsPreStyled && cameraNeedsInlineRender(cameraParams)
+          // Every camera goes through the inline renderer, which grades only
+          // the screen. A plain square camera used to skip it, and the writer
+          // then graded the whole canvas, bubble and padding included, unlike
+          // the live preview and every other camera shape.
+          let shouldInlineCameraRender = !cameraAssetIsPreStyled
 
           if CameraPlacementDebug.enabled {
             var context: [String: Any] = [
@@ -2905,22 +2909,6 @@ final class CompositionBuilder {
       )
       return nil
     }
-  }
-
-  private func cameraNeedsInlineRender(_ cameraParams: CameraCompositionParams) -> Bool {
-    if cameraParams.shape != .square {
-      return true
-    }
-    if cameraParams.borderWidth > 0.0 || cameraParams.shadowPreset > 0 {
-      return true
-    }
-    if cameraParams.mirror {
-      return true
-    }
-    if abs(cameraParams.opacity - 1.0) > 0.0001 {
-      return true
-    }
-    return cameraParams.contentMode != .fill
   }
 
   private func fittedTransform(

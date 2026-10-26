@@ -3347,26 +3347,18 @@ final class LetterboxExporterTests: XCTestCase {
       )
     )
 
-    let instruction = try XCTUnwrap(
-      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
-    )
-    let cameraInstruction = try XCTUnwrap(instruction.layerInstructions.first)
-    var startTransform = CGAffineTransform.identity
-    var endTransform = CGAffineTransform.identity
-    var timeRange = CMTimeRange.zero
-
-    let hasRamp = cameraInstruction.getTransformRamp(
-      for: CMTime(seconds: 0.45, preferredTimescale: 600),
-      start: &startTransform,
-      end: &endTransform,
-      timeRange: &timeRange
-    )
-
-    if hasRamp {
-      XCTAssertTrue(
-        transformsApproximatelyEqual(startTransform, endTransform),
-        "fixed camera behavior should not produce a time-varying camera transform"
-      )
+    // Every camera renders inline; a fixed camera keeps one frame while the
+    // screen zooms. Sampled between the intro and the outro, which animate it.
+    let plan = try XCTUnwrap(result.inlineCameraRenderPlan)
+    let frames = stride(from: 0.3, through: 0.75, by: 0.05).compactMap {
+      plan.resolvedSample(at: $0)?.frame
+    }
+    XCTAssertFalse(frames.isEmpty)
+    for frame in frames {
+      XCTAssertEqual(frame.minX, frames[0].minX, accuracy: 0.5)
+      XCTAssertEqual(frame.minY, frames[0].minY, accuracy: 0.5)
+      XCTAssertEqual(frame.width, frames[0].width, accuracy: 0.5,
+        "fixed camera behavior should not produce a time-varying camera frame")
     }
   }
 
@@ -3467,26 +3459,19 @@ final class LetterboxExporterTests: XCTestCase {
     let instruction = try XCTUnwrap(
       result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
     )
-    XCTAssertEqual(instruction.layerInstructions.count, 2)
-
-    let cameraInstruction = try XCTUnwrap(instruction.layerInstructions.first)
+    // The camera renders inline, so only the screen has a layer instruction.
+    XCTAssertEqual(instruction.layerInstructions.count, 1)
     let screenInstruction = try XCTUnwrap(instruction.layerInstructions.last)
 
-    var cameraStart = CGAffineTransform.identity
-    var cameraEnd = CGAffineTransform.identity
-    var cameraTimeRange = CMTimeRange.zero
-    let hasCameraRamp = cameraInstruction.getTransformRamp(
-      for: CMTime(seconds: 0.52, preferredTimescale: 600),
-      start: &cameraStart,
-      end: &cameraEnd,
-      timeRange: &cameraTimeRange
-    )
-
-    if hasCameraRamp {
-      XCTAssertTrue(
-        transformsApproximatelyEqual(cameraStart, cameraEnd),
-        "fixed camera behavior should stay static even while the screen zooms"
-      )
+    let plan = try XCTUnwrap(result.inlineCameraRenderPlan)
+    // Between the intro and the outro, which animate it.
+    let frames = stride(from: 0.3, through: 0.75, by: 0.05).compactMap {
+      plan.resolvedSample(at: $0)?.frame
+    }
+    XCTAssertFalse(frames.isEmpty)
+    for frame in frames {
+      XCTAssertEqual(frame.minX, frames[0].minX, accuracy: 0.5,
+        "fixed camera behavior should stay static even while the screen zooms")
     }
 
     var screenStart = CGAffineTransform.identity
@@ -3716,7 +3701,16 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(result.debugInfo.screenSourceMode, .precompositedCanvas)
     XCTAssertTrue(result.debugInfo.screenZoomIsPrecomposited)
     let outputURL = tempDir.appendingPathComponent("two-source.mov")
-    try exportComposition(result, to: outputURL, preset: AVAssetExportPresetHighestQuality)
+    // Through the writer loop, as production exports are: the camera renders
+    // inline there, and an AVAssetExportSession would leave it out.
+    let rendered = expectation(description: "two-source render")
+    var renderResult: Result<URL, Error>?
+    LetterboxExporter()._testRenderFinalExport(result: result, outputURL: outputURL) {
+      renderResult = $0
+      rendered.fulfill()
+    }
+    wait(for: [rendered], timeout: 60.0)
+    _ = try XCTUnwrap(try renderResult?.get())
 
     let image = try sampleFrameImage(url: outputURL, time: 0.55)
     let cameraResolution = CameraLayoutResolver.effectiveFrame(
@@ -3826,6 +3820,87 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(fittedRect.height, destinationRect.height, accuracy: 1.0)
   }
 
+  /// Every camera, a plain square one included, renders inline, where only
+  /// the screen is graded. A square camera used to take the layer-instruction
+  /// path, and the writer then graded the whole canvas, bubble and padding
+  /// included, unlike the live preview and every other shape.
+  func testASquareCameraRendersInlineSoTheGradeSkipsTheBubble() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    let cameraURL = tempDir.appendingPathComponent("camera.mov")
+    try makeSolidColorVideo(
+      url: screenURL, size: CGSize(width: 320, height: 180), durationSeconds: 1.0,
+      color: NSColor(calibratedWhite: 0.8, alpha: 1.0))
+    try makeSolidColorVideo(
+      url: cameraURL, size: CGSize(width: 128, height: 128), durationSeconds: 1.0,
+      color: .systemRed)
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360), padding: 40.0, cornerRadius: 0.0,
+      backgroundColor: 0xFF80_8080, backgroundImagePath: nil, cursorSize: 1.0,
+      showCursor: false, zoomEnabled: false, zoomFactor: 1.0, followStrength: 0.15,
+      fpsHint: 30, fitMode: "fit", audioGainDb: 0.0, audioVolumePercent: 100.0)
+    let cameraParams = CameraCompositionParams(
+      visible: true, layoutPreset: .overlayBottomRight, normalizedCanvasCenter: nil,
+      sizeFactor: 0.3, shape: .square, cornerRadius: 0.0, opacity: 1.0, mirror: false,
+      contentMode: .fill, zoomBehavior: .fixed, borderWidth: 0.0, borderColorArgb: nil,
+      shadowPreset: 0, chromaKeyEnabled: false, chromaKeyStrength: 0.4,
+      chromaKeyColorArgb: nil)
+    let result = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL), cameraAsset: AVAsset(url: cameraURL),
+        params: params, cameraParams: cameraParams, cursorRecording: nil,
+        cameraAssetIsPreStyled: false))
+    XCTAssertNotNil(result.inlineCameraRenderPlan, "a square camera renders inline")
+
+    func render(_ grade: ColorGrade, _ name: String) throws -> CGImage {
+      let url = tempDir.appendingPathComponent(name)
+      let done = expectation(description: name)
+      var outcome: Result<URL, Error>?
+      LetterboxExporter()._testRenderFinalExport(
+        result: result, outputURL: url, backgroundColor: 0xFF80_8080, colorGrade: grade
+      ) {
+        outcome = $0
+        done.fulfill()
+      }
+      wait(for: [done], timeout: 60.0)
+      return try sampleFrameImage(url: try XCTUnwrap(try outcome?.get()), time: 0.5)
+    }
+    let identity = try render(.identity, "identity.mov")
+    let graded = try render(
+      ColorGrade(
+        autoEnabled: false, exposure: -1.0, contrast: 0, saturation: 0, temperature: 0,
+        tint: 0),
+      "graded.mov")
+
+    func mean(_ image: CGImage, _ rect: CGRect) throws -> (red: Double, green: Double, blue: Double, luma: Double) {
+      try averageColorMetrics(
+        for: try XCTUnwrap(bestCropImage(for: image, canvasSize: params.targetSize, cropRect: rect)),
+        ignoreTransparentPixels: false)
+    }
+    // Found by its colour, as the camera tests do: the bubble's frame is
+    // canvas-space and the crop helpers search around it.
+    let bubble = CameraLayoutResolver.effectiveFrame(
+      canvasSize: params.targetSize, params: cameraParams
+    ).frame
+    func bubbleMean(_ image: CGImage) throws -> Double {
+      let crop = try XCTUnwrap(
+        try bestScoredCropImage(
+          for: image, canvasSize: params.targetSize, cropRect: bubble,
+          scorer: { try dominantRedRatio(for: $0, ignoreTransparentPixels: false) }))
+      return try averageColorMetrics(for: crop, ignoreTransparentPixels: false).red
+    }
+    let margin = CGRect(x: 4, y: 4, width: 24, height: 24)
+    let screen = CGRect(x: 120, y: 100, width: 120, height: 80)
+
+    XCTAssertEqual(try bubbleMean(graded), try bubbleMean(identity), accuracy: 0.02,
+      "the bubble is not graded")
+    XCTAssertEqual(try mean(graded, margin).luma, try mean(identity, margin).luma, accuracy: 0.01,
+      "the padding is not graded")
+    XCTAssertGreaterThan(
+      try mean(identity, screen).luma - mean(graded, screen).luma, 0.10, "the screen is graded")
+  }
+
   func testIntroFadeAddsCameraOpacityRampAtStart() throws {
     let tempDir = makeTemporaryDirectory()
     defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -3893,24 +3968,13 @@ final class LetterboxExporterTests: XCTestCase {
       )
     )
 
-    let instruction = try XCTUnwrap(
-      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
-    )
-    let cameraInstruction = try XCTUnwrap(instruction.layerInstructions.first)
-    var startOpacity: Float = 0
-    var endOpacity: Float = 0
-    var timeRange = CMTimeRange.zero
-
-    let hasRamp = cameraInstruction.getOpacityRamp(
-      for: CMTime(seconds: 0.05, preferredTimescale: 600),
-      startOpacity: &startOpacity,
-      endOpacity: &endOpacity,
-      timeRange: &timeRange
-    )
-
-    XCTAssertTrue(hasRamp)
-    XCTAssertLessThan(startOpacity, endOpacity)
-    XCTAssertGreaterThan(timeRange.duration.seconds, 0.0)
+    // Every camera renders inline, so the fade is in the plan's samples.
+    let plan = try XCTUnwrap(result.inlineCameraRenderPlan)
+    let start = try XCTUnwrap(plan.resolvedSample(at: 0.0)).opacity
+    // Past the 220 ms intro, before the outro.
+    let settled = try XCTUnwrap(plan.resolvedSample(at: 0.5)).opacity
+    XCTAssertLessThan(start, settled, "the camera fades in")
+    XCTAssertGreaterThan(settled, 0.99)
   }
 
   func testOutroFadeAddsCameraOpacityRampAtEnd() throws {
@@ -3980,24 +4044,13 @@ final class LetterboxExporterTests: XCTestCase {
       )
     )
 
-    let instruction = try XCTUnwrap(
-      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
-    )
-    let cameraInstruction = try XCTUnwrap(instruction.layerInstructions.first)
-    var startOpacity: Float = 0
-    var endOpacity: Float = 0
-    var timeRange = CMTimeRange.zero
-
-    let hasRamp = cameraInstruction.getOpacityRamp(
-      for: CMTime(seconds: 0.95, preferredTimescale: 600),
-      startOpacity: &startOpacity,
-      endOpacity: &endOpacity,
-      timeRange: &timeRange
-    )
-
-    XCTAssertTrue(hasRamp)
-    XCTAssertGreaterThan(startOpacity, endOpacity)
-    XCTAssertGreaterThan(timeRange.duration.seconds, 0.0)
+    // Every camera renders inline, so the fade is in the plan's samples.
+    let plan = try XCTUnwrap(result.inlineCameraRenderPlan)
+    // Past the intro, before the outro.
+    let before = try XCTUnwrap(plan.resolvedSample(at: 0.5)).opacity
+    let end = try XCTUnwrap(plan.resolvedSample(at: 0.99)).opacity
+    XCTAssertGreaterThan(before, end, "the camera fades out")
+    XCTAssertGreaterThan(before, 0.99)
   }
 
   func testZoomPulseAddsTransformRampDuringActiveZoom() throws {
@@ -4778,149 +4831,6 @@ final class LetterboxExporterTests: XCTestCase {
 
   }
 
-  /// Pins that the export has exactly one final render path.
-  ///
-  /// This is the configuration that used to reach `AVAssetExportSession`.
-  /// Screen-only exports can never get here: `build(forExport:)` hardcodes
-  /// `includeRoundedMask: true`, so their composition always carries an
-  /// animation tool. Reaching it takes a visible camera that needs no inline
-  /// render (square, unmirrored, opacity 1, `.fill`, no border, no shadow) plus
-  /// no cursor, no zoom, no corner radius and no background image — which is
-  /// why no test covered it and the defect shipped.
-  ///
-  /// The old branch handed the composition to AVFoundation, which colour-matches
-  /// source to destination but saw a 709-tagged capture against a 709
-  /// composition and converted nothing, writing sRGB-encoded pixels into a
-  /// BT.709-tagged file. `assertAverageColorParity` encodes its reference with
-  /// the same curve the exporter uses, so an un-encoded file fails it.
-  ///
-  /// The fixture is mid-grey on every surface on purpose. 0 and 255 are fixed
-  /// points of the export curve, so a saturated red/green/blue fixture would
-  /// pass whether or not the transfer was ever applied.
-  func testExportWithoutInlineCameraOrAnimationToolStillWritesTheExportTransfer() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let projectRoot = try makeRecordingProjectRoot(at: tempDir, includeCamera: true)
-    let project = try RecordingProjectRef.open(projectRoot: projectRoot)
-    let screenURL = RecordingProjectPaths.screenVideoURL(for: projectRoot)
-    let cameraURL = RecordingProjectPaths.cameraRawURL(for: projectRoot)
-    try makeSolidColorVideo(
-      url: screenURL,
-      size: CGSize(width: 180, height: 320),
-      durationSeconds: 1.0,
-      color: NSColor(calibratedWhite: 0.5, alpha: 1.0)
-    )
-    try makeSolidColorVideo(
-      url: cameraURL,
-      size: CGSize(width: 128, height: 128),
-      durationSeconds: 1.0,
-      color: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.35, alpha: 1.0)
-    )
-
-    let cameraParams = CameraCompositionParams(
-      visible: true,
-      layoutPreset: .overlayBottomRight,
-      normalizedCanvasCenter: nil,
-      sizeFactor: 0.24,
-      shape: .square,
-      cornerRadius: 0.0,
-      opacity: 1.0,
-      mirror: false,
-      contentMode: .fill,
-      zoomBehavior: .fixed,
-      borderWidth: 0.0,
-      borderColorArgb: nil,
-      shadowPreset: 0,
-      chromaKeyEnabled: false,
-      chromaKeyStrength: 0.4,
-      chromaKeyColorArgb: nil
-    )
-
-    let target = CGSize(width: 640, height: 360)
-    let params = CompositionParams(
-      targetSize: target,
-      padding: 0.0,
-      cornerRadius: 0.0,
-      backgroundColor: 0xFF80_8080,
-      backgroundImagePath: nil,
-      cursorSize: 1.0,
-      showCursor: false,
-      zoomEnabled: false,
-      zoomFactor: 1.5,
-      followStrength: 0.15,
-      fpsHint: 30,
-      fitMode: "fit",
-      audioGainDb: 0.0,
-      audioVolumePercent: 100.0
-    )
-
-    // The executable statement of "this is the ex-session configuration". If a
-    // future change makes one of these non-nil, this test stops proving what it
-    // claims to prove, and it should fail loudly rather than pass vacuously.
-    let composition = try XCTUnwrap(
-      CompositionBuilder().buildExport(
-        asset: AVAsset(url: screenURL),
-        cameraAsset: AVAsset(url: cameraURL),
-        params: params,
-        cameraParams: cameraParams,
-        cursorRecording: nil
-      )
-    )
-    XCTAssertNil(
-      composition.inlineCameraRenderPlan,
-      "fixture no longer reaches the branch this test exists to cover"
-    )
-    XCTAssertNil(
-      composition.videoComposition.animationTool,
-      "fixture no longer reaches the branch this test exists to cover"
-    )
-
-    let exporter = LetterboxExporter()
-    let exportExpectation = expectation(description: "export without inline camera or animation tool")
-    var exportResult: Result<URL, Error>?
-
-    exporter.export(
-      project: project,
-      target: target,
-      padding: 0.0,
-      cornerRadius: 0.0,
-      backgroundColor: 0xFF80_8080,
-      backgroundImagePath: nil,
-      cursorSize: 1.0,
-      showCursor: false,
-      zoomEnabled: false,
-      zoomFactor: 1.5,
-      followStrength: 0.15,
-      fpsHint: 30,
-      outputURL: tempDir.appendingPathComponent("no-animation-tool.mov"),
-      format: "mov",
-      codec: "h264",
-      bitrate: "auto",
-      audioQuality: "standard",
-      fitMode: "fit",
-      audioGainDb: 0.0,
-      audioVolumePercent: 100.0,
-      autoNormalizeOnExport: false,
-      targetLoudnessDbfs: -16.0,
-      cameraParams: cameraParams
-    ) { result in
-      exportResult = result
-      exportExpectation.fulfill()
-    }
-
-    wait(for: [exportExpectation], timeout: 30.0)
-    let finalURL = try XCTUnwrap(try exportResult?.get())
-
-    try assertAverageColorParity(
-      referenceImage: try sampleFrameImage(
-        asset: composition.asset,
-        videoComposition: composition.videoComposition
-      ),
-      candidateImage: try sampleFrameImage(url: finalURL)
-    )
-  }
-
   /// Pins that the final-export validator compares like with like.
   ///
   /// Its reference comes from `AVAssetImageGenerator` over the composition,
@@ -5059,165 +4969,6 @@ final class LetterboxExporterTests: XCTestCase {
       lumaDelta, 0.02,
       "a graded reference should land near the identity floor, not just inside the budget")
     XCTAssertLessThan(chanDelta, 0.02)
-  }
-
-  func testFinalExportReferenceValidatorComparesInTheFilesTransferSpace() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    // The same animation-tool-free fixture the sibling test pins. A screen-only
-    // composition always carries an animation tool, and AVAssetImageGenerator's
-    // Core Animation render is noisy enough (it is why
-    // `animationToolValidationThresholds` is relaxed to 0.14/0.18) to blur the
-    // encoded-vs-raw separation this test measures.
-    let screenURL = tempDir.appendingPathComponent("screen.mov")
-    let cameraURL = tempDir.appendingPathComponent("camera.mov")
-    try makeSolidColorVideo(
-      url: screenURL,
-      size: CGSize(width: 180, height: 320),
-      durationSeconds: 1.0,
-      color: NSColor(calibratedWhite: 0.5, alpha: 1.0)
-    )
-    try makeSolidColorVideo(
-      url: cameraURL,
-      size: CGSize(width: 128, height: 128),
-      durationSeconds: 1.0,
-      color: NSColor(calibratedRed: 0.45, green: 0.55, blue: 0.35, alpha: 1.0)
-    )
-
-    let cameraParams = CameraCompositionParams(
-      visible: true,
-      layoutPreset: .overlayBottomRight,
-      normalizedCanvasCenter: nil,
-      sizeFactor: 0.24,
-      shape: .square,
-      cornerRadius: 0.0,
-      opacity: 1.0,
-      mirror: false,
-      contentMode: .fill,
-      zoomBehavior: .fixed,
-      borderWidth: 0.0,
-      borderColorArgb: nil,
-      shadowPreset: 0,
-      chromaKeyEnabled: false,
-      chromaKeyStrength: 0.4,
-      chromaKeyColorArgb: nil
-    )
-
-    let params = CompositionParams(
-      targetSize: CGSize(width: 640, height: 360),
-      padding: 0.0,
-      cornerRadius: 0.0,
-      backgroundColor: 0xFF80_8080,
-      backgroundImagePath: nil,
-      cursorSize: 1.0,
-      showCursor: false,
-      zoomEnabled: false,
-      zoomFactor: 1.5,
-      followStrength: 0.15,
-      fpsHint: 30,
-      fitMode: "fit",
-      audioGainDb: 0.0,
-      audioVolumePercent: 100.0
-    )
-
-    let composition = try XCTUnwrap(
-      CompositionBuilder().buildExport(
-        asset: AVAsset(url: screenURL),
-        cameraAsset: AVAsset(url: cameraURL),
-        params: params,
-        cameraParams: cameraParams,
-        cursorRecording: nil
-      )
-    )
-    XCTAssertNil(composition.inlineCameraRenderPlan)
-    XCTAssertNil(composition.videoComposition.animationTool)
-
-    let exporter = LetterboxExporter()
-    let encodedURL = tempDir.appendingPathComponent("encoded.mov")
-    let renderExpectation = expectation(description: "encoded render")
-    var renderResult: Result<URL, Error>?
-    exporter._testRenderFinalExport(result: composition, outputURL: encodedURL) { result in
-      renderResult = result
-      renderExpectation.fulfill()
-    }
-    wait(for: [renderExpectation], timeout: 30.0)
-    _ = try XCTUnwrap(try renderResult?.get())
-
-    // What the production validator measured.
-    let validatorDelta = try XCTUnwrap(
-      exporter._testEvaluateFinalExportReferenceRender(
-        referenceResult: composition,
-        finalExportURL: encodedURL
-      ).maxChannelDelta
-    )
-
-    // The same two comparisons, computed here: the file against a reference
-    // encoded the way the exporter encodes, and against a raw one.
-    let referenceImage = try sampleFrameImage(
-      asset: composition.asset,
-      videoComposition: composition.videoComposition
-    )
-    let fileMetrics = try averageColorMetrics(
-      for: try sampleFrameImage(url: encodedURL),
-      ignoreTransparentPixels: false
-    )
-    let rawReference = try averageColorMetrics(
-      for: referenceImage,
-      ignoreTransparentPixels: false
-    )
-    let encodedReference = try averageColorMetrics(
-      for: try applyExportTransfer(to: referenceImage),
-      ignoreTransparentPixels: false
-    )
-
-    func maxChannelDelta(
-      _ lhs: (red: Double, green: Double, blue: Double, luma: Double),
-      _ rhs: (red: Double, green: Double, blue: Double, luma: Double)
-    ) -> Double {
-      max(abs(lhs.red - rhs.red), abs(lhs.green - rhs.green), abs(lhs.blue - rhs.blue))
-    }
-
-    let rawDelta = maxChannelDelta(fileMetrics, rawReference)
-    let encodedDelta = maxChannelDelta(fileMetrics, encodedReference)
-    // Same three channels as the colour-parity helper, for the same reason:
-    // xcodebuild's result-stream reporter swallows the test process's stdout,
-    // so the appended file is the one that survives a run.
-    let summary = String(
-      format: "final-export validator deltas: validator %.4f  vs-encoded-ref %.4f  vs-raw-ref %.4f",
-      validatorDelta,
-      encodedDelta,
-      rawDelta
-    )
-    NSLog("%@", summary)
-    print(summary)
-    let marginLog = URL(fileURLWithPath: "/tmp/clingfy-colour-margins.txt")
-    if let handle = try? FileHandle(forWritingTo: marginLog) {
-      handle.seekToEndOfFile()
-      handle.write(Data((summary + "\n").utf8))
-      try? handle.close()
-    } else {
-      try? (summary + "\n").write(to: marginLog, atomically: true, encoding: .utf8)
-    }
-
-    // Guards against a vacuous fixture: 0 and 255 are fixed points of the
-    // export curve, so on a saturated fixture both references would agree and
-    // the assertion below would hold no matter what the validator did.
-    XCTAssertGreaterThan(
-      rawDelta,
-      0.03,
-      "fixture does not exercise the transfer curve — use a midtone"
-    )
-    XCTAssertLessThan(
-      encodedDelta,
-      0.02,
-      "the exported file should sit close to a reference encoded the same way"
-    )
-    XCTAssertLessThan(
-      validatorDelta,
-      rawDelta * 0.5,
-      "the validator is measuring the transfer curve, not export drift — its reference lost its encode"
-    )
   }
 
   func testStyledCameraIntermediateValidationFailsForBlackStyledAsset() throws {

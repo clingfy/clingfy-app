@@ -1,6 +1,7 @@
 ## [Unreleased]
 
 ### Export
+- **A colour grade no longer tints a square camera bubble or the canvas padding.** A plain square camera (no border, shadow or mirror) was graded along with the whole frame, unlike every other shape and unlike the preview. Only the screen is graded now.
 - **Choose the export audio quality.** Standard, High or Best (192, 256 or 320 kbps AAC) in the export dialog. macOS had always exported 192 kbps and Windows 128, without saying so; both now default to 192. Windows exports every tier at 192 kbps for now. (#592)
 - **GIFs render in one pass.** On macOS there is no temp video any more: a GIF is about 30% faster to export and about a third the size, because the video codec's noise no longer reaches the GIF. (#615)
 - **GIFs are capped at 60 seconds** of exported length (after cuts). The export dialog says so and disables Export, rather than producing a huge, slow GIF. (#614)
