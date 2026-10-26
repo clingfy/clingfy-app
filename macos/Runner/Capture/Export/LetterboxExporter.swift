@@ -1194,6 +1194,7 @@ final class LetterboxExporter {
     referenceComposition: AVVideoComposition,
     finalExportAsset: AVAsset,
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
+    canvasBackgroundInWriter: CompositionBuilder.ExportCompositionResult.CanvasBackground? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
@@ -1206,6 +1207,7 @@ final class LetterboxExporter {
       referenceComposition: referenceComposition,
       finalExportAsset: finalExportAsset,
       inlineCameraRenderPlan: inlineCameraRenderPlan,
+      canvasBackgroundInWriter: canvasBackgroundInWriter,
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
       backgroundPreset: backgroundPreset,
@@ -1220,6 +1222,7 @@ final class LetterboxExporter {
     referenceComposition: AVVideoComposition,
     finalExportAsset: AVAsset,
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
+    canvasBackgroundInWriter: CompositionBuilder.ExportCompositionResult.CanvasBackground? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
@@ -1434,11 +1437,45 @@ final class LetterboxExporter {
           lumaDelta: nil, maxChannelDelta: nil, error: nil)
       }
 
+      // A screen-only export renders the screen on a transparent canvas and
+      // the writer puts the background under it after the grade; so does the
+      // reference, or the margins would be compared against nothing.
+      let canvasReference: CGImage
+      if let canvas = canvasBackgroundInWriter, inlineCameraRenderPlan == nil {
+        let size = referenceComposition.renderSize
+        let background = InlineCameraRenderer.makeBackgroundImage(
+          renderSize: size,
+          backgroundColor: canvas.color,
+          backgroundImagePath: canvas.imagePath,
+          backgroundPreset: canvas.preset)
+        let screen = CIImage(
+          cgImage: gradedReference,
+          options: [.colorSpace: VideoColorPipeline.workingColorSpace])
+        guard
+          let composited = VideoColorPipeline.makeCIContext().createCGImage(
+            screen.composited(over: background),
+            from: CGRect(origin: .zero, size: size),
+            format: .RGBA8,
+            colorSpace: VideoColorPipeline.workingColorSpace)
+        else {
+          return FinalExportReferenceEvaluation(
+            lumaDelta: nil,
+            maxChannelDelta: nil,
+            error: makeFinalExportValidationError(
+              reason: "The screen-only validation render could not be materialized."
+            )
+          )
+        }
+        canvasReference = composited
+      } else {
+        canvasReference = gradedReference
+      }
+
       // Retag first, then grade, then encode — see
       // `encodeReferenceForFinalComparison`. The final file needs no encode;
       // it already has one.
       let encodedReference =
-        encodeReferenceForFinalComparison(gradedReference) ?? gradedReference
+        encodeReferenceForFinalComparison(canvasReference) ?? canvasReference
       let normalizedFinal = normalizeForColorAnalysis(finalImage) ?? finalImage
 
       guard
@@ -1825,6 +1862,7 @@ final class LetterboxExporter {
     progressRange: ClosedRange<Double>,
     onProgress: ((Double) -> Void)?,
     inlineCameraRenderPlan: CompositionBuilder.InlineCameraRenderPlan? = nil,
+    canvasBackgroundInWriter: CompositionBuilder.ExportCompositionResult.CanvasBackground? = nil,
     backgroundColor: Int? = nil,
     backgroundImagePath: String? = nil,
     backgroundPreset: CanvasBackgroundPreset? = nil,
@@ -2343,6 +2381,18 @@ final class LetterboxExporter {
         backgroundPreset: backgroundPreset
       )
     }
+    // A screen-only export's canvas background, composited after the grade
+    // so the grade touches the screen only (`canvasBackgroundInWriter`).
+    let canvasBackground: CIImage? =
+      inlineCameraRenderPlan == nil
+      ? canvasBackgroundInWriter.map {
+        InlineCameraRenderer.makeBackgroundImage(
+          renderSize: renderSize,
+          backgroundColor: $0.color,
+          backgroundImagePath: $0.imagePath,
+          backgroundPreset: $0.preset)
+      }
+      : nil
     var currentCameraSampleBuffer: CMSampleBuffer?
     var nextCameraSampleBuffer: CMSampleBuffer?
 
@@ -2810,12 +2860,15 @@ final class LetterboxExporter {
               )
             }
 
-            // Bake the canvas-wide color grade into the composed frame. Identity
-            // is a passthrough, so this is a no-op unless the user adjusted color.
-            let gradedImage =
+            // Bake the colour grade in. Identity is a passthrough, so this is a
+            // no-op unless the user adjusted colour. A screen-only export arrives
+            // on a transparent canvas: the grade touches the screen, and the
+            // background goes under it ungraded, as in the live preview.
+            let gradedScreen =
               colorGrade.isIdentity
               ? imageToRender
               : ColorGradeRenderer.apply(imageToRender, grade: colorGrade)
+            let gradedImage = canvasBackground.map { gradedScreen.composited(over: $0) } ?? gradedScreen
 
             // Captions go on AFTER the grade and BEFORE the transfer encode.
             //
@@ -3558,6 +3611,7 @@ final class LetterboxExporter {
           progressRange: progressRange,
           onProgress: onProgress,
           inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
+          canvasBackgroundInWriter: comp.canvasBackgroundInWriter,
           backgroundColor: backgroundColor,
           backgroundImagePath: backgroundImagePath,
           backgroundPreset: backgroundPreset,
@@ -3594,6 +3648,7 @@ final class LetterboxExporter {
             referenceComposition: comp.videoComposition,
             finalExportAsset: AVAsset(url: finalURL),
             inlineCameraRenderPlan: comp.inlineCameraRenderPlan,
+            canvasBackgroundInWriter: comp.canvasBackgroundInWriter,
             backgroundColor: backgroundColor,
             backgroundImagePath: backgroundImagePath,
             backgroundPreset: backgroundPreset,
@@ -4152,6 +4207,7 @@ final class LetterboxExporter {
       progressRange: 0.0...1.0,
       onProgress: nil,
       inlineCameraRenderPlan: result.inlineCameraRenderPlan,
+      canvasBackgroundInWriter: result.canvasBackgroundInWriter,
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
       colorGrade: colorGrade,
@@ -4182,6 +4238,7 @@ final class LetterboxExporter {
       referenceComposition: referenceResult.videoComposition,
       finalExportAsset: AVAsset(url: finalExportURL),
       inlineCameraRenderPlan: referenceResult.inlineCameraRenderPlan,
+      canvasBackgroundInWriter: referenceResult.canvasBackgroundInWriter,
       backgroundColor: backgroundColor,
       backgroundImagePath: backgroundImagePath,
       backgroundPreset: backgroundPreset,
