@@ -38,6 +38,7 @@
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
+#include "Capture/capture_frame_pacer.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/Indicator/recording_indicator_controller.h"
@@ -776,15 +777,23 @@ std::optional<RecordingError> RecordingEngine::Start(
   // to the encoder.
   encoder_stopped_.store(false);
   video_write_logged_first_error_.store(false);
-  encoder_thread_ = std::thread([this, warn_sid] {
+  // The user's 30 / 60 fps setting. WGC delivers at the display's cadence
+  // (up to 144+ Hz on a busy screen), so frames arriving before the next slot
+  // are dropped here, before the encoder sees them.
+  const int paced_fps = request.frame_rate;
+  encoder_thread_ = std::thread([this, warn_sid, paced_fps] {
     auto* queue = frame_queue_.get();
     auto* encoder = encoder_.get();
     if (queue == nullptr || encoder == nullptr) {
       return;
     }
+    CaptureFramePacer pacer(paced_fps);
     while (auto frame = queue->Pop()) {
       if (encoder_stopped_.load()) {
         break;
+      }
+      if (!pacer.Keep(frame->timestamp_hns)) {
+        continue;
       }
       // Phase 10.1: an encoder write failure mid-record used to be
       // discarded — a dead encoder kept "recording" with no signal until

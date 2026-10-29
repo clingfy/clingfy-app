@@ -161,6 +161,7 @@ add_library(runner_bridge STATIC
   "Capture/PreRecordingBar/pre_recording_bar_popover.cpp"
   "Capture/PreRecordingBar/pre_recording_bar_popover_model.cpp"
   "Capture/recording_clock.cpp"
+  "Capture/capture_frame_pacer.cpp"
   "Capture/recording_engine.cpp"
   "Capture/recording_project_reader.cpp"
   "Capture/recording_project_writer.cpp"

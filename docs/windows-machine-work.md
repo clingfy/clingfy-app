@@ -362,6 +362,34 @@ The golden test only proves the CPU matrix, though. **Done:**
 
 ---
 
+## ~~W9. Capture frame-rate control (30 / 60 fps)~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The Frame rate dropdown was hidden on Windows because `setCaptureFrameRate`
+is a no-op. Dart already sends the setting as `startRecording`'s `frameRate`,
+but Windows only used it as the encoder's rate attribute: WGC delivers a frame
+whenever the display composes one, so a busy 144 Hz screen recorded at up to
+144 fps whatever was picked.
+
+**Done:** `CaptureFramePacer` drops frames that arrive before the next slot,
+in the recording drain loop, on a grid anchored at the first kept frame
+(jitter-tolerant, snaps forward after a gap, quarter-interval slack). The
+dropdown shows on Windows. `setCaptureFrameRate` stays a no-op natively: the
+value travels with `startRecording`.
+
+`setRecordingQuality` (the other half of the TODO) has no caller in the Dart
+UI on either platform, so there is nothing to show.
+
+**Tests:** the pacer (60 Hz -> 30 keeps every other frame; 60-240 Hz sources
+capped at 30 / 60 within a frame over 10 s; slower sources untouched; +/-1.5 ms
+jitter neither drops nor adds; no burst after a 2 s gap), the engine suite, and
+the Windows dropdown visible in `windows_control_hides_test.dart`.
+
+**Not checked:** a recording of a busy 144 Hz screen measured with ffprobe.
+
+---
+
 ## Not briefed yet
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists
