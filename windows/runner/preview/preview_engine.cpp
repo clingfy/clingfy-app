@@ -966,7 +966,12 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   }
   impl_->audio_separated =
       !impl_->mic_audio_path.empty() || !impl_->system_audio_path.empty();
-  UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+  // VIDEO_SUPPORT lets the edited-playback reader decode on this device
+  // (#296: a GPU copy into the compositor instead of a system-memory
+  // upload). A device that refuses it is retried without: the reader then
+  // decodes on the CPU, as it always has.
+  UINT flags =
+      D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
   const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1,
                                       D3D_FEATURE_LEVEL_11_0,
                                       D3D_FEATURE_LEVEL_10_1};
@@ -976,6 +981,14 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
       ARRAYSIZE(levels), D3D11_SDK_VERSION,
       impl_->d3d_device.ReleaseAndGetAddressOf(), nullptr,
       impl_->d3d_context.ReleaseAndGetAddressOf());
+  if (FAILED(hr)) {
+    flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    hr = ::D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels,
+        ARRAYSIZE(levels), D3D11_SDK_VERSION,
+        impl_->d3d_device.ReleaseAndGetAddressOf(), nullptr,
+        impl_->d3d_context.ReleaseAndGetAddressOf());
+  }
   {
     char buf[64];
     std::snprintf(buf, sizeof(buf),
@@ -3068,7 +3081,10 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
       clip::SourceMsForEditedMs(edited_ms, impl->clip_ranges);
 
   if (impl->edited_reader == nullptr) {
-    impl->edited_reader = PreviewSourceReader::Create(impl->video_path);
+    // Decode on the preview's own device so frames reach the compositor
+    // with a GPU copy (#296); falls back to the CPU reader on its own.
+    impl->edited_reader =
+        PreviewSourceReader::Create(impl->video_path, impl->d3d_device.Get());
     if (impl->edited_reader == nullptr) {
       // A real failure the user should see: the stitched preview can't open its
       // own reader on the recording, so an edited project would show nothing.
@@ -3078,6 +3094,11 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
           "preview will be blank (the export is unaffected)");
       return false;  // soft-fail: nothing to draw, MediaPlayer path unaffected
     }
+    clingfy::bridge::NativeLogPublisher::Instance().Debug(
+        "Preview", std::string("stitched preview decodes on the ") +
+                       (impl->edited_reader->gpu() ? "GPU" : "CPU") + " (" +
+                       std::to_string(impl->edited_reader->width()) + "x" +
+                       std::to_string(impl->edited_reader->height()) + ")");
   }
   PreviewSourceReader* reader = impl->edited_reader.get();
 
@@ -3092,17 +3113,17 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   impl->stale_streak = 0;
   impl->awaiting_chase_frame = false;
   impl->last_chase_seek = {};  // a fresh position starts at parity
-  std::vector<BYTE> bgra;
+  // Decoded frames are held, not copied: only the one shown is uploaded.
+  PreviewDecodedFrame frame;
   bool have_frame = false;
   for (int guard = 0; guard < 600; ++guard) {
-    std::vector<BYTE> next;
-    std::int64_t next_ts = 0;
-    if (!reader->ReadNextFrame(&next, &next_ts)) {
+    PreviewDecodedFrame next;
+    if (!reader->ReadNextSample(&next)) {
       break;  // EOS — keep the last frame decoded before it
     }
-    bgra = std::move(next);
+    frame = std::move(next);
     have_frame = true;
-    if (next_ts >= source_ms) {
+    if (frame.ts_ms >= source_ms) {
       break;  // reached the target frame
     }
   }
@@ -3121,11 +3142,13 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   }
   impl->last_video_width.store(reader->width());
   impl->last_video_height.store(reader->height());
-  // Upload the decoded BGRA straight into the compositor's video texture — the
-  // same seam the headless compositor tests fill (no WinRT frame surface).
-  impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
-                                       nullptr, bgra.data(),
-                                       reader->width() * 4u, 0);
+  // Into the compositor's video texture — a GPU copy on the GPU path, the
+  // system-memory upload the headless compositor tests use otherwise.
+  if (!reader->UploadFrame(frame, impl->d3d_context.Get(),
+                           impl->compositor.video_texture())) {
+    NoteRenderFailure(impl, "edited_upload");
+    return false;
+  }
 
   impl->edited_pos_ms = edited_ms;
   // Overlays (cursor / zoom / camera) are SOURCE-keyed, so pass the frame's
@@ -3280,7 +3303,8 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
   // Shared render tail: upload the decoded frame + compose it at its edited
   // position (overlays are SOURCE-keyed, so pass the frame's source time; Dart
   // sees the EDITED position + duration). Returns false (→ kIdle) on failure.
-  const auto emit = [&](std::vector<BYTE>& bgra, std::int64_t source_ms,
+  const auto emit = [&](const PreviewDecodedFrame& frame,
+                        std::int64_t source_ms,
                         std::int64_t edited_ms) -> bool {
     if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
             impl->d3d_device.Get(), impl->d2d_context.Get(), reader->width(),
@@ -3300,9 +3324,11 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     }
     impl->last_video_width.store(reader->width());
     impl->last_video_height.store(reader->height());
-    impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
-                                         nullptr, bgra.data(),
-                                         reader->width() * 4u, 0);
+    if (!reader->UploadFrame(frame, impl->d3d_context.Get(),
+                             impl->compositor.video_texture())) {
+      NoteRenderFailure(impl, "pacer_upload");
+      return false;
+    }
     // Adaptive budget: the edited-time distance between presented frames IS
     // the source's frame interval (the edited timeline is contiguous, and a
     // cut boundary still advances by one frame). Clamped so a seek jump or
@@ -3332,7 +3358,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
                : PaceStep::kRendered;
   };
 
-  // Decoding is NOT free (ReadNextFrame fully decodes each frame), so cap
+  // Decoding is NOT free (ReadNextSample fully decodes each frame), so cap
   // forward reads at kMaxSkip per call: a long cut gap / keyframe lead-in then
   // returns kSkipping so the pacer RELEASES render_mutex between chunks (keeping
   // Pause/Seek/Close responsive) and steps again. The reader position + reorder
@@ -3362,12 +3388,12 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     constexpr std::int64_t kGapSeekThresholdMs = 3000;
     for (int i = 0; i < kMaxSkip; ++i) {
       if (shutting_down_.load()) return PaceStep::kIdle;
-      std::vector<BYTE> bgra;
-      std::int64_t ts_ms = 0;
-      if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+      PreviewDecodedFrame frame;
+      if (!reader->ReadNextSample(&frame)) {
         NotifyEditedPlaybackCompleteLocked(impl);  // end of source
         return PaceStep::kIdle;
       }
+      const std::int64_t ts_ms = frame.ts_ms;
       if (ts_ms < impl->edited_min_source_ms) {
         continue;  // gap-seek keyframe lead-in — never re-emit pre-gap frames
       }
@@ -3410,7 +3436,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       }
       if (chase.action == PacerChaseAction::kDiscard) continue;
       impl->awaiting_chase_frame = false;
-      return step_for_emit(emit(bgra, ts_ms, *edited), *edited);
+      return step_for_emit(emit(frame, ts_ms, *edited), *edited);
     }
     return PaceStep::kSkipping;
   }
@@ -3428,9 +3454,8 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       NotifyEditedPlaybackCompleteLocked(impl);  // all ranges emitted
       return PaceStep::kIdle;
     }
-    std::vector<BYTE> bgra;
-    std::int64_t ts_ms = 0;
-    if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+    PreviewDecodedFrame frame;
+    if (!reader->ReadNextSample(&frame)) {
       // A range ended at source EOS — advance to the next timeline range.
       impl->edited_reorder_base_ms +=
           impl->clip_ranges[impl->edited_range_idx].DurationMs();
@@ -3446,6 +3471,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       impl->zoom = ZoomState{};
       continue;
     }
+    const std::int64_t ts_ms = frame.ts_ms;
     const auto& r = impl->clip_ranges[impl->edited_range_idx];
     if (ts_ms >= r.source_out_ms) {
       // Past this range's window → advance + seek (backward) to the next range.
@@ -3473,7 +3499,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     impl->stale_streak = chase.next_stale_streak;
     if (chase.action == PacerChaseAction::kDiscard) continue;
     impl->awaiting_chase_frame = false;
-    return step_for_emit(emit(bgra, ts_ms, edited), edited);
+    return step_for_emit(emit(frame, ts_ms, edited), edited);
   }
   return PaceStep::kSkipping;
 }

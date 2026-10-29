@@ -512,6 +512,44 @@ a pick and from the button.
 
 ---
 
+## W13. One audio clock for every preview — in progress (owner's call 2026-10-30)
+
+*The owner chose to converge: every preview, uncut ones included, plays
+through Clingfy's own audio renderer, so mic gain above 0 dB, voice cleanup
+and echo removal are heard before the first cut. Design:
+`docs/decisions/windows-editing-step4-7-preview-audio.md` D6.1.*
+
+### W13a. GPU decode for the stitched preview (#296) — DONE 2026-10-30
+
+Convergence moves every preview onto the stitched path's own decoder, which
+decoded on the CPU. Measured first (opt-in
+`PreviewSourceReaderBench.SustainedDecodeRate`, H.264 60 fps clips, i5-1135G7
+/ Iris Xe, decode + copy into the compositor texture):
+
+| Source | CPU path | GPU path |
+|---|---|---|
+| 1920x1080 | 85 fps | 584 fps |
+| 2560x1440 | 62 fps | 338 fps |
+| 3840x2160 | 24 fps | 152 fps |
+
+So converging on the CPU path would have halved the frame rate of every
+uncut 4K preview, which MediaPlayer plays smoothly today.
+
+**Done:** `PreviewSourceReader::Create(path, device)` decodes and converts to
+BGRA on the preview's own device (DXGI device manager + advanced video
+processing, ARGB32 out) after probing one frame; any failure falls back to
+the CPU reader. `ReadNextSample` + `UploadFrame` split decoding from the copy,
+so frames the pacer discards are never copied, and the shown one is a
+`CopySubresourceRegion` (padding cropped) instead of a system-memory upload.
+The preview device asks for `VIDEO_SUPPORT`, retrying without it. The log
+says which path a session decodes on.
+
+**Tests:** the GPU path decodes the same frames in order, honours a seek into
+a later window, and undoes its probe read; the CPU fallback still fills the
+texture through `UploadFrame`; the existing CPU tests are unchanged.
+
+---
+
 ## Not briefed yet — triage, 2026-10-29
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
@@ -534,8 +572,7 @@ screenshots a false oracle, so these cannot be verified unsupervised:
   speaker-echo removal. Both need a host for the DSP on the passthrough path,
   which `docs/decisions/windows-editing-step4-7-preview-audio.md` (D6.1)
   blocks on the preview audio clock, not the maths.
-- GPU-end-to-end preview decode (#296): the compositor's upload seam needs a
-  redesign first.
+- ~~GPU-end-to-end preview decode (#296).~~ Done as W13a.
 
 **Parked by an earlier decision:** area selection remembered across restarts,
 window capture following resizes, crash salvage via fragmented MP4, the true
