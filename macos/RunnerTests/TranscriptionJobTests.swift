@@ -150,6 +150,64 @@ final class TranscriptionJobTests: XCTestCase {
     XCTAssertEqual(merged.count, 2, "a minute apart is a genuine repeat")
   }
 
+  /// Seen live on the 1.2.1 end-to-end run: the speakers' copy came back as
+  /// one sentence and the microphone's as two halves, so no pair matched and
+  /// every word was captioned twice. The halves are bleed of the sentence.
+  func testDropsBleedThatWhisperSplitDifferently() {
+    let merged = TranscriptionJob.merge(
+      mic: [
+        seg(1050, 2900, "Hello, this is a Clingfy test."),
+        seg(3100, 4800, "We are checking that subtitles work."),
+      ],
+      system: [
+        seg(1000, 4800, "Hello, this is a Clingfy test. We are checking that subtitles work.")
+      ])
+    XCTAssertEqual(merged.count, 1)
+    XCTAssertEqual(merged.first?.source, .system)
+    XCTAssertFalse(merged.first!.text.contains("\n"), "captioned once, not twice")
+  }
+
+  /// The mic hears the speakers, and mishears some words: live, the system
+  /// copy said "Klingfy" and the mic copy "cling-free". Still bleed.
+  func testDropsBleedWithAMisheardWord() {
+    let merged = TranscriptionJob.merge(
+      mic: [seg(1400, 3700, "Hello, this is a cling-free test.")],
+      system: [seg(1400, 3740, "Hello, this is a Klingfy test.")])
+    XCTAssertEqual(merged.count, 1)
+    XCTAssertEqual(merged.first?.source, .system)
+    XCTAssertFalse(merged.first!.text.contains("\n"))
+  }
+
+  /// The other way round: one mic sentence, two system halves.
+  func testDropsBleedWhenTheSystemCopyIsTheOneSplit() {
+    let merged = TranscriptionJob.merge(
+      mic: [seg(1000, 4800, "Hello, this is a Clingfy test. We are checking that subtitles work.")],
+      system: [
+        seg(1000, 2900, "Hello, this is a Clingfy test."),
+        seg(3100, 4800, "We are checking that subtitles work."),
+      ])
+    XCTAssertEqual(merged.map(\.source), [.system, .system])
+  }
+
+  /// A short reply in the room is not dropped because its word also appears
+  /// in what the other side was saying.
+  func testKeepsAShortMicReplyInsideASystemSentence() {
+    let merged = TranscriptionJob.merge(
+      mic: [seg(6000, 6400, "yes")],
+      system: [seg(3000, 9000, "so the answer to that question is yes we think")])
+    XCTAssertEqual(merged.count, 1, "simultaneous, so one cue")
+    XCTAssertEqual(merged.first?.source, .mixed, "the reply is kept beside the sentence")
+    XCTAssertTrue(merged.first!.text.hasSuffix("\nyes"))
+  }
+
+  /// Different words at the same time are still two speakers.
+  func testKeepsADifferentMicSentenceOverlappingSystemAudio() {
+    let merged = TranscriptionJob.merge(
+      mic: [seg(1000, 4000, "can you all see my screen now")],
+      system: [seg(1000, 4000, "welcome everyone to the weekly meeting")])
+    XCTAssertEqual(merged.first?.source, .mixed, "both lines kept")
+  }
+
   func testMicOnlyRecordingKeepsEverything() {
     let merged = TranscriptionJob.merge(
       mic: [seg(0, 2000, "one"), seg(3000, 5000, "two")], system: [])
