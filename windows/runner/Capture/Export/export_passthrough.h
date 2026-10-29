@@ -273,6 +273,10 @@ enum class PassthroughError {
   // "cancelled" message) so the Dart side classifies a clean user cancel by
   // stable code rather than by message sniffing.
   kCancelled,
+  // W2: a GIF over the 60 s cap of exported duration, refused before any
+  // output was created. `gif_duration_ms` / `gif_max_duration_ms` carry both
+  // lengths. Maps to EXPORT_GIF_TOO_LONG. Never retried.
+  kGifTooLong,
 };
 
 struct PassthroughResult {
@@ -294,6 +298,10 @@ struct PassthroughResult {
   std::int64_t disk_required_bytes = -1;
   std::int64_t disk_available_bytes = -1;
   std::string disk_checked_path;
+  // W2: populated when error == kGifTooLong. The measured exported length
+  // and the cap it went over, both in ms.
+  std::int64_t gif_duration_ms = -1;
+  std::int64_t gif_max_duration_ms = -1;
   // Standby-resume recovery: true when error == kRenderFailed and the
   // pipeline classified the failure as a lost D3D device (Modern Standby
   // resume, driver reset, TDR — see RenderResult::device_removed). The

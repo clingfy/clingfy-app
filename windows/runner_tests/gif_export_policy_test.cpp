@@ -323,5 +323,55 @@ TEST(GifExportPolicyTest, IntermediateRenderSizeShrinksTheFrameCaptionsAreDrawnF
   EXPECT_EQ(s.height, 270u);
 }
 
+// ---- Length cap -------------------------------------------------------------
+// Mirrors GifExportPolicyTests.swift (the "Length cap" group).
+
+using clip_planner::ClipKeptRange;
+
+ClipKeptRange Range(std::int64_t in_ms, std::int64_t out_ms) {
+  ClipKeptRange r;
+  r.source_in_ms = in_ms;
+  r.source_out_ms = out_ms;
+  return r;
+}
+
+TEST(GifExportPolicyTest, TheCapIsSixtySecondsOfExportedTime) {
+  // Dart's kGifMaxExportDurationMs and Swift's maxExportedDurationMs are the
+  // same number; keep all three equal.
+  EXPECT_EQ(kGifMaxExportedDurationMs, 60'000);
+  EXPECT_EQ(kGifDurationCapSlackMs, 100);
+}
+
+TEST(GifExportPolicyTest, NoClipsMeansTheWholeRecording) {
+  EXPECT_EQ(GifExportedDurationMs({}, 90'000), 90'000);
+  // A nonsense negative duration never reports a negative length.
+  EXPECT_EQ(GifExportedDurationMs({}, -5), 0);
+}
+
+TEST(GifExportPolicyTest, ClipsSumTheirKeptTimeInAnyOrder) {
+  const ClipKeptRange a = Range(0, 10'000);
+  const ClipKeptRange b = Range(30'000, 45'000);
+  EXPECT_EQ(GifExportedDurationMs({a, b}, 90'000), 25'000);
+  EXPECT_EQ(GifExportedDurationMs({b, a}, 90'000), 25'000);
+}
+
+TEST(GifExportPolicyTest, ARangePastTheRecordingIsClamped) {
+  // A stale range past the end of the recording counts only what exists.
+  EXPECT_EQ(GifExportedDurationMs({Range(50'000, 200'000)}, 70'000), 20'000);
+  // Entirely past the end, or inverted, or before zero: nothing / the overlap.
+  EXPECT_EQ(GifExportedDurationMs({Range(80'000, 90'000)}, 70'000), 0);
+  EXPECT_EQ(GifExportedDurationMs({Range(10'000, 5'000)}, 70'000), 0);
+  EXPECT_EQ(GifExportedDurationMs({Range(-4'000, 6'000)}, 70'000), 6'000);
+}
+
+TEST(GifExportPolicyTest, TheBoundaryAndTheSlack) {
+  // Exactly the cap exports, and the slack means the backstop never refuses
+  // what the dialog allowed. Past the slack, it refuses.
+  EXPECT_FALSE(GifExceedsDurationCap(60'000));
+  EXPECT_FALSE(GifExceedsDurationCap(60'000 + kGifDurationCapSlackMs));
+  EXPECT_TRUE(GifExceedsDurationCap(60'001 + kGifDurationCapSlackMs));
+  EXPECT_FALSE(GifExceedsDurationCap(0));
+}
+
 }  // namespace
 }  // namespace clingfy::capture::export_

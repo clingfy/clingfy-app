@@ -19,6 +19,7 @@
 #include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_pipeline.h"
+#include "Capture/Export/gif_export_policy.h"
 #include "Capture/Export/mic_cleanup.h"
 #include "Capture/Zoom/zoom_manual_store.h"
 #include "Capture/recording_project_reader.h"
@@ -673,7 +674,16 @@ PassthroughResult ExportPassthroughCopy(
                 (rm_ec ? " (" + rm_ec.message() + ")" : ""));
       }
       out.resolved_destination_path = destination.u8string();
-      if (render_result.disk_full) {
+      if (render_result.gif_too_long) {
+        // Refused by design before rendering, not a failure: a distinct code
+        // and both lengths, and never the device-loss retry.
+        out.error = PassthroughError::kGifTooLong;
+        out.gif_duration_ms = render_result.gif_duration_ms;
+        out.gif_max_duration_ms = kGifMaxExportedDurationMs;
+        out.message = "GIFs can be at most " +
+                      std::to_string(kGifMaxExportedDurationMs / 1000) +
+                      " seconds long.";
+      } else if (render_result.disk_full) {
         // The encoder hit a disk-full HRESULT mid-write. No preflight
         // estimate exists at this point (required stays -1); the router
         // falls back to this self-contained message.

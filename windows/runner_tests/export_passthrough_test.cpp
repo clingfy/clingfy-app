@@ -64,7 +64,8 @@ TEST(ShouldRetryExportAfterDeviceRemovedTest, OtherOutcomesNeverRetry) {
   for (const auto error :
        {PassthroughError::kNone, PassthroughError::kInputMissing,
         PassthroughError::kNoDestination, PassthroughError::kCopyFailed,
-        PassthroughError::kDiskFull, PassthroughError::kCancelled}) {
+        PassthroughError::kDiskFull, PassthroughError::kCancelled,
+        PassthroughError::kGifTooLong}) {
     // device_removed=true is inconsistent with these outcomes, but the gate
     // must be strict on kRenderFailed regardless.
     EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(

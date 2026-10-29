@@ -248,6 +248,12 @@ struct RenderResult {
   // router retries the whole export ONCE on a fresh device when this is
   // set. The 55-minute-recording incident is this exact class.
   bool device_removed = false;
+  // W2: true when a GIF export was refused because its exported duration is
+  // over `kGifMaxExportedDurationMs` (+ slack). Refused BEFORE any encoder or
+  // output file is created. `gif_duration_ms` carries the measured length.
+  // Never a device loss, so never retried.
+  bool gif_too_long = false;
+  std::int64_t gif_duration_ms = -1;
 };
 
 // Phase 10.4 — pure classifier: does this encoder HRESULT mean the

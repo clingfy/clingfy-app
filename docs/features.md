@@ -104,7 +104,7 @@ there, so there is nothing to ship).
 
 | Feature | What it does | macOS | Windows (beta) |
 |---|---|---|---|
-| Formats | MP4, MOV, animated GIF. GIF: Small / Medium / Large size presets, at most 60 s long, rendered in one pass on macOS. | ✅ | ✅ (GIF: no native length backstop yet; the dialog still refuses over 60 s) |
+| Formats | MP4, MOV, animated GIF. GIF: Small / Medium / Large size presets, at most 60 s long, rendered in one pass on macOS. | ✅ | ✅ |
 | Codecs | HEVC or H.264. | ✅ | 🚧 |
 | Resolution presets | Auto / 1080p / 1440p / 4K / 8K / custom. | ✅ | 🚧 |
 | Bitrate control | Auto / low / medium / high. | ✅ | 🚧 |

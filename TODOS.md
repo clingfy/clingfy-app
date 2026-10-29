@@ -169,14 +169,6 @@ finished or cancelled, or a buffer being tagged while it returns to the pool.
 
 ## Export — GIF
 
-### GIF length cap has no Windows backstop — code (Windows machine)
-
-Since 2026-10-20 a GIF export is capped at 60 s of exported duration
-(`kGifMaxExportDurationMs`, `GifExportPolicy.maxExportedDurationMs`). The
-shared dialog refuses past it on both platforms. On macOS the exporter also
-refuses, with `EXPORT_GIF_TOO_LONG`. Windows has no native backstop yet.
-**Do this on a Windows machine:** **W2 in `docs/windows-machine-work.md`**.
-
 ### ~~GIF output checked by eye only at Small and Large~~ — DONE 2026-10-26
 
 `ExportEngineTests.testExportsGifProofsForVisualInspection` exports every
@@ -1080,6 +1072,17 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **The GIF length cap has a Windows native backstop** (2026-10-29, W2 in
+  `docs/windows-machine-work.md`). `RenderComposedExport` works out the
+  exported length from the clips and the file (`GifExportedDurationMs`, value
+  for value with Swift) and refuses over 60 s + 100 ms slack before any encoder
+  or output file exists. The reply is `EXPORT_GIF_TOO_LONG` with
+  `{durationMs, maxDurationMs}`, the macOS shape, and it is never retried as a
+  device loss. A long recording trimmed under 60 s still exports, and MP4 / MOV
+  are untouched. Pinned by `gif_export_policy_test.cpp`, `ExportPipelineTest`
+  (the refusal leaves no file, trim, MP4/MOV, passthrough mapping) and
+  `ReplyForExportOutcomeGifTooLongEmitsMacShapedDetails`.
 
 - **Windows GIF size presets, long-edge cap and drift-free timing** (2026-10-29,
   W1 in `docs/windows-machine-work.md`). Small / Medium / Large cap the encoded

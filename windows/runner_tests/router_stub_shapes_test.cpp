@@ -594,6 +594,42 @@ TEST(StubShapesTest, ReplyForExportOutcomeMapsCancelToExportCancelled) {
          "message-classifier also reads it as a clean cancel";
 }
 
+// W2: a GIF over the length cap replies EXPORT_GIF_TOO_LONG with the exact
+// macOS shape (ExportEngine.swift): message "GIFs can be at most 60 seconds
+// long." and details {durationMs, maxDurationMs} as integers. Dart's
+// post-processing controller renders the localized "GIFs can be at most 60
+// seconds long..." from these details.
+TEST(StubShapesTest, ReplyForExportOutcomeGifTooLongEmitsMacShapedDetails) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error = clingfy::capture::export_::PassthroughError::kGifTooLong;
+  outcome.message = "GIFs can be at most 60 seconds long.";
+  outcome.gif_duration_ms = 61'250;
+  outcome.gif_max_duration_ms = 60'000;
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "C:\\out");
+
+  EXPECT_FALSE(reply.success_called);
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportGifTooLong);
+  EXPECT_EQ(reply.error_code, std::string("EXPORT_GIF_TOO_LONG"));
+  EXPECT_EQ(reply.error_message, "GIFs can be at most 60 seconds long.");
+  const auto* details =
+      std::get_if<flutter::EncodableMap>(&reply.error_details);
+  ASSERT_NE(details, nullptr) << "details must be a map";
+  EXPECT_EQ(details->size(), 2u);
+  const auto get_i64 = [details](const char* key) {
+    const auto it = details->find(flutter::EncodableValue(key));
+    EXPECT_NE(it, details->end()) << "missing details key: " << key;
+    return it != details->end() ? std::get<std::int64_t>(it->second)
+                                : std::int64_t{-1};
+  };
+  EXPECT_EQ(get_i64("durationMs"), 61'250);
+  EXPECT_EQ(get_i64("maxDurationMs"), 60'000);
+}
+
 // A preflight disk-full replies EXPORT_DISK_FULL with the macOS-shaped
 // details map: {stage, reason, context:{tempPath, *TempBytes int64,
 // *TempFormatted strings}} — the exact shape ExportPrep.swift emits and
