@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <optional>
 
+#include "Capture/Export/export_format.h"
+#include "Capture/Export/gif_export_policy.h"
+
 namespace clingfy::capture::export_ {
 
 namespace {
@@ -159,14 +162,15 @@ PixelSize ResolveExportPixelSize(SizeF source, const std::string& layout,
                                  const std::string& resolution,
                                  const std::string& format,
                                  const std::string& gif_size) {
-  // `format` / `gif_size` are intentionally unread. See the header: Windows
-  // renders a GIF at the full canvas, so there is no cap to apply and no
-  // branch to take. They stay in the signature because the Dart payload sends
-  // them and because a future Windows GIF size cap would land exactly here —
-  // next to the reasoning for why there isn't one today.
-  (void)format;
-  (void)gif_size;
-  return ToEvenPixelSize(ResolveTargetSize(source, layout, resolution));
+  const PixelSize canvas =
+      ToEvenPixelSize(ResolveTargetSize(source, layout, resolution));
+  if (ResolveExportExtension(format) != ".gif") {
+    return canvas;
+  }
+  return GifIntermediateRenderSize(
+      SizeF{static_cast<double>(canvas.width),
+            static_cast<double>(canvas.height)},
+      GifMaxLongEdgeForSizePreset(gif_size));
 }
 
 }  // namespace clingfy::capture::export_

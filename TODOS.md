@@ -169,15 +169,6 @@ finished or cancelled, or a buffer being tagged while it returns to the pool.
 
 ## Export — GIF
 
-### Windows GIF has no size presets, cap or drift-free timing — code (Windows machine)
-
-*Checked 2026-10-20.* macOS shipped all three in 1.0.7 (#319, #326):
-480 / 720 / 1080 long-edge caps, a drift-free `DelayAccumulator`, and the size
-picker. Windows encodes the full canvas whatever the preset, and its GIFs play
-about 5% slow. Its comments also still say macOS has no real GIF encoder.
-**Do this on a Windows machine.** The full brief, with files, tests and the
-done-when list, is **W1 in `docs/windows-machine-work.md`**.
-
 ### GIF length cap has no Windows backstop — code (Windows machine)
 
 Since 2026-10-20 a GIF export is capped at 60 s of exported duration
@@ -1089,6 +1080,17 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows GIF size presets, long-edge cap and drift-free timing** (2026-10-29,
+  W1 in `docs/windows-machine-work.md`). Small / Medium / Large cap the encoded
+  long edge at 480 / 720 / 1080 (unknown or empty: 1080), value for value with
+  `GifExportPolicy.swift`. The frame is composited at the full canvas and the
+  WIC encoder downscales it (Fant), so padding and camera keep their
+  proportions; `resolveExportSize` reports the encoded size. Delays come from
+  `GifDelayAccumulator`, so a 15 fps GIF stamps 7, 6, 7… and a 10 s export is
+  1000 cs, not 1050. Pinned by `gif_export_policy_test.cpp`,
+  `ResolveExportPixelSizeTest` and `ExportPipelineTest.GifSizePresetsCapTheEncodedLongEdge`
+  (decoded size per preset and the cumulative delay).
 
 - **The dead pre-styled camera pass is deleted** (2026-10-29). `runStyledPass`, the
   styled intermediate renderer and its validation, and the `cameraAssetIsPreStyled`

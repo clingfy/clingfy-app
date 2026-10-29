@@ -511,6 +511,7 @@ PassthroughResult ExportPassthroughCopy(
     std::optional<fs::path> echo_mic_temp;
     render.source_video_path = read.project->screen_path;
     render.destination_path = destination.u8string();
+    render.gif_size = input.gif_size;
     render.layout = input.layout;
     render.resolution = input.resolution;
     render.fit = input.fit;

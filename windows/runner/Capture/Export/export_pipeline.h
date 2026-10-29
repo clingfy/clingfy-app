@@ -80,6 +80,12 @@ struct RenderRequest {
   // selects the container/encoder from this extension (.gif => WIC GifEncoder).
   std::string destination_path;
 
+  // GIF size preset wire value ("small" / "medium" / "large"). A .gif output
+  // is composited at the canvas and downscaled by the encoder to
+  // `GifIntermediateRenderSize(canvas, GifMaxLongEdgeForSizePreset(gif_size))`,
+  // the same size `ResolveExportPixelSize` reports. Ignored for video.
+  std::string gif_size;
+
   // Composition selectors, verbatim from the export args. Parsed through
   // the `export_geometry` helpers so framing matches macOS exactly.
   std::string layout;
@@ -218,7 +224,8 @@ struct RenderResult {
   // FlutterError `details` for triage.
   std::string message;
 
-  // Populated on success for logging / tests.
+  // Populated on success for logging / tests. The ENCODED size: for a GIF,
+  // the capped size the encoder downscaled to, not the composite canvas.
   std::uint32_t output_width = 0;
   std::uint32_t output_height = 0;
   std::uint64_t video_frames_written = 0;

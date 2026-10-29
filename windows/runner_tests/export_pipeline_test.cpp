@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -34,6 +36,8 @@
 
 #include "Audio/audio_mixer.h"
 #include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Export/export_geometry.h"
+#include "Capture/Export/export_passthrough.h"
 #include "Capture/captured_video_frame.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
@@ -967,6 +971,9 @@ struct GifProbeResult {
   UINT width = 0;
   UINT height = 0;
   UINT frame_count = 0;
+  // Per-frame Graphic Control Extension delay (centiseconds), one entry per
+  // frame; a frame whose delay could not be read records 0.
+  std::vector<UINT> delays_cs;
 };
 
 GifProbeResult ProbeGif(const std::wstring& path) {
@@ -998,6 +1005,22 @@ GifProbeResult ProbeGif(const std::wstring& path) {
               out.height = h;
               out.ok = true;
             }
+          }
+          for (UINT i = 0; i < count; ++i) {
+            UINT delay = 0;
+            ComPtr<IWICBitmapFrameDecode> f;
+            ComPtr<IWICMetadataQueryReader> meta;
+            if (SUCCEEDED(decoder->GetFrame(i, f.GetAddressOf())) &&
+                SUCCEEDED(f->GetMetadataQueryReader(meta.GetAddressOf()))) {
+              PROPVARIANT pv;
+              ::PropVariantInit(&pv);
+              if (SUCCEEDED(meta->GetMetadataByName(L"/grctlext/Delay", &pv)) &&
+                  pv.vt == VT_UI2) {
+                delay = pv.uiVal;
+              }
+              ::PropVariantClear(&pv);
+            }
+            out.delays_cs.push_back(delay);
           }
         }
       }
@@ -1456,6 +1479,203 @@ TEST(ExportPipelineTest, GifDestinationProducesReadableAnimatedGif) {
 
   std::error_code ec;
   fs::remove_all(dir, ec);
+}
+
+// W1 (docs/windows-machine-work.md): each GIF size preset caps the encoded
+// long edge — Small 480, Medium 720, Large 1080, unknown/empty 1080 — while
+// the composite stays at the full canvas. The decoded GIF must be exactly
+// what `ResolveExportPixelSize` reported, or burned-in captions laid out for
+// that answer land at the wrong scale. Also pins the drift-free delays: every
+// frame but the last is stamped 6 or 7 cs (per-gap rounding stamped all 7s).
+TEST(ExportPipelineTest, GifSizePresetsCapTheEncodedLongEdge) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_sizes");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  struct Case {
+    const char* gif_size;
+    UINT width;
+    UINT height;
+  };
+  // youtube169 at p1080 composites a 1920x1080 canvas from the 64x48 source.
+  const Case cases[] = {{"small", 480, 270},
+                        {"medium", 720, 406},
+                        {"large", 1080, 608},
+                        {"", 1080, 608},
+                        {"nonsense", 1080, 608}};
+  int index = 0;
+  for (const Case& c : cases) {
+    const auto dest =
+        (dir / ("out_" + std::to_string(index++) + ".gif")).u8string();
+    RenderRequest request;
+    request.source_video_path = fs::u8path(source).wstring();
+    request.destination_path = dest;
+    request.gif_size = c.gif_size;
+    request.layout = "youtube169";
+    request.resolution = "p1080";
+    request.fit = "fit";
+    request.fps_hint = kFps;
+
+    const RenderResult result = RenderComposedExport(request);
+    ASSERT_TRUE(result.ok) << c.gif_size << ": " << result.message;
+    EXPECT_EQ(result.output_width, c.width) << "gifSize=" << c.gif_size;
+    EXPECT_EQ(result.output_height, c.height) << "gifSize=" << c.gif_size;
+
+    const PixelSize reported = ResolveExportPixelSize(
+        SizeF{static_cast<double>(kSourceWidth),
+              static_cast<double>(kSourceHeight)},
+        "youtube169", "p1080", "gif", c.gif_size);
+    EXPECT_EQ(reported.width, c.width) << "gifSize=" << c.gif_size;
+    EXPECT_EQ(reported.height, c.height) << "gifSize=" << c.gif_size;
+
+    const GifProbeResult probe = ProbeGif(fs::u8path(dest).wstring());
+    ASSERT_TRUE(probe.ok) << "gifSize=" << c.gif_size << " is not a readable GIF";
+    EXPECT_EQ(probe.width, c.width) << "gifSize=" << c.gif_size;
+    EXPECT_EQ(probe.height, c.height) << "gifSize=" << c.gif_size;
+    ASSERT_GE(probe.delays_cs.size(), 3u);
+    // Every frame but the last opens a ~1/15 s gap. Their stamped total must
+    // be the true elapsed time to the nearest centisecond: 3 gaps = 20 cs,
+    // where per-gap rounding stamped 21 (and 2 gaps 14 instead of 13).
+    UINT stamped = 0;
+    for (std::size_t i = 0; i + 1 < probe.delays_cs.size(); ++i) {
+      EXPECT_TRUE(probe.delays_cs[i] == 6 || probe.delays_cs[i] == 7)
+          << "gifSize=" << c.gif_size << " frame " << i << " delay "
+          << probe.delays_cs[i];
+      stamped += probe.delays_cs[i];
+    }
+    const double gaps = static_cast<double>(probe.delays_cs.size() - 1);
+    EXPECT_LE(std::fabs(stamped - gaps * 100.0 / 15.0), 0.5)
+        << "gifSize=" << c.gif_size << " stamped " << stamped << " cs over "
+        << gaps << " gaps";
+  }
+
+  // An MP4 of the same request ignores gif_size and keeps the canvas.
+  RenderRequest video;
+  video.source_video_path = fs::u8path(source).wstring();
+  video.destination_path = (dir / "out.mp4").u8string();
+  video.gif_size = "small";
+  video.layout = "youtube169";
+  video.resolution = "p1080";
+  video.fit = "fit";
+  video.fps_hint = kFps;
+  const RenderResult video_result = RenderComposedExport(video);
+  ASSERT_TRUE(video_result.ok) << video_result.message;
+  EXPECT_EQ(video_result.output_width, 1920u);
+  EXPECT_EQ(video_result.output_height, 1080u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// The `gifSize` arg reaches the encoder through the passthrough layer, not
+// just through a hand-built RenderRequest: `PassthroughInput.gif_size` (what
+// `exportVideo` reads from "gifSize") must come out the other end as a GIF of
+// the preset's size.
+TEST(ExportPipelineTest, PassthroughCarriesGifSizeToTheEncoder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_passthrough");
+  const auto project = dir / "gif-size.clingfyproj";
+  fs::create_directories(project / "capture");
+  const auto source = (project / "capture" / "screen.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  std::ofstream(project / "project.json") << R"({
+  "schemaVersion": 2,
+  "projectId": "gif-size",
+  "createdAt": "2026-10-29T00:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json"
+  }
+})";
+  std::ofstream(project / "capture" / "screen.meta.json")
+      << R"({"width":64,"height":48,"fps":30})";
+  const auto out_dir = dir / "out";
+  fs::create_directories(out_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = out_dir.u8string();
+  input.filename = "Clip";
+  input.format = "gif";
+  input.gif_size = "small";
+  input.layout = "youtube169";
+  input.resolution = "p1080";
+  const PassthroughResult outcome = ExportPassthroughCopy(input);
+  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
+  const GifProbeResult probe =
+      ProbeGif(fs::u8path(outcome.output_path).wstring());
+  ASSERT_TRUE(probe.ok) << outcome.output_path;
+  EXPECT_EQ(probe.width, 480u);
+  EXPECT_EQ(probe.height, 270u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Opt-in visual proof, the Windows counterpart of macOS's
+// `ExportEngineTests.testExportsGifProofsForVisualInspection`. Skipped unless
+// CLINGFY_GIF_PROOF_SOURCE names a real recording (screen .mov / .mp4); writes
+// small.gif / medium.gif / large.gif to CLINGFY_GIF_PROOF_DIR (default: a temp
+// dir, printed) and leaves them there to be opened in a browser and compared
+// against the source for size, duration and sharpness.
+TEST(ExportPipelineTest, GifProofsForVisualInspection) {
+  char* source_env = nullptr;
+  std::size_t source_len = 0;
+  if (_dupenv_s(&source_env, &source_len, "CLINGFY_GIF_PROOF_SOURCE") != 0 ||
+      source_env == nullptr) {
+    GTEST_SKIP() << "set CLINGFY_GIF_PROOF_SOURCE to a real recording";
+  }
+  const std::string source(source_env);
+  std::free(source_env);
+  char* dir_env = nullptr;
+  std::size_t dir_len = 0;
+  fs::path out_dir;
+  if (_dupenv_s(&dir_env, &dir_len, "CLINGFY_GIF_PROOF_DIR") == 0 &&
+      dir_env != nullptr) {
+    out_dir = fs::u8path(dir_env);
+    std::free(dir_env);
+  } else {
+    out_dir = UniqueDir("gif_proof");
+  }
+  fs::create_directories(out_dir);
+
+  for (const char* gif_size : {"small", "medium", "large"}) {
+    const fs::path dest = out_dir / (std::string(gif_size) + ".gif");
+    std::error_code ec;
+    fs::remove(dest, ec);
+    RenderRequest request;
+    request.source_video_path = fs::u8path(source).wstring();
+    request.destination_path = dest.u8string();
+    request.gif_size = gif_size;
+    request.layout = "auto";
+    request.resolution = "auto";
+    request.fit = "fit";
+    request.fps_hint = 60;
+    const RenderResult result = RenderComposedExport(request);
+    ASSERT_TRUE(result.ok) << gif_size << ": " << result.message;
+    const GifProbeResult probe = ProbeGif(dest.wstring());
+    ASSERT_TRUE(probe.ok) << gif_size;
+    UINT total_cs = 0;
+    for (UINT d : probe.delays_cs) {
+      total_cs += d;
+    }
+    std::printf("GIF proof %-6s %ux%u frames=%u stamped=%.2fs -> %s\n",
+                gif_size, probe.width, probe.height, probe.frame_count,
+                total_cs / 100.0, dest.u8string().c_str());
+  }
 }
 
 // Slice 5B: GIF reuses the shared progress emission, so it is monotonic and

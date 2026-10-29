@@ -47,7 +47,11 @@ that points to this file. When a task ships, strike it here, and move its
 
 ---
 
-## W1. GIF export parity with macOS
+## ~~W1. GIF export parity with macOS~~ — DONE 2026-10-29
+
+Shipped on `feat/windows-gif-export-parity`. Kept below as the record of
+what was asked.
+
 
 *Written 2026-10-20 from origin/develop. Line numbers drift; search for the
 symbols.*

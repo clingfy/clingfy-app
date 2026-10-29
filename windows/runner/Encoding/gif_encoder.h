@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "Capture/Export/gif_export_policy.h"
+
 #include "Encoding/encoder_error.h"
 #include "Encoding/mf_encoder_config.h"
 
@@ -32,11 +34,16 @@ class D3DDevice;
 //     256-color local color table (WIC adaptive palette + error-diffusion
 //     dither).
 //   * no audio.
+//   * encodes at `config.width/height`, which may be SMALLER than the frames
+//     it is handed: the pipeline composites at the full canvas and passes the
+//     size preset's capped size here, so each frame is downscaled (WIC Fant)
+//     before quantizing.
 //   * per-frame delay (centiseconds) is derived from the gap between the
 //     timestamps of the frames it is handed (the pipeline decimates to
-//     ~kGifTargetFps before calling), via a one-frame lookahead, so playback
-//     tracks wall-clock time. An infinite-loop NETSCAPE2.0 application
-//     extension is written once.
+//     ~kGifTargetFps before calling), via a one-frame lookahead and a
+//     `GifDelayAccumulator` that carries the sub-centisecond remainder, so the
+//     stamped total tracks wall-clock time. An infinite-loop NETSCAPE2.0
+//     application extension is written once.
 //
 // Never throws — every WIC / D3D failure is reported through the returned
 // `EncoderError`. The .gif file is created on Open; a Cancel() releases the WIC
@@ -112,6 +119,10 @@ class GifEncoder {
   UINT pending_w_ = 0;
   UINT pending_h_ = 0;
   std::int64_t pending_ts_hns_ = 0;
+
+  // Turns each real gap between kept frames into a delay without the per-gap
+  // rounding drift (a 15 fps stream would otherwise play ~5% slow).
+  clingfy::capture::export_::GifDelayAccumulator delays_;
 
   std::uint64_t frames_written_ = 0;
 };

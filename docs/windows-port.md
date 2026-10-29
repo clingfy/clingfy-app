@@ -796,7 +796,12 @@ on a real Windows box.
   `Encoding/gif_encoder.{h,cpp}`) — composited GPU texture read back to CPU via a
   staging texture, 256-color adaptive palette per frame with error-diffusion
   dither, NETSCAPE2.0 infinite loop, frames decimated to ~15 fps on an ideal grid
-  (`Capture/Export/gif_export_policy.{h,cpp}`).
+  (`Capture/Export/gif_export_policy.{h,cpp}`). The size preset (`gifSize`:
+  small / medium / large) caps the encoded long edge at 480 / 720 / 1080; the
+  frame is composited at the full canvas and WIC downscales it before the
+  palette pass. Per-frame delays come from `GifDelayAccumulator`, so the
+  stamped total tracks wall-clock (7, 6, 7… cs at 15 fps). Both match macOS's
+  `GifExportPolicy.swift`.
 - **Progress / cancel** run the export on a worker thread (`export_session`,
   `export_progress_publisher`); cancel aborts mid-flight, deletes any partial
   output, and resolves the Dart future as a clean cancel. Every export result
@@ -1486,11 +1491,11 @@ Flutter engine.
 | `export_geometry_test.cpp` | Phase 6 Slice 2 resolution/layout/fit math: `ResolveTargetSize` (ported 1:1 from macOS `ExportPrepTests.swift`), `ToEvenPixelSize` (H.264 even-dimension rounding), `ComputeContentRect` (fit/fill scale + centering), `ParseFitMode`, and the `IsIdentityTransform` copy fast-path gate. Pure math, no GPU. |
 | `export_audio_test.cpp` | Phase 6 Slice 4 audio math: `RequiresAudioProcessing` gate (volume `!= 100`, not `!= 0`), `ResolveAudioGainStages` (amplify-only gain dB→linear, attenuate-only volume %, peak-normalize toward target), and the two-stage `ApplyAudioGain` with intermediate int16 clamp + truncate-toward-zero (matches macOS `Int16()`). Pure, no GPU. |
 | `export_format_test.cpp` | Phase 6 Slice 5A/5B pure format/bitrate resolution: `ResolveExportExtension` (`mp4`→`.mp4`, `gif`→`.gif`, else `.mov`), `FormatWasDowngraded` (always false — Windows emits all three natively), and `ResolveVideoBitrateBps` (resolution-aware preset → H.264 bps, clamped). |
-| `gif_export_policy_test.cpp` | Phase 6 Slice 5B GIF sampling/timing: grid-anchored `ShouldKeepGifFrame` / `AdvanceGifEmitTarget` decimation to ~15 fps (incl. a jittered-timestamp regression case), `GifDelayCentiseconds` rounding + 2cs floor + 16-bit ceiling, and `IsGifDestination`. Pure, no GPU. |
+| `gif_export_policy_test.cpp` | Phase 6 Slice 5B GIF sampling/timing: grid-anchored `ShouldKeepGifFrame` / `AdvanceGifEmitTarget` decimation to ~15 fps (incl. a jittered-timestamp regression case), `GifDelayCentiseconds` rounding + 2cs floor + 16-bit ceiling, the drift-free `GifDelayAccumulator`, the size presets / `GifRenderSize` / `GifIntermediateRenderSize` (mirroring `GifExportPolicyTests.swift`), and `IsGifDestination`. Pure, no GPU. |
 | `export_session_test.cpp` | Phase 6 Slice 5A export reentrancy/cancel singleton: `BeginExport` rejects a concurrent export and clears a stale cancel flag; `RequestCancel` / `IsCancelled`; a cancelled export does not pre-cancel the next one. |
 | `export_progress_publisher_test.cpp` | Phase 6 Slice 5A reverse-channel progress: `EmitProgress` is a safe no-op when no method channel is attached (the export worker can outlive teardown), guarding a late tick from dereferencing a freed channel. |
 | `export_passthrough_test.cpp` | Phase 6 Slices 1–5B routing: `ResolveExportDestination` extension/sanitization/collision rules (`.mov`/`.mp4`/`.gif`), the copy-vs-re-encode gate (mov auto/auto byte-copies; mp4 and gif force composition), the input-missing / default-save-folder / cancel-before-work paths. Filesystem-touching, no GPU. |
-| `export_pipeline_test.cpp` | Phase 6 Slices 2–5B heavy round-trip: synthesizes a tiny source `.mov` with the real encoder, runs `RenderComposedExport`, and re-opens the output to assert dimensions, audio carry-through (and gain/volume/normalize level deltas), the `.mp4` container, monotonic progress→1.0, and the GIF path (WIC-probed real `.gif`, audio dropped, frame decimation, cancel removes the partial file). `GTEST_SKIP`s when no GPU / MF encoder is available — visual correctness (orientation, color, dither) stays a human smoke-test. |
+| `export_pipeline_test.cpp` | Phase 6 Slices 2–5B heavy round-trip: synthesizes a tiny source `.mov` with the real encoder, runs `RenderComposedExport`, and re-opens the output to assert dimensions, audio carry-through (and gain/volume/normalize level deltas), the `.mp4` container, monotonic progress→1.0, and the GIF path (WIC-probed real `.gif`, audio dropped, frame decimation, decoded size per size preset and drift-free cumulative delay, cancel removes the partial file). `GTEST_SKIP`s when no GPU / MF encoder is available — visual correctness (orientation, color, dither) stays a human smoke-test. |
 
 ### Why a separate static library
 
