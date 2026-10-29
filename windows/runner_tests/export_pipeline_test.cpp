@@ -31,6 +31,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -173,6 +174,45 @@ bool SynthesizeSource(clingfy::graphics::D3DDevice* device,
     }
   }
 
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// Write a sparse source that LASTS `seconds`: three frames at 0, half way and
+// the end. Cheap to encode however long it is, which is what the GIF length
+// cap tests need (a real 61 s source at 30 fps would be 1830 frames).
+bool SynthesizeLongSource(clingfy::graphics::D3DDevice* device,
+                          const std::string& path, int seconds,
+                          std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device, std::nullopt)) {
+    *skip_reason = "source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t end_hns = static_cast<std::int64_t>(seconds) * 10'000'000;
+  for (const std::int64_t ts : {std::int64_t{0}, end_hns / 2, end_hns}) {
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTexture(device->device(), 0xFF3366CCu);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a source frame texture";
+      return false;
+    }
+    frame.width = kSourceWidth;
+    frame.height = kSourceHeight;
+    frame.timestamp_hns = ts;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "source WriteVideoFrame failed: " + err->message;
+      return false;
+    }
+  }
   if (auto err = encoder.Finalize()) {
     *skip_reason = "source finalize failed: " + err->message;
     return false;
@@ -1620,6 +1660,137 @@ TEST(ExportPipelineTest, PassthroughCarriesGifSizeToTheEncoder) {
   ASSERT_TRUE(probe.ok) << outcome.output_path;
   EXPECT_EQ(probe.width, 480u);
   EXPECT_EQ(probe.height, 270u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// ---- W2: the GIF length backstop ---------------------------------------------
+
+// A GIF over the cap is refused BEFORE any encoder or output file exists, with
+// the measured length on the result. An MP4 of the same source is untouched.
+TEST(ExportPipelineTest, GifOverTheLengthCapIsRefusedBeforeAnyOutput) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_too_long");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeLongSource(&device, source, 61, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  const auto dest = (dir / "out.gif").u8string();
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  bool progressed = false;
+  request.on_progress = [&](double) { progressed = true; };
+  const RenderResult result = RenderComposedExport(request);
+  EXPECT_FALSE(result.ok);
+  EXPECT_TRUE(result.gif_too_long) << result.message;
+  EXPECT_FALSE(result.device_removed);
+  EXPECT_GT(result.gif_duration_ms, 60'100);
+  EXPECT_LT(result.gif_duration_ms, 62'000);
+  EXPECT_FALSE(fs::exists(fs::u8path(dest)))
+      << "a refused GIF must not leave any output file";
+  EXPECT_FALSE(progressed) << "refused before any frame was rendered";
+
+  // MP4 and MOV are unaffected by the GIF cap.
+  for (const char* ext : {"out.mp4", "out.mov"}) {
+    RenderRequest video = request;
+    video.on_progress = {};
+    video.destination_path = (dir / ext).u8string();
+    const RenderResult video_result = RenderComposedExport(video);
+    EXPECT_TRUE(video_result.ok) << ext << ": " << video_result.message;
+    EXPECT_FALSE(video_result.gif_too_long) << ext;
+  }
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// A long recording trimmed under the cap exports: the cap is on EXPORTED time.
+TEST(ExportPipelineTest, LongRecordingTrimmedUnderTheGifCapExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_trimmed");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeLongSource(&device, source, 61, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  const auto dest = (dir / "out.gif").u8string();
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  clip_planner::ClipKeptRange kept;
+  kept.source_in_ms = 0;
+  kept.source_out_ms = 40'000;
+  request.clip_ranges = {kept};
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_FALSE(result.gif_too_long);
+  EXPECT_TRUE(FileStartsWithGifMagic(dest));
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Through the passthrough: a too-long GIF maps to kGifTooLong with both
+// lengths, leaves nothing at the destination, and the device-loss retry gate
+// says no.
+TEST(ExportPipelineTest, PassthroughMapsATooLongGifToGifTooLong) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_too_long_passthrough");
+  const auto project = dir / "long.clingfyproj";
+  fs::create_directories(project / "capture");
+  const auto source = (project / "capture" / "screen.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeLongSource(&device, source, 61, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  std::ofstream(project / "project.json") << R"({
+  "schemaVersion": 2,
+  "projectId": "long",
+  "createdAt": "2026-10-29T00:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json"
+  }
+})";
+  std::ofstream(project / "capture" / "screen.meta.json")
+      << R"({"width":64,"height":48,"fps":30})";
+  const auto out_dir = dir / "out";
+  fs::create_directories(out_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = out_dir.u8string();
+  input.filename = "Long";
+  input.format = "gif";
+  const PassthroughResult outcome = ExportPassthroughCopy(input);
+  EXPECT_EQ(outcome.error, PassthroughError::kGifTooLong) << outcome.message;
+  EXPECT_GT(outcome.gif_duration_ms, 60'100);
+  EXPECT_EQ(outcome.gif_max_duration_ms, 60'000);
+  EXPECT_EQ(outcome.message, "GIFs can be at most 60 seconds long.");
+  EXPECT_TRUE(outcome.output_path.empty());
+  EXPECT_TRUE(fs::is_empty(out_dir)) << "nothing may be left at the destination";
+  EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(outcome, 1, false));
 
   std::error_code ec;
   fs::remove_all(dir, ec);

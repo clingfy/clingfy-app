@@ -57,6 +57,9 @@ inline constexpr const char* kExportError = "EXPORT_ERROR";
 inline constexpr const char* kExportCancelled = "EXPORT_CANCELLED";
 inline constexpr const char* kExportInputMissing = "EXPORT_INPUT_MISSING";
 inline constexpr const char* kExportDiskFull = "EXPORT_DISK_FULL";
+// A GIF export over the 60 s cap of exported duration, refused before any
+// output is created. Details: {durationMs, maxDurationMs}, as macOS sends.
+inline constexpr const char* kExportGifTooLong = "EXPORT_GIF_TOO_LONG";
 inline constexpr const char* kAdvancedCameraExportFailed =
     "ADVANCED_CAMERA_EXPORT_FAILED";
 

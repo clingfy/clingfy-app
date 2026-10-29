@@ -134,6 +134,27 @@ SizeF GifRenderSize(SizeF canvas, double max_long_edge) {
                std::max(1.0, std::round(canvas.height * scale))};
 }
 
+std::int64_t GifExportedDurationMs(
+    const std::vector<clip_planner::ClipKeptRange>& clips,
+    std::int64_t asset_duration_ms) {
+  if (clips.empty()) {
+    return std::max<std::int64_t>(0, asset_duration_ms);
+  }
+  std::int64_t total = 0;
+  for (const auto& range : clips) {
+    const std::int64_t in_ms = std::min(
+        std::max<std::int64_t>(range.source_in_ms, 0), asset_duration_ms);
+    const std::int64_t out_ms = std::min(
+        std::max<std::int64_t>(range.source_out_ms, 0), asset_duration_ms);
+    total += std::max<std::int64_t>(0, out_ms - in_ms);
+  }
+  return total;
+}
+
+bool GifExceedsDurationCap(std::int64_t exported_ms) {
+  return exported_ms > kGifMaxExportedDurationMs + kGifDurationCapSlackMs;
+}
+
 PixelSize GifIntermediateRenderSize(SizeF canvas, double max_long_edge) {
   const SizeF capped = GifRenderSize(canvas, max_long_edge);
   const auto even = [](double value) {

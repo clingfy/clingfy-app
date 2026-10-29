@@ -820,6 +820,24 @@ void ReplyForExportOutcome(
       result.Error(error::kExportCancelled, "Export cancelled.",
                    flutter::EncodableValue(project_path));
       return;
+    case PassthroughError::kGifTooLong: {
+      // W2: refused by design (the macOS backstop's exact code, message and
+      // details), so a Warn, not a failure. Dart shows the localized
+      // "GIFs can be at most 60 seconds long..." from the details.
+      NativeLogPublisher::Instance().Warn(
+          "Export", std::string(error::kExportGifTooLong) + ": " +
+                        std::to_string(outcome.gif_duration_ms) + " ms > " +
+                        std::to_string(outcome.gif_max_duration_ms) + " ms");
+      result.Error(
+          error::kExportGifTooLong, outcome.message,
+          flutter::EncodableValue(flutter::EncodableMap{
+              {flutter::EncodableValue("durationMs"),
+               flutter::EncodableValue(outcome.gif_duration_ms)},
+              {flutter::EncodableValue("maxDurationMs"),
+               flutter::EncodableValue(outcome.gif_max_duration_ms)},
+          }));
+      return;
+    }
     case PassthroughError::kCopyFailed:
     case PassthroughError::kRenderFailed:
       log_failure(error::kExportError, outcome.message);

@@ -20,7 +20,9 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
+#include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/export_geometry.h"
 
 namespace clingfy::capture::export_ {
@@ -124,6 +126,35 @@ SizeF GifRenderSize(SizeF canvas, double max_long_edge = kGifDefaultMaxLongEdge)
 // captions are composited at the wrong scale.
 PixelSize GifIntermediateRenderSize(
     SizeF canvas, double max_long_edge = kGifDefaultMaxLongEdge);
+
+// ---- Length cap (value for value with GifExportPolicy.swift) ----------------
+
+// The longest GIF an export may produce, in ms of EXPORTED duration (after
+// cuts, trims and reordering). A GIF stores every frame as a full indexed
+// image, so length is what makes one huge and slow to encode. Over it the
+// export is refused, never silently cut short. Mirrored by Dart's
+// `kGifMaxExportDurationMs` and Swift's `maxExportedDurationMs`; keep all
+// three equal.
+inline constexpr std::int64_t kGifMaxExportedDurationMs = 60'000;
+
+// How far past the cap the native backstop lets an export through. The dialog
+// measures the player's duration and native the file's, which can disagree by
+// a few ms; the backstop must never refuse what the dialog allowed. One frame
+// at 15 fps, rounded up.
+inline constexpr std::int64_t kGifDurationCapSlackMs = 100;
+
+// The exported duration of a GIF built from `clips` over a source of
+// `asset_duration_ms`. No clips means the whole recording, as the exporter
+// treats it. Each range is clamped to [0, asset] first: nothing upstream
+// limits `source_out_ms` to the file, and a stale range past the end must not
+// count time the GIF will not contain.
+std::int64_t GifExportedDurationMs(
+    const std::vector<clip_planner::ClipKeptRange>& clips,
+    std::int64_t asset_duration_ms);
+
+// Whether the native backstop refuses an export of `exported_ms`: strictly
+// more than the cap plus the slack.
+bool GifExceedsDurationCap(std::int64_t exported_ms);
 
 }  // namespace clingfy::capture::export_
 

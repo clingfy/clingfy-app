@@ -154,7 +154,11 @@ at about 14.3 fps, about 5% slow. `gif_export_policy.h` admits "~14.3 fps".
 
 ---
 
-## W2. GIF length cap: the Windows native backstop
+## ~~W2. GIF length cap: the Windows native backstop~~ — DONE 2026-10-29
+
+Shipped on `feat/windows-gif-length-backstop`. Kept below as the record of
+what was asked.
+
 
 *Written 2026-10-20, when the cap shipped on macOS.*
 

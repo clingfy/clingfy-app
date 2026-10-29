@@ -496,6 +496,37 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     PropVariantClear(&duration_var);
   }
 
+  // W2: the GIF length backstop. The export dialog refuses a GIF over the cap
+  // first; this catches any path that skips it (an older Flutter build, a
+  // direct call). Worked out from the clips and the file, never trusted from
+  // the UI, and decided before any encoder or output file exists. Same
+  // arithmetic as macOS (`GifExportPolicy.exportedDurationMs`). An unknown
+  // file duration with no clips is let through, as the dialog lets an unknown
+  // length through; with clips, their own lengths are summed unclamped.
+  if (gif) {
+    std::optional<std::int64_t> exported_ms;
+    if (duration_hns > 0) {
+      exported_ms = GifExportedDurationMs(request.clip_ranges,
+                                          duration_hns / 10000);
+    } else if (!request.clip_ranges.empty()) {
+      std::int64_t sum = 0;
+      for (const auto& range : request.clip_ranges) {
+        sum += range.DurationMs();
+      }
+      exported_ms = sum;
+    }
+    if (exported_ms.has_value() && GifExceedsDurationCap(*exported_ms)) {
+      RenderResult refused = Failure(
+          request.destination_path,
+          "export: GIF is " + std::to_string(*exported_ms) +
+              " ms long; GIFs can be at most " +
+              std::to_string(kGifMaxExportedDurationMs) + " ms");
+      refused.gif_too_long = true;
+      refused.gif_duration_ms = *exported_ms;
+      return refused;
+    }
+  }
+
   // Audio separation (D8): when export_passthrough probed a decodable
   // sidecar, the separated tracks REPLACE the embedded premix — the main
   // reader's audio stream is never selected and audio runs through the
