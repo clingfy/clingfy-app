@@ -290,6 +290,30 @@ no-op handler.
 
 ---
 
+## ~~W6. Export audio tiers above 192 kbps~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+macOS offers 192 / 256 / 320 kbps AAC; Windows clamped every tier to 192 and
+hid the picker, because nobody had measured the Media Foundation AAC encoder.
+
+**Measured** (`aac_encoder_bitrate_test.cpp`, Windows 11): the in-box encoder
+MFT accepts 256 and 320 at 48 kHz stereo and produces them (256103 / 320091
+bps on 10 s of white noise). Microsoft documents only 96-192, so older builds
+may refuse.
+
+**Done:** `ResolveAudioBitrateBps` returns macOS's ladder; the pipeline asks
+`AacEncoderAcceptsBitrate` (cached MFT probe, ~5 ms) and
+`ClampAudioBitrateToEncoder` steps down to 192 where the encoder refuses;
+`AudioEncoderConfig::Validate` allows up to 320; the export dialog shows the
+picker on Windows.
+
+**Tests:** the probe, measured-equals-asked within 3%, every tier lands on an
+accepted rate, the pure clamp, the validate range, an export per tier whose
+output AAC track declares the expected bitrate, and the dialog on Windows.
+
+---
+
 ## Not briefed yet
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists

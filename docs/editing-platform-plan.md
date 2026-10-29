@@ -28,7 +28,7 @@ the shape this document specified, and one of its four PRs was abandoned midway.
 | **3.5 — audio format normalization** | 48 kHz float32 internal | **shipped**; Windows non-48 kHz inputs now work | 1.1.0 |
 | **4 — voice cleanup** | RNNoise, macOS then Windows | **shipped both platforms.** High Quality / DeepFilterNet still unbuilt | 1.0.6 |
 | **5 — subtitles** | ASR + translate | **transcription shipped** (macOS, Apple silicon). **Translation unbuilt. Windows ASR unbuilt.** | 1.1.0, refined 1.2.0 |
-| **Export audio presets** | Standard 128 / High 192 / Best 256 | **shipped 2026-10-06 as 192 / 256 / 320**, macOS only. The plan's ladder was written believing today's default was 128 kbps; macOS has always exported 192. Windows was at 128 and is raised to 192 | 1.3.0 (unreleased) |
+| **Export audio presets** | Standard 128 / High 192 / Best 256 | **shipped 2026-10-06 as 192 / 256 / 320**, macOS first; Windows since 2026-10-29 (measured encoder, steps down where it refuses). The plan's ladder was written believing today's default was 128 kbps; macOS has always exported 192. Windows was at 128 and is raised to 192 | 1.3.0 (unreleased) |
 | **`LocalModelManager`** | first-class, built early (§A.7) | **reporting half shipped 2026-10-06** (per-variant sizes, readiness, named rows). Per-variant delete, download-on-demand, hash verify and versioning still unbuilt | 1.3.0 (unreleased) |
 
 **Release dates:** 1.0.5 (2026-07-01), 1.0.6 (2026-07-22), 1.0.7 (2026-08-01),
@@ -115,7 +115,7 @@ Marked with what the code did with each.
 | **Voice cleanup** | Pluggable `AudioEnhancementPipeline`. v1 = RNNoise. Future High Quality = DeepFilterNet. The UI never names engines. | **Shipped both platforms.** UI exposes Off / Light / Balanced. High Quality **deliberately not offered** — DeepFilterNet is not vendored, so the level would be a relabelled Balanced. The `highQuality` wire value still parses. |
 | **Subtitle export** | Default = video + `.srt` + `.vtt` sidecars. Burn-in opt-in. | **Shipped.** Per-recording destination added in 1.2.0 (`CaptionTrack.destination`, null = follow app preference). |
 | **Local models** | A first-class `LocalModelManager` — download-on-first-use, hash verify, version, disk usage, delete, offline state, per-model license note. Built early, not as an afterthought. | **Not built as specified.** Only the caption-specific path exists. Settings › Storage (1.1.0) shows and deletes the speech model, which is the user-visible slice of it. |
-| **Export quality** | Audio presets — Standard 128 / High 192 / Best 256 kbps. | **Shipped, with a different ladder** (#592): Standard 192 / High 256 / Best 320 kbps, because macOS had always exported 192. The tier is a ceiling, raised only at 48 kHz. Windows clamps every tier to 192 kbps. |
+| **Export quality** | Audio presets — Standard 128 / High 192 / Best 256 kbps. | **Shipped, with a different ladder** (#592): Standard 192 / High 256 / Best 320 kbps, because macOS had always exported 192. The tier is a ceiling, raised only at 48 kHz. Windows offers the same ladder since 2026-10-29, asking its AAC encoder first. |
 | **Build order** | Foundation first; then features easiest-first. | **Not what happened.** See "What the plan got wrong". |
 | **Pricing / gating** | No per-feature Pro gates. Trial = 14 days OR 3 exports. The app-level gate covers all local editing. | **Held.** No per-feature gating code was ever written. `LicenseController.canExport` gates on `trialExportsRemaining > 0`. |
 
@@ -812,8 +812,8 @@ Shipping 128/192/256 with Standard as the default would therefore have
 | Preset | macOS | Windows |
 |---|---|---|
 | Standard | AAC 192 kbps stereo (unchanged from before the control existed) | 192 kbps (raised from 128 — the parity fix) |
-| High | AAC 256 kbps stereo | 192 kbps (clamped) |
-| Best | AAC 320 kbps stereo | 192 kbps (clamped) |
+| High | AAC 256 kbps stereo | 256 kbps where the AAC encoder takes it (Windows 11 does), else 192 |
+| Best | AAC 320 kbps stereo | 320 kbps where the AAC encoder takes it (Windows 11 does), else the next rung down |
 
 **The tier is a ceiling, not a rate.** AAC-LC refuses a bitrate its sample rate
 cannot carry, and refuses it late — `canAdd` and `startWriting()` both succeed
@@ -827,7 +827,15 @@ real `AVAssetWriter`: at 48 kHz stereo everything up to 320 kbps is accepted and
 384 kbps is refused. That test is the evidence for the constants, and it asserts
 each tier individually so a regression names which one broke.
 
-**The control is macOS-only**, and that is the honest part. The Media Foundation
+**Update 2026-10-29: Windows has the control too.** The MF AAC encoder was
+probed on Windows 11 (`windows/runner_tests/aac_encoder_bitrate_test.cpp`): it
+accepts 256 and 320 kbps at 48 kHz stereo and really produces them (256103 /
+320091 bps measured on white noise). The export asks the encoder before using
+an upper tier (`AacEncoderAcceptsBitrate`) and steps down where an older one
+refuses (`ClampAudioBitrateToEncoder`). The paragraph below is the original
+reasoning, kept for the record.
+
+**The control was macOS-only**, and that was the honest part. The Media Foundation
 AAC encoder's accepted (rate, channels, bitrate) matrix has not been measured on
 Windows hardware, and it refuses out-of-matrix values late as an opaque HRESULT
 from `AddStream`. So `ResolveAudioBitrateBps` clamps every tier to 192 kbps
@@ -905,7 +913,7 @@ In rough order of user-visible value per unit of risk.
    whisper.cpp models arrives first, since each of those is blocked on it and it
    has no user-visible value alone.
 7. ~~**Export audio presets.**~~ Done in #592 (192 / 256 / 320 kbps;
-   Windows clamped to 192).
+   Windows clamped to 192 until 2026-10-29, now the full ladder).
 8. **High Quality voice cleanup (DeepFilterNet).** The pipeline is already
    engine-agnostic and the wire value already parses, so this is a vendoring +
    model-download task. Blocked on item 6.

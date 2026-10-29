@@ -20,6 +20,7 @@
 #define RUNNER_CAPTURE_EXPORT_EXPORT_FORMAT_H_
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace clingfy::capture::export_ {
@@ -35,34 +36,31 @@ std::string ResolveExportExtension(const std::string& format);
 // Retained as a contract point (the passthrough Result still carries the flag).
 bool FormatWasDowngraded(const std::string& format);
 
+// Export AAC bitrate CEILING for an audio-quality tier, the same ladder as
+// macOS's AudioQuality.targetKbps: "standard" 192 kbps, "high" 256, "best"
+// 320. Empty or unknown (older Flutter payloads) is standard. Case-insensitive.
+//
+// A ceiling, not a promise, on both platforms. On Windows the in-box AAC
+// encoder MFT was measured (aac_encoder_bitrate_test.cpp): on Windows 11 it
+// accepts and actually produces 256 and 320 kbps at 48 kHz stereo, while
+// Microsoft documents only 96 / 128 / 160 / 192. So the export asks the encoder
+// first and steps down through `ClampAudioBitrateToEncoder` where an older
+// encoder refuses, rather than failing the export late at AddStream.
+std::uint32_t ResolveAudioBitrateBps(const std::string& quality);
+
+// The highest rung of the export ladder (320 / 256 / 192 kbps) that is at most
+// `requested_bps` and that `encoder_accepts` takes. 192 kbps is the floor and
+// is returned without asking: it is in Microsoft's documented matrix and is
+// what every Windows export used before the upper tiers existed.
+std::uint32_t ClampAudioBitrateToEncoder(
+    std::uint32_t requested_bps,
+    const std::function<bool(std::uint32_t)>& encoder_accepts);
+
 // Resolve a Dart `bitrate` preset ("auto" | "low" | "medium" | "high") to an
 // H.264 average bitrate in bits/sec for the given output dimensions + fps.
 // Resolution-aware (bits-per-pixel-per-frame): low 0.04, medium/auto 0.08,
 // high 0.15, clamped to [2 Mbps, 100 Mbps]. fps==0 is treated as 30. Unknown
 // presets behave like "auto". Width/height of 0 clamp to the floor.
-// Export AAC bitrate for an audio-quality tier ("standard"/"high"/"best").
-//
-// Windows deliberately resolves ALL tiers to 192 kbps today, which is both the
-// parity fix and the honest ceiling. Two reasons, and they are different:
-//
-//  1. Parity. The export default was 128 kbps while macOS has always exported
-//     192 kbps for the same project (AACEncoderSettings: 96 kbps/channel x 2).
-//     Nothing documented that; the same recording simply came out different
-//     per platform. `standard` now means 192 on both.
-//  2. Headroom unverified. macOS's ceiling was measured against the real
-//     encoder (320 kbps accepted at 48 kHz stereo, 384 refused — see
-//     AACBitRateProbeTests). No equivalent measurement exists for the Media
-//     Foundation AAC encoder MFT, whose accepted (rate, channels, bitrate)
-//     matrix is narrower and whose refusal arrives late as an opaque HRESULT
-//     from AddStream. Until somebody probes it on Windows hardware, the upper
-//     tiers clamp here rather than guess.
-//
-// The consequence is deliberate and visible in the UI: the audio-quality
-// control is macOS-only, because offering High and Best where they resolve to
-// the same bitrate as Standard would be three names for one outcome. That
-// mirrors how Voice Cleanup handles its own unbuilt tier.
-std::uint32_t ResolveAudioBitrateBps(const std::string& quality);
-
 std::uint32_t ResolveVideoBitrateBps(const std::string& bitrate,
                                      std::uint32_t width, std::uint32_t height,
                                      std::uint32_t fps);

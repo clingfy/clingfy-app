@@ -46,6 +46,7 @@
 #include "Capture/Export/gif_export_policy.h"
 #include "Capture/Export/reorder_audio_pump.h"
 #include "Capture/captured_video_frame.h"
+#include "Encoding/aac_bitrate_probe.h"
 #include "Encoding/gif_encoder.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
@@ -827,8 +828,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // Was the struct default of 128 kbps, which quietly differed from the
       // 192 kbps macOS produces for the same project. Resolved rather than
       // assigned so the tier the user picked is honoured where it can be.
-      audio_config->avg_bitrate_bps =
+      // The tier is a ceiling: 256 / 320 only where this machine's AAC
+      // encoder takes them (Windows 11 does; Microsoft documents up to 192).
+      const std::uint32_t requested_bps =
           ResolveAudioBitrateBps(request.audio_quality);
+      audio_config->avg_bitrate_bps = ClampAudioBitrateToEncoder(
+          requested_bps, clingfy::encoding::AacEncoderAcceptsBitrate);
+      if (audio_config->avg_bitrate_bps != requested_bps) {
+        clingfy::bridge::NativeLogPublisher::Instance().Info(
+            "Export", "AAC encoder refused " + std::to_string(requested_bps) +
+                          " bps; exporting audio at " +
+                          std::to_string(audio_config->avg_bitrate_bps));
+      }
     }
     if (auto err = encoder.Open(enc_config, device, audio_config)) {
       // The sink writer binds MF_SINK_WRITER_D3D_MANAGER to this device, so

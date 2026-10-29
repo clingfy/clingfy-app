@@ -1038,8 +1038,6 @@ Tags:
 
 - **Windows crash salvage of the video (fragmented MP4)** — parked, deferred. The MF sink writer writes non-fragmented MP4, so a hard crash leaves an unplayable file and Windows only cleans up and shows a notice. Salvage would need MFTranscodeContainerType_FMPEG4, which is untested with hardware encoders and the preview. Decide using crash telemetry. *Source:* windows/runner/Services/recovery_sweep.h:23-25; docs/windows-port.md:174-191
 
-- **Windows export audio tiers above 192 kbps** — code, partial. macOS offers 192/256/320 kbps AAC. Windows clamps every tier to 192 because no one has measured which bitrates the MF AAC encoder accepts; after that, raising the cap in ResolveAudioBitrateBps is one line. *Source:* windows/runner/Capture/Export/export_format.cpp:51-62; docs/editing-platform-plan.md:417-424
-
 - **Windows colour-grade parity with Core Image** — code, not started. At strong grades the D2D colour matrix chain differs from Core Image by up to 2.77 (tolerance 0.002). ColorGradeGoldenTest is excluded from CI until it is fixed. The fixtures are committed; the fix needs a Windows machine. *Source:* .github/workflows/ci.yml:703-714; windows/runner/Graphics/color_grade_effect.cpp; docs/editing-platform-plan.md:864-869
 
 - **Windows uncut preview: mic gain and voice cleanup audible before the first cut** — code, partial. An uncut project plays through MediaPlayer, which can only attenuate, so gain and cleanup are heard only once a cut or trim switches to the edited audio path. gain_processor exists but has no host on the passthrough path. *Source:* lib/app/home/post_processing/widgets/post_audio_section.dart:145-156; docs/decisions/windows-editing-step4-7-preview-audio.md:135-160
@@ -1066,6 +1064,11 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows export audio tiers above 192 kbps** (2026-10-29, W6 in
+  `docs/windows-machine-work.md`). Measured: the Windows 11 AAC encoder MFT
+  accepts and produces 256 and 320 kbps. Windows now offers macOS's 192 / 256 /
+  320 ladder, asks the encoder first and steps down where an older one refuses.
 
 - **Windows hover frame-peek on the ruler** (2026-10-29, W5 in
   `docs/windows-machine-work.md`). `previewPeekTo` was a no-op on Windows, so
