@@ -72,6 +72,10 @@ class PreviewSourceReader {
 
   bool gpu() const { return gpu_; }
 
+  // The source's duration (MF_PD_DURATION), 0 when the container does not
+  // say. Read once at Create.
+  std::int64_t duration_ms() const { return duration_ms_; }
+
   UINT width() const { return width_; }
   UINT height() const { return height_; }
 
@@ -84,6 +88,7 @@ class PreviewSourceReader {
   DWORD stream_index_ = 0;
   UINT width_ = 0;
   UINT height_ = 0;
+  std::int64_t duration_ms_ = 0;
 };
 
 }  // namespace clingfy::preview

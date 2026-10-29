@@ -1,5 +1,8 @@
 #include "preview/preview_engine.h"
 
+#include <windows.h>
+#include <stdlib.h>
+
 #include <gtest/gtest.h>
 
 #include <vector>
@@ -482,6 +485,27 @@ TEST(PacerStallWatchdogTest, ASecondStallReportsAgain) {
   }
   ASSERT_EQ(second.size(), 1u);
   EXPECT_EQ(second[0], StallReport::kStalled);
+}
+
+// W13: every preview is converged onto the stitched path unless the escape
+// hatch is set.
+TEST(PreviewConvergedTest, OnByDefaultAndOffWithTheEscapeHatch) {
+  ::SetEnvironmentVariableA("CLINGFY_PREVIEW_MEDIAPLAYER", nullptr);
+  _putenv_s("CLINGFY_PREVIEW_MEDIAPLAYER", "");
+  EXPECT_TRUE(PreviewEngine::ConvergedPreviewEnabled());
+  _putenv_s("CLINGFY_PREVIEW_MEDIAPLAYER", "1");
+  EXPECT_FALSE(PreviewEngine::ConvergedPreviewEnabled());
+  _putenv_s("CLINGFY_PREVIEW_MEDIAPLAYER", "0");
+  EXPECT_TRUE(PreviewEngine::ConvergedPreviewEnabled());
+  _putenv_s("CLINGFY_PREVIEW_MEDIAPLAYER", "");
+}
+
+TEST(PreviewConvergedTest, StartingWithoutAnOpenSessionIsANoOp) {
+  // The router calls it after every Open; a stale or unknown session (a
+  // close that raced it) must do nothing, not crash or play anything.
+  PreviewEngine::Instance()->StartConvergedPlayback("no-such-session");
+  PreviewEngine::Instance()->StartConvergedPlayback("");
+  SUCCEED();
 }
 
 }  // namespace

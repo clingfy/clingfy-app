@@ -550,6 +550,40 @@ texture through `UploadFrame`; the existing CPU tests are unchanged.
 
 ---
 
+### W13b. Uncut previews on the stitched path — DONE 2026-10-30
+
+**Done:** after a successful `previewOpen` the router calls
+`PreviewEngine::StartConvergedPlayback`, which opens the GPU reader (proving
+the path and reading the source's duration), turns the session into a
+one-clip timeline through the same entry a clip edit uses, and plays it. The
+MediaPlayer is never started in converged mode. So an uncut preview has the
+edited preview's audio master clock and effect chain: gain above 0 dB and
+voice cleanup are heard before the first cut.
+
+- A passthrough clip list (Dart's whole-recording seed, or every cut undone)
+  keeps a converged session stitched as the one-clip timeline; re-sending the
+  timeline it already plays is a no-op instead of stopping playback.
+- The stitched path now reports `playerState` playing / paused / completed
+  itself (Dart's play button follows it), through the same debounce as the
+  MediaPlayer's handler, which ignores a converged session's player.
+- If the reader cannot open the recording, the session falls back to playing
+  the MediaPlayer as before, with a warning in the log.
+  `CLINGFY_PREVIEW_MEDIAPLAYER=1` turns convergence off entirely.
+- The Windows-only "gain is heard in edited previews and exports only"
+  notice under the audio sliders is gone, with its string.
+
+**Checked live:** a real 28 s recording (screen + mic + system sidecars)
+opened from the command line: "converged preview: one-clip timeline of
+28265ms", "stitched preview ON ... audio=on", "Play (stitched ...) pacer
+armed=true, audio=on", and pacer telemetry with the video within ~30 ms of
+the audio clock for the whole run; `previewReady` reached Dart.
+
+**Tests:** the reader's duration, the escape hatch, a converged start
+without a session; the audio notice's widget test now expects no notice.
+
+**Not checked:** listening to it (gain above 0 dB on an uncut recording,
+cleanup on/off) and scrubbing a long 4K recording. Owner.
+
 ## Not briefed yet — triage, 2026-10-29
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
@@ -568,10 +602,8 @@ screenshots a false oracle, so these cannot be verified unsupervised:
   screen.
 
 **Blocked on a design decision:**
-- Preview mic gain / voice cleanup before the first cut, and preview
-  speaker-echo removal. Both need a host for the DSP on the passthrough path,
-  which `docs/decisions/windows-editing-step4-7-preview-audio.md` (D6.1)
-  blocks on the preview audio clock, not the maths.
+- ~~Preview mic gain / voice cleanup before the first cut.~~ Done as W13b
+  (one audio clock for every preview). Preview speaker-echo removal is W13c.
 - ~~GPU-end-to-end preview decode (#296).~~ Done as W13a.
 
 **Parked by an earlier decision:** area selection remembered across restarts,
