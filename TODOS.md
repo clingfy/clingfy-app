@@ -60,21 +60,25 @@ Auto-subtitles row in `docs/features.md` is already merged into one.
 
 ## Export — colour
 
-### Dark recordings have never been checked in QuickTime after the colour fix — verify
+### ~~Dark recordings have never been checked in QuickTime after the colour fix~~ — DONE 2026-10-29
 
-*From the export-colour work (#383, #391, #395).*
+Measured in Apple's decoder (AVFoundation, which QuickTime uses), on two sources.
+Each was exported through the real engine, with `mov-<label>.mov` in
+`testExportsGifProofsForVisualInspection`:
+- **A synthetic dark terminal**, with shadow steps at levels 0–48 on a #1e1e1e
+  background. The export matches its source within 2 code values at every step.
+- **A real recording of this Mac's dark-mode screen**, against its own recording:
 
-The export encodes with gamma 1.961, chosen because Apple's decoders
-(QuickTime, Preview, Safari, Messages) were crushing shadows with the spec curve
-(`ColorTransferFunctions.swift:146`). That choice rests on decoder measurements
-and unit tests. #391 asked for a real dark-clip check, and #395 and #396 both
-still call it pending. The 1.0.7 release check used a bright sRGB chart, not dark
-content, and no later release doc covers shadows.
+| Recording level | Export mean diff | Mean abs diff |
+|---|---|---|
+| 0–15 | +2.51 | 2.52 |
+| 16–31 | −0.01 | 0.12 |
+| 32–47 | +0.04 | 0.28 |
+| 48–63 | +0.10 | 0.49 |
 
-**To close:** record a dark-mode or terminal clip, export it, and compare the
-shadows in QuickTime against the screen. If shadows look right, close this. If
-they look lifted or crushed, reopen the curve decision. The code comment names
-the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
+Nothing is crushed. The deepest blacks lift by about 2.5 values, the small lift
+the 1.961 curve accepts by design (`docs/decisions/macos-export-transfer-curve.md`),
+and invisible to the eye.
 
 ### ~~Smaller colour follow-ups~~ — DONE 2026-10-26
 - The 1.961 curve decision, with its revisit trigger, is now in
@@ -140,6 +144,29 @@ which are the only recorded numbers for this defect.
   declares limited range and contains it (#372). See
   `docs/decisions/macos-export-transfer-curve.md`.
 
+## Export — engine
+
+### An export crashed once inside CVPixelBufferPoolCreatePixelBuffer — code (watch)
+
+*Seen once, 2026-10-29,* in the test host during a combined run of the export
+suites, in `ColorGradeValidatorMarginTests.testGradeMarginsWithPaddingOnALightModeUIFixture`.
+`EXC_BREAKPOINT` in `CFDictionaryGetValue`, reached from
+`CVPixelBuffer::setDefaultAttachments` → `CVPixelBufferPoolCreatePixelBufferWithAuxAttributes`
+← `makePooledPixelBuffer` (`ExportMemory.swift:46`) ← `awaitPooledPixelBuffer` ←
+`renderNextFrame` (`LetterboxExporter.swift:~2494`), on the writer's request queue.
+That is the pool's default-attachments dictionary being read while invalid.
+
+It did not reproduce in five more runs: three of the same combined suite (one on
+develop without the change under test), and two of that class alone. It is in
+the no-camera writer path, which that change did not touch. Likely a rare race
+around the pool, the writer's lifetime, or buffer attachments
+(`VideoColorPipeline.tag(pixelBuffer:)` sets four propagated attachments on every
+rendered buffer).
+
+**To close:** if it is seen again, in a test run or a user report, compare the
+stack. With two sightings, look for the pool used after its writer
+finished or cancelled, or a buffer being tagged while it returns to the pool.
+
 ## Export — GIF
 
 ### Windows GIF has no size presets, cap or drift-free timing — code (Windows machine)
@@ -183,7 +210,13 @@ moving gradients, a Macbeth colour chart, large text and small text.
 
 ## Recording — camera (macOS)
 
-### Camera-start safeguards have never been seen working on a real device — verify
+### Camera-start safeguards have never been seen working on a real device — verify (needs a USB camera)
+
+> **2026-10-29:** "claim the webcam in another app" does not trigger a refusal on macOS
+> 26. A separate process held the FaceTime camera, with a running session and a
+> configuration lock, while Clingfy recorded a camera take. macOS shared the camera,
+> and the take recorded and finished `ready`. What is left is the unplug case: pull a
+> USB camera during Start.
 
 *From the camera-start work of 2026-07-30 (#386, #387).*
 
@@ -990,8 +1023,6 @@ Tags:
 
 ### Engine and tech debt
 
-- **Delete the dead pre-styled camera pass** — code, macOS, cleanup. `CameraStyledIntermediatePipeline.runStyledPass` (~700 lines) and the `cameraAssetIsPreStyled` / `placementSourceRect` plumbing through `CameraPreparedIntermediate`, `LetterboxExporter` and `CompositionBuilder` are unreachable since #33. `requiresPrepass` is chroma key only, and that branch returns `false`. Two tests still build pre-styled compositions by hand (`testIntroAnimationAppliesToPreStyledCameraAsset`). *Source:* macos/Runner/Capture/Export/CameraStyledIntermediatePipeline.swift:49-196; CompositionBuilder.swift:2515-2531
-
 - **Metal/CIImage replacement for AVVideoCompositionCoreAnimationTool** — parked, macOS, parked. A future spike. The ~100-CALayer ceiling has never been hit, so nothing is blocked on it. *Source:* docs/editing-platform-plan.md:852-855
 
 - **Finish the ScreenRecorderFacade strangler (coordinators into RecordingEngine)** — code, macOS, not planned. The facade is still a ~3,000-line orchestrator. Moving the camera, overlay, cursor and indicator coordinators into RecordingEngine was judged a large slice with little payoff. *Source:* docs/windows-port-inventory.md:485-503
@@ -1058,6 +1089,13 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **The dead pre-styled camera pass is deleted** (2026-10-29). `runStyledPass`, the
+  styled intermediate renderer and its validation, and the `cameraAssetIsPreStyled`
+  / placement-source-rect plumbing are gone, along with the non-inline camera
+  branch of `CompositionBuilder`: about 1,300 lines across three files. All were
+  unreachable since #33. An independent review found no behaviour change, and the
+  combined export, camera and validator suites pass (185).
 
 - **No-camera exports graded their background and padding, unlike the preview**
   (fixed 2026-10-26, decided: grade the screen only). The composition now renders

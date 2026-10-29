@@ -216,8 +216,7 @@ final class CaptionBurnInSeatTests: XCTestCase {
         cameraAsset: nil,
         params: params,
         cameraParams: nil,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
 
@@ -559,8 +558,7 @@ final class CaptionBurnInSeatTests: XCTestCase {
         cameraAsset: nil,
         params: params,
         cameraParams: nil,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
 
