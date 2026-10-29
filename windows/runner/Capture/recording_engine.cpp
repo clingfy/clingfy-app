@@ -277,18 +277,22 @@ std::optional<RecordingError> RecordingEngine::Start(
       WindowsSelectionState::Instance().TargetMode();
   // Phase 7.1 lifts the gate for window modes. macOS distinguishes "app (all
   // windows)" from "single window"; WGC captures one HWND, so both map to
-  // single-HWND capture of the selected window for the MVP. Area / mouse modes
-  // remain unsupported until their slices.
+  // single-HWND capture of the selected window for the MVP. "Screen under
+  // mouse" (mouseAtStart) records whichever display the cursor is on when the
+  // recording starts, as macOS's CaptureTargetResolver does. followMouse
+  // (switching displays mid-recording) is not offered by the picker and stays
+  // unsupported.
   const bool is_window_mode = (mode == DisplayTargetMode::kAppWindow ||
                                mode == DisplayTargetMode::kSingleAppWindow);
   const bool is_area_mode = (mode == DisplayTargetMode::kAreaRecording);
+  const bool is_mouse_at_start = (mode == DisplayTargetMode::kMouseAtStart);
   if (mode != DisplayTargetMode::kExplicitId && !is_window_mode &&
-      !is_area_mode) {
+      !is_area_mode && !is_mouse_at_start) {
     return fail_start(
         clingfy::bridge::error::kBadMode,
         std::string("Target mode '") + TargetModeName(mode) +
-            "' is not supported on Windows yet. Window and area recording are "
-            "live; mouse-follow modes land in a later slice.");
+            "' is not supported on Windows yet. Display, window, area and "
+            "screen-under-mouse recording are live.");
   }
 
   // Resolve the target BEFORE any pipeline setup so a missing / stale target
@@ -359,6 +363,19 @@ std::optional<RecordingError> RecordingEngine::Start(
         static_cast<std::int32_t>(crop.x), static_cast<std::int32_t>(crop.y),
         static_cast<std::int32_t>(crop.width),
         static_cast<std::int32_t>(crop.height)};
+  } else if (is_mouse_at_start) {
+    // Resolved once, now: the recording stays on this display even if the
+    // cursor later moves to another one.
+    monitor = clingfy::bridge::devices::MonitorUnderCursor();
+    if (!monitor) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "Could not find the display under the mouse pointer. Pick a screen "
+          "in the display selector instead.");
+    }
+    current_target_type_ = "display";
+    current_window_id_.reset();
+    current_source_bounds_.reset();
   } else {
     const auto display_id = WindowsSelectionState::Instance().DisplayId();
     monitor = clingfy::bridge::devices::ResolveHMonitor(display_id);

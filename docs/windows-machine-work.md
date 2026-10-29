@@ -249,6 +249,27 @@ connected", not after the render; tests pass.
 
 ---
 
+## ~~W4. 'Screen under mouse' recording target~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The shared picker offers "Screen under mouse" (`DisplayTargetMode.mouseAtStart`)
+on every platform, but `RecordingEngine::Start` refused it on Windows with
+`BAD_MODE` ("mouse-follow modes land in a later slice"). macOS resolves it at
+start to the display under the cursor (`CaptureTargetResolver`).
+
+**Do:** resolve `kMouseAtStart` in `RecordingEngine::Start` to
+`MonitorFromPoint(GetCursorPos(), MONITOR_DEFAULTTONEAREST)` through a new
+`devices::MonitorUnderCursor()`, and record it as a display target. The
+recording stays on that display if the cursor later moves. `followMouse` is not
+in the picker and stays refused.
+
+**Tests:** `RecordingEngineTest.StartAcceptsScreenUnderMouseMode` (the real
+pipeline starts and stops), `MonitorUnderCursorTest`, and the follow-mouse
+refusal kept.
+
+---
+
 ## Not briefed yet
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists

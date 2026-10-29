@@ -1020,8 +1020,6 @@ Tags:
 
 ### Windows parity (Windows machine)
 
-- **Windows 'Screen under mouse' target (offered but refused)** — code, not started. The shared picker offers 'Screen under mouse' on Windows, but RecordingEngine::Start refuses mouseAtStart with kBadMode ('mouse-follow modes land in a later slice'). Either build it or hide the option on Windows. *Source:* windows/runner/Capture/recording_engine.cpp:277-291; lib/app/home/recording/widgets/recording_source_section.dart:129-132
-
 - **Windows capture quality and frame-rate control** — code, not started. setRecordingQuality and setCaptureFrameRate are no-ops, so the Quality and frame-rate group is hidden on Windows. Windows always records at the display's resolution and frame rate. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:425, :430; lib/app/home/recording/widgets/recording_output_section.dart:46-49
 
 - **Windows 'Exclude Clingfy from capture'** — code, not started. setExcludeRecorderApp is a no-op and the toggle is hidden. The obvious WDA approach risks the hybrid-GPU blank-window failure. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:219-223, :427; lib/app/home/recording/widgets/recording_options_sidebar.dart:531-534
@@ -1070,6 +1068,12 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows 'Screen under mouse' target** (2026-10-29, W4 in
+  `docs/windows-machine-work.md`). The picker offered it and the engine refused
+  it with `BAD_MODE`. `RecordingEngine::Start` now records the display under the
+  cursor at start (`devices::MonitorUnderCursor`), as macOS does. Follow-mouse
+  is not offered and stays refused.
 
 - **Windows export destination pre-flight** (2026-10-29, W3 in
   `docs/windows-machine-work.md`). `ExportDestinationProblem` checks the

@@ -39,6 +39,13 @@ std::vector<DisplayRecord> EnumerateDisplays();
 // never tapped a display picker can still start a recording.
 std::optional<HMONITOR> ResolveHMonitor(std::optional<std::int64_t> id);
 
+// "Screen under mouse" (DisplayTargetMode::kMouseAtStart): the monitor the
+// cursor is on right now, nearest monitor if it is between displays. nullopt
+// only when the cursor position cannot be read (a locked or secure desktop) —
+// the engine then refuses rather than guess, because recording the wrong
+// screen is worse than asking the user to pick one.
+std::optional<HMONITOR> MonitorUnderCursor();
+
 }  // namespace clingfy::bridge::devices
 
 #endif  // RUNNER_BRIDGE_DEVICES_DISPLAY_ENUMERATOR_H_
