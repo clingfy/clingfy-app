@@ -29,7 +29,7 @@ that points to this file. When a task ships, strike it here, and move its
   ```powershell
   cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON
   cmake --build build/windows-tests --config Debug --target runner_tests
-  ctest --test-dir build/windows-tests --output-on-failure -C Debug -E ColorGradeGoldenTest
+  ctest --test-dir build/windows-tests --output-on-failure -C Debug
   ```
 
   To run one suite: `-R GifExportPolicy` (or `-R ExportGeometry`).
@@ -340,6 +340,25 @@ screen on top for backgroundBehind and the camera on top for side-by-side, and
 the preview hook drawing under the screen.
 
 **Not checked by eye:** a real recording with a camera in each layout.
+
+---
+
+## ~~W8. Colour-grade parity with Core Image~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The TODO said the D2D colour chain diverged from Core Image by up to 2.77 at
+strong grades and that `ColorGradeGoldenTest` was excluded from CI until fixed.
+Measured on this machine, it already passes: #275 recalibrated the
+temperature/tint model, and the worst `|diff|` against the macOS goldens is
+0.0017 against a 0.002 tolerance. The CI exclusion was simply never lifted.
+
+The golden test only proves the CPU matrix, though. **Done:**
+- `ColorGradeEffectGpuTest`: the real `ColorGradeEffectChain` (sRGB → scRGB,
+  5x4 matrix in FP16, re-encode) over 216 8-bit colours and 25 grades
+  (each axis at ±0.5 and ±1, all-axes composites) matches the golden-pinned
+  matrix within one 8-bit step (worst 0.0032).
+- `ci.yml` no longer excludes `ColorGradeGoldenTest`.
 
 ---
 

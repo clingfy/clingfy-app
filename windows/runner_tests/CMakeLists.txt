@@ -102,6 +102,7 @@ add_executable(runner_tests
   "preview_audio_renderer_test.cpp"
   "preview_compositor_color_test.cpp"
   "color_grade_args_test.cpp"
+  "color_grade_effect_test.cpp"
   "color_grade_test.cpp"
   "audio_sidecar_probe_test.cpp"
   "export_audio_test.cpp"
