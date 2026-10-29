@@ -869,12 +869,12 @@ faster than camera footage.
   `mixedFallbackPath` path is not a legacy-only concern. Any change that removes
   the embedded audio from `screen.mov` must land together with a preview fix, or
   it will break preview audio for every project (this is #217).
-- **Windows ↔ macOS colour divergence — NEW, open.** The Windows D2D colour chain
-  diverges from Core Image at strong grades: worst `|diff|` **2.77** against a
-  **0.002** tolerance. `ColorGradeGoldenTest` is excluded in `ci.yml:703-712`
-  pending a real fix to the D2D matrix chain. The golden fixtures (dumped by the
-  macOS `ColorGradeGoldenDumpTests`) are committed, so the fix is verifiable the
-  day someone takes it.
+- **Windows ↔ macOS colour divergence — closed (2026-10-29).** The worst
+  `|diff|` of **2.77** against Core Image was fixed by #275's temperature/tint
+  recalibration; `ColorGradeGoldenTest` has passed since (worst 0.0017 vs
+  0.002) but stayed excluded in CI. It runs again, and the new
+  `ColorGradeEffectGpuTest` pins the real Direct2D chain to the same matrix
+  within one 8-bit step (worst 0.0032 on hardware).
 - **Windows licensing — still untested.** Editing stays free/feature-flagged on
   Windows until a licensing smoke pass on `lib/commercial/licensing/` passes. The
   Windows build also ships unsigned, so it remains beta and unreleased.

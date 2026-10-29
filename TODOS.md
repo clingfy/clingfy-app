@@ -1038,8 +1038,6 @@ Tags:
 
 - **Windows crash salvage of the video (fragmented MP4)** — parked, deferred. The MF sink writer writes non-fragmented MP4, so a hard crash leaves an unplayable file and Windows only cleans up and shows a notice. Salvage would need MFTranscodeContainerType_FMPEG4, which is untested with hardware encoders and the preview. Decide using crash telemetry. *Source:* windows/runner/Services/recovery_sweep.h:23-25; docs/windows-port.md:174-191
 
-- **Windows colour-grade parity with Core Image** — code, not started. At strong grades the D2D colour matrix chain differs from Core Image by up to 2.77 (tolerance 0.002). ColorGradeGoldenTest is excluded from CI until it is fixed. The fixtures are committed; the fix needs a Windows machine. *Source:* .github/workflows/ci.yml:703-714; windows/runner/Graphics/color_grade_effect.cpp; docs/editing-platform-plan.md:864-869
-
 - **Windows uncut preview: mic gain and voice cleanup audible before the first cut** — code, partial. An uncut project plays through MediaPlayer, which can only attenuate, so gain and cleanup are heard only once a cut or trim switches to the edited audio path. gain_processor exists but has no host on the passthrough path. *Source:* lib/app/home/post_processing/widgets/post_audio_section.dart:145-156; docs/decisions/windows-editing-step4-7-preview-audio.md:135-160
 
 - **Windows preview speaker-echo removal** — code, not started. Windows applies the mic echo canceller only at export, while the macOS preview plays the echo-cancelled mic. With echo removal on, the Windows preview does not match its export. *Source:* windows/runner/preview/preview_engine.h; windows/runner/Bridge/Routers/export_router.cpp:563; macos/Runner/Preview/InlinePreviewView.swift:1117
@@ -1062,6 +1060,11 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows colour-grade parity with Core Image** (2026-10-29, W8 in
+  `docs/windows-machine-work.md`). Already fixed by #275 (golden worst 0.0017
+  vs 0.002) but still excluded from CI. The exclusion is lifted, and a GPU test
+  now pins the real D2D chain to the same matrix within one 8-bit step.
 
 - **Windows camera layouts: side-by-side, stacked, background** (2026-10-29,
   W7 in `docs/windows-machine-work.md`). They fell back to a bottom-right
