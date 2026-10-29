@@ -188,6 +188,49 @@ final class RecordingOutputFinalizationWaiter {
   }
 }
 
+/// Stopping the ScreenCaptureKit stream at the end of a take, bounded.
+///
+/// `SCStream.stopCapture()` can fail to return at all: once ScreenCaptureKit
+/// reports the app's connection interrupted (-3805, seen live on a take
+/// stopped ~1.5 s after it began), the await never resumed and the take sat
+/// in "stopping" for good, with its screen file already complete on disk. So
+/// the stop goes on when the call returns, when the stream reports itself
+/// stopped ([waiter] resolved by `didStopWithError`), or after [timeout],
+/// whichever is first. A throw is reported, not fatal: by now every segment
+/// has finished writing, and failing here would discard a finished take.
+enum StreamStop {
+  enum Outcome: Equatable {
+    case stopped
+    case failed(String)
+    case timedOut
+  }
+
+  static let timeout: TimeInterval = 10
+
+  static func run(
+    waiter: RecordingOutputFinalizationWaiter,
+    timeout: TimeInterval = StreamStop.timeout,
+    stop: @escaping @Sendable () async throws -> Void
+  ) async -> Outcome {
+    Task {
+      do {
+        try await stop()
+        waiter.succeed()
+      } catch {
+        waiter.fail(error)
+      }
+    }
+    do {
+      try await waiter.wait(timeout: timeout)
+      return .stopped
+    } catch is RecordingOutputFinalizationWaiter.TimedOut {
+      return .timedOut
+    } catch {
+      return .failed("\(error)")
+    }
+  }
+}
+
 /// Where a screen segment sits in wall-clock time.
 enum SegmentWallClock {
   /// From the recording output's start callback when it landed: start there,
@@ -956,6 +999,8 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
   let recordingKeepAwake = KeepAwakeSlot()
   private var paused: Bool = false
   private var stopRequested: Bool = false
+  /// The stop under way, resolved early if the stream reports itself stopped.
+  private var pendingStreamStop: RecordingOutputFinalizationWaiter?
   private var runPhase: RunPhase = .idle
   private var segmentedSession: SegmentedRecordingSession?
   private var activeSegmentContext: RecordingSegmentContext?
@@ -1489,7 +1534,15 @@ final class CaptureBackendScreenCaptureKit: NSObject, CaptureBackend {
         }
 
         NativeLogger.d("SCKBackend", "Stopping stream capture...", context: ["sequence": sequence])
-        try await stream.stopCapture()
+        let waiter = RecordingOutputFinalizationWaiter()
+        self.pendingStreamStop = waiter
+        let outcome = await StreamStop.run(waiter: waiter) { try await stream.stopCapture() }
+        self.pendingStreamStop = nil
+        if outcome != .stopped {
+          NativeLogger.w(
+            "SCKBackend", "Stream did not stop cleanly; finishing the take anyway",
+            context: ["sequence": sequence, "outcome": "\(outcome)"])
+        }
         self.stream = nil
         NativeLogger.d("SCKBackend", "Stream cleanup complete", context: ["sequence": sequence])
       }
@@ -3030,6 +3083,9 @@ extension CaptureBackendScreenCaptureKit: SCStreamDelegate {
 
       // Filter errors that occur during user-initiated stop
       if self.stopRequested {
+        // The stream has stopped, however it put it: a stop waiting on
+        // `stopCapture()` can go on now (StreamStop).
+        self.pendingStreamStop?.succeed()
         // According to Apple docs, these errors are expected during stop:
         // - userStopped (-3808): User intentionally stopped the stream
         // - failedApplicationConnectionInterrupted (-3803): App connection lost during teardown

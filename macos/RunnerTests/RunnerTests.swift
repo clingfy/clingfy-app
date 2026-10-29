@@ -10874,6 +10874,45 @@ final class RecordingSegmentMergerTests: XCTestCase {
     XCTAssertFalse(RecordingSegmentMerger.describe(flutter).contains("0x"))
   }
 
+  /// A stop whose `stopCapture()` never returns (ScreenCaptureKit lost its
+  /// connection, -3805) goes on after the timeout instead of hanging the take.
+  func testAStreamStopThatNeverReturnsTimesOut() async {
+    let started = Date()
+    let outcome = await StreamStop.run(
+      waiter: RecordingOutputFinalizationWaiter(), timeout: 0.2
+    ) {
+      try await Task.sleep(nanoseconds: 30_000_000_000)
+    }
+    XCTAssertEqual(outcome, .timedOut)
+    XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+  }
+
+  /// The stream reporting itself stopped releases a stop still waiting.
+  func testAStreamThatReportsItStoppedReleasesTheStop() async {
+    let waiter = RecordingOutputFinalizationWaiter()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) { waiter.succeed() }
+    let outcome = await StreamStop.run(waiter: waiter, timeout: 20) {
+      try await Task.sleep(nanoseconds: 30_000_000_000)
+    }
+    XCTAssertEqual(outcome, .stopped)
+  }
+
+  /// A throwing stop is reported, not fatal: the take's files are written.
+  func testAStreamStopThatThrowsIsReported() async {
+    struct Interrupted: Error {}
+    let outcome = await StreamStop.run(
+      waiter: RecordingOutputFinalizationWaiter(), timeout: 5
+    ) { throw Interrupted() }
+    guard case .failed = outcome else { return XCTFail("expected .failed, got \(outcome)") }
+  }
+
+  func testAStreamStopThatReturnsIsStopped() async {
+    let outcome = await StreamStop.run(
+      waiter: RecordingOutputFinalizationWaiter(), timeout: 5
+    ) {}
+    XCTAssertEqual(outcome, .stopped)
+  }
+
   /// A segment is placed from its recording output's start callback, as the
   /// camera's stretches are, so camera sync compares like with like.
   func testASegmentStartsWhenItsOutputSaidItStarted() {
