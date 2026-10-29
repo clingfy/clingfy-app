@@ -1024,7 +1024,7 @@ Tags:
 
 - **Windows 'Exclude Clingfy from capture'** — code, not started. setExcludeRecorderApp is a no-op and the toggle is hidden. The obvious WDA approach risks the hybrid-GPU blank-window failure. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:219-223, :427; lib/app/home/recording/widgets/recording_options_sidebar.dart:531-534
 
-- **Windows live cursor highlight while recording** — code, not started. setCursorHighlightEnabled and setCursorHighlightLinkedToRecording are no-ops, so there is no live cursor halo on Windows and the Pointer control is hidden. *Source:* windows/runner/Bridge/Routers/camera_overlay_router.cpp:304-305; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
+- **Windows live cursor highlight while recording** — verify, then unhide (Windows machine). Built 2026-10-30 (W11 in docs/windows-machine-work.md): the overlay, the setters and the engine hooks are real. The Pointer control stays hidden until the owner checks the halo on screen (all monitors, mixed DPI, click pulse, present in the recording); then drop the `!isWindows()` gate. *Source:* windows/runner/Overlay/cursor_highlight_overlay.cpp; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
 
 
 - **Windows area selection remembered across restarts** — parked, deferred. The crop region lives only in process memory, so Dart clears the saved area at launch and the user has to pick it again. macOS saves it natively. *Source:* lib/app/home/overlay/overlay_controller.dart:260-266; windows/runner/Capture/windows_selection_state.cpp:40; docs/windows-port.md:728-732
