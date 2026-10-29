@@ -1,4 +1,5 @@
 #include "Bridge/method_router.h"
+#include "Bridge/Routers/preview_router.h"
 
 #include <gtest/gtest.h>
 
@@ -956,6 +957,61 @@ TEST_F(PreviewRouterTransportTest, SeekToAcceptsInt32Ms) {
       DispatchWithArgs(router, "previewSeekTo", std::move(args));
   EXPECT_TRUE(reply.success_called);
   EXPECT_FALSE(reply.error_called);
+}
+
+// ---- previewPeekTo ------------------------------------------------
+//
+// The ruler's hover frame-peek. It drives the same engine seek as
+// previewSeekTo, but it is never an error: hover fires many times a second, so
+// a call it cannot read is dropped and replied null, as macOS replies nil.
+
+TEST_F(PreviewRouterTransportTest, PeekToStaleSessionReturnsSuccessNull) {
+  MethodRouter router;
+  const auto reply = DispatchWithArgs(router, "previewPeekTo",
+                                      SeekArgs("sess-stale", 1234));
+  EXPECT_TRUE(reply.success_called);
+  EXPECT_FALSE(reply.error_called);
+  EXPECT_TRUE(reply.success_value.IsNull());
+}
+
+TEST_F(PreviewRouterTransportTest, PeekToNeverRepliesBadArgs) {
+  MethodRouter router;
+  {
+    RecordedReply reply;
+    router.Dispatch(test_support::MakeCall("previewPeekTo"),
+                    MakeRecorder(reply));
+    EXPECT_TRUE(reply.success_called) << "no args";
+    EXPECT_FALSE(reply.error_called) << "no args";
+  }
+  {
+    const auto reply = DispatchWithArgs(router, "previewPeekTo",
+                                        PlayPauseArgs("sess-1"));
+    EXPECT_TRUE(reply.success_called) << "missing ms";
+    EXPECT_FALSE(reply.error_called) << "missing ms";
+  }
+  {
+    flutter::EncodableMap args;
+    args[flutter::EncodableValue("sessionId")] =
+        flutter::EncodableValue(std::string("sess-1"));
+    args[flutter::EncodableValue("ms")] = flutter::EncodableValue(1234.5);
+    const auto reply =
+        DispatchWithArgs(router, "previewPeekTo", std::move(args));
+    EXPECT_TRUE(reply.success_called) << "double ms";
+    EXPECT_FALSE(reply.error_called) << "double ms";
+  }
+}
+
+TEST_F(PreviewRouterTransportTest, PeekToIsNoLongerANoOp) {
+  // The registration used to be HandleNoopSetter, which accepts anything. The
+  // same table must now hold a handler that seeks: pin it by name so a revert
+  // to the no-op shows up here, not as a dead hover in the editor.
+  HandlerTable table;
+  routers::preview::RegisterHandlers(table);
+  ASSERT_NE(table["previewPeekTo"], nullptr);
+  EXPECT_NE(table["previewPeekTo"], table["playerSeekTo"])
+      << "previewPeekTo must not share the no-op handler";
+  EXPECT_NE(table["previewPeekTo"], table["previewSeekTo"])
+      << "peek is lenient; seek validates and replies BAD_ARGS";
 }
 
 // Phase 4 preview WYSIWYG: previewSetVoiceCleanup is wired (no longer a no-op)
