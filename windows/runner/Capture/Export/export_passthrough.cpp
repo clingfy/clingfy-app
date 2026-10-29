@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -358,6 +359,22 @@ PassthroughResult ExportPassthroughCopy(
   std::error_code ec;
   fs::create_directories(destination.parent_path(), ec);
 
+  // W3: pre-flight the destination BEFORE any probe, render or copy. The save
+  // folder is remembered as a plain path, so an ejected drive, a disconnected
+  // mapped drive or a reassigned drive letter still looks valid in the export
+  // dialog; without this the export renders everything and only fails at the
+  // Sink Writer, with an error that names neither the folder nor the cause.
+  if (const auto problem = ExportDestinationProblem(destination.parent_path())) {
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Export", "export destination unavailable; refusing before rendering: " +
+                      *problem + " (" + destination.parent_path().u8string() +
+                      ")");
+    out.error = PassthroughError::kDestinationUnavailable;
+    out.message = *problem;
+    out.destination_folder = destination.parent_path().u8string();
+    return out;
+  }
+
   // The byte-for-byte copy is only valid when the export needs no work at
   // all: an identity transform (auto/auto), no Slice 3 canvas styling, no
   // Slice 4 audio processing, AND the output container matches the source.
@@ -710,6 +727,78 @@ PassthroughResult ExportPassthroughCopy(
   // kept as the result-contract field.
   out.format_was_downgraded = FormatWasDowngraded(input.format);
   return out;
+}
+
+namespace {
+
+// `\\server\share\dir` lives on the share `\\server\share`, not on
+// `\\server`: a UNC path's volume is its root plus its first component. A
+// drive path's volume is its root (`E:\`).
+fs::path DestinationVolume(const fs::path& folder) {
+  const std::wstring root_name = folder.root_name().wstring();
+  const bool unc = root_name.size() >= 2 &&
+                   (root_name[0] == L'\\' || root_name[0] == L'/') &&
+                   (root_name[1] == L'\\' || root_name[1] == L'/');
+  if (unc) {
+    const fs::path relative = folder.relative_path();
+    if (!relative.empty()) {
+      return folder.root_path() / *relative.begin();
+    }
+  }
+  return folder.root_path();
+}
+
+bool ProbeWriteFolder(const fs::path& folder) {
+  static std::atomic<unsigned> counter{0};
+  const fs::path probe =
+      folder / (L".clingfy-write-probe-" +
+                std::to_wstring(::GetCurrentProcessId()) + L"-" +
+                std::to_wstring(counter.fetch_add(1)));
+  // DELETE_ON_CLOSE: the probe never outlives the handle, even if the
+  // process dies between the write and the close.
+  const HANDLE file = ::CreateFileW(
+      probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+      FILE_ATTRIBUTE_TEMPORARY | FILE_ATTRIBUTE_HIDDEN |
+          FILE_FLAG_DELETE_ON_CLOSE,
+      nullptr);
+  if (file == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+  DWORD written = 0;
+  const BOOL wrote = ::WriteFile(file, "x", 1, &written, nullptr);
+  ::CloseHandle(file);
+  return wrote != FALSE && written == 1;
+}
+
+}  // namespace
+
+std::optional<std::string> ExportDestinationProblem(
+    const fs::path& folder,
+    const std::function<bool(const fs::path&)>& probe_write) {
+  std::error_code ec;
+  if (!fs::exists(folder, ec)) {
+    const fs::path volume = DestinationVolume(folder);
+    std::error_code volume_ec;
+    if (!volume.empty() && !fs::exists(volume, volume_ec)) {
+      return std::string(
+          "The export folder is on a drive or network share that is not "
+          "connected. Reconnect it, or choose another folder.");
+    }
+    return std::string(
+        "The export folder no longer exists and could not be created. Choose "
+        "another folder.");
+  }
+  if (!fs::is_directory(folder, ec)) {
+    return std::string(
+        "The export destination is not a folder. Choose another folder.");
+  }
+  const bool writable =
+      probe_write ? probe_write(folder) : ProbeWriteFolder(folder);
+  if (!writable) {
+    return std::string(
+        "The export folder cannot be written to. Choose another folder.");
+  }
+  return std::nullopt;
 }
 
 bool ShouldRetryExportAfterDeviceRemoved(const PassthroughResult& outcome,

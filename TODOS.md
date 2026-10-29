@@ -1040,8 +1040,6 @@ Tags:
 
 - **Windows crash salvage of the video (fragmented MP4)** — parked, deferred. The MF sink writer writes non-fragmented MP4, so a hard crash leaves an unplayable file and Windows only cleans up and shows a notice. Salvage would need MFTranscodeContainerType_FMPEG4, which is untested with hardware encoders and the preview. Decide using crash telemetry. *Source:* windows/runner/Services/recovery_sweep.h:23-25; docs/windows-port.md:174-191
 
-- **Windows export destination pre-flight** — code, not started. macOS probe-writes the destination before rendering. Windows renders the whole export and fails only at the Sink Writer when a drive or share is gone. The check belongs before D3DDevice::Create. *Source:* windows/runner/Capture/Export/export_pipeline.cpp:363-384; docs/windows-port.md:202-232
-
 - **Windows export audio tiers above 192 kbps** — code, partial. macOS offers 192/256/320 kbps AAC. Windows clamps every tier to 192 because no one has measured which bitrates the MF AAC encoder accepts; after that, raising the cap in ResolveAudioBitrateBps is one line. *Source:* windows/runner/Capture/Export/export_format.cpp:51-62; docs/editing-platform-plan.md:417-424
 
 - **Windows colour-grade parity with Core Image** — code, not started. At strong grades the D2D colour matrix chain differs from Core Image by up to 2.77 (tolerance 0.002). ColorGradeGoldenTest is excluded from CI until it is fixed. The fixtures are committed; the fix needs a Windows machine. *Source:* .github/workflows/ci.yml:703-714; windows/runner/Graphics/color_grade_effect.cpp; docs/editing-platform-plan.md:864-869
@@ -1072,6 +1070,13 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows export destination pre-flight** (2026-10-29, W3 in
+  `docs/windows-machine-work.md`). `ExportDestinationProblem` checks the
+  folder before any work: drive or share not connected (said apart from a
+  missing folder), folder gone, not a folder, or a failed probe write. It runs
+  in `ExportPassthroughCopy`, so the byte-copy path is covered too, and the
+  reply matches macOS (`EXPORT_ERROR`, reason as message, folder as details).
 
 - **The GIF length cap has a Windows native backstop** (2026-10-29, W2 in
   `docs/windows-machine-work.md`). `RenderComposedExport` works out the

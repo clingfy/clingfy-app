@@ -218,6 +218,37 @@ and reordering), with no silent trimming.
 
 ---
 
+## ~~W3. Export destination pre-flight~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry and `docs/windows-port.md`
+("Open parity gap — export destination is not pre-flighted").*
+
+macOS checks the export folder before it renders anything
+(`ExportEngine.destinationProblem(folder:)`, 1.0.x). Windows rendered the whole
+export and failed only at the Sink Writer when the drive or share was gone,
+with an error naming neither. The save folder is a remembered plain path, so
+an ejected USB drive, a disconnected mapped drive or a reassigned drive letter
+all look valid in the dialog.
+
+**Do:**
+- `ExportDestinationProblem(folder)` in `export_passthrough.{h,cpp}`: the
+  drive or share is not connected (said separately from a missing folder),
+  the folder is gone, it is not a folder, or a real probe write fails.
+- Call it in `ExportPassthroughCopy` right after the folder is resolved, so it
+  covers the byte-copy path as well as the render.
+- New `PassthroughError::kDestinationUnavailable`; the router replies
+  `EXPORT_ERROR`, the reason as the message, and the folder as details, the
+  same as macOS.
+
+**Tests:** each reason in `ExportDestinationProblemTest`, a passthrough case
+for an unplugged drive that refuses before any progress, and the router
+reply shape.
+
+**Done when:** an export to a disconnected drive fails at once with "not
+connected", not after the render; tests pass.
+
+---
+
 ## Not briefed yet
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists

@@ -838,6 +838,13 @@ void ReplyForExportOutcome(
           }));
       return;
     }
+    case PassthroughError::kDestinationUnavailable:
+      // W3: the macOS `destinationProblem` reply: EXPORT_ERROR, the reason as
+      // the message (Dart shows it as is), the folder as details.
+      log_failure(error::kExportError, outcome.message);
+      result.Error(error::kExportError, outcome.message,
+                   flutter::EncodableValue(outcome.destination_folder));
+      return;
     case PassthroughError::kCopyFailed:
     case PassthroughError::kRenderFailed:
       log_failure(error::kExportError, outcome.message);

@@ -630,6 +630,30 @@ TEST(StubShapesTest, ReplyForExportOutcomeGifTooLongEmitsMacShapedDetails) {
   EXPECT_EQ(get_i64("maxDurationMs"), 60'000);
 }
 
+// W3: an unreachable destination replies like macOS's destinationProblem:
+// EXPORT_ERROR, the reason as the message, the folder as details.
+TEST(StubShapesTest, ReplyForExportOutcomeDestinationUnavailableNamesTheFolder) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error =
+      clingfy::capture::export_::PassthroughError::kDestinationUnavailable;
+  outcome.message =
+      "The export folder is on a drive or network share that is not "
+      "connected. Reconnect it, or choose another folder.";
+  outcome.destination_folder = "E:\\Exports";
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "E:\\Exports");
+
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportError);
+  EXPECT_EQ(reply.error_message, outcome.message);
+  const auto* folder = std::get_if<std::string>(&reply.error_details);
+  ASSERT_NE(folder, nullptr) << "details must be the folder path";
+  EXPECT_EQ(*folder, "E:\\Exports");
+}
+
 // A preflight disk-full replies EXPORT_DISK_FULL with the macOS-shaped
 // details map: {stage, reason, context:{tempPath, *TempBytes int64,
 // *TempFormatted strings}} — the exact shape ExportPrep.swift emits and
