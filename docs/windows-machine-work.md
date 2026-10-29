@@ -270,6 +270,26 @@ refusal kept.
 
 ---
 
+## ~~W5. Hover frame-peek on the timeline ruler~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.* (W5 is the number; the camera
+layouts, picked up later, take the next free one.)
+
+Hovering the ruler calls `previewPeekTo` (`video_timeline.dart`), which Windows
+registered as a no-op, so hovering never showed the frame. macOS seeks the
+inline view. Dart keeps its own playhead while peeking and seeks back on
+`previewPeekEnd`, so natively a peek is a seek.
+
+**Do:** `HandlePreviewPeekTo` drives `PreviewEngine::SeekTo`, and never
+errors: a malformed hover call is dropped and replied null, as macOS replies
+nil.
+
+**Tests:** stale session replies null; missing args, missing `ms` and a
+double `ms` never reply `BAD_ARGS`; the registration is no longer the shared
+no-op handler.
+
+---
+
 ## Not briefed yet
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists

@@ -2,6 +2,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -693,6 +694,38 @@ void HandlePreviewSeekTo(
   reply::Null(*result);
 }
 
+// previewPeekTo — hovering the timeline ruler shows the frame under the
+// pointer without moving the playhead. Dart's PlayerController keeps its own
+// position while peeking (it ignores the ticks the seek produces) and seeks
+// back to it on previewPeekEnd, so natively a peek is just a seek, exactly as
+// macOS's `previewPeekTo` calls `seekTo` on the inline view.
+//
+// Unlike previewSeekTo it never errors: hover fires many times a second and a
+// malformed one should be dropped, not surfaced. macOS reads `ms` with a 0
+// fallback and replies nil either way; this drops a call it cannot read
+// instead of jumping to 0.
+void HandlePreviewPeekTo(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args != nullptr) {
+    const std::string session_id = ReadString(*args, "sessionId");
+    const auto it = args->find(flutter::EncodableValue("ms"));
+    std::optional<std::int64_t> ms;
+    if (it != args->end()) {
+      if (const auto* ms64 = std::get_if<std::int64_t>(&it->second)) {
+        ms = *ms64;
+      } else if (const auto* ms32 = std::get_if<std::int32_t>(&it->second)) {
+        ms = *ms32;
+      }
+    }
+    if (!session_id.empty() && ms.has_value()) {
+      PreviewEngine::Instance()->SeekTo(session_id, std::max<std::int64_t>(0, *ms));
+    }
+  }
+  reply::Null(*result);
+}
+
 // Phase 9.6: live camera-bubble composition for the inline preview. Dart calls
 // this on placement drags + styling changes (and processVideo forwards the same
 // shape on open). Parses the camera* args and pushes them to the engine, which
@@ -986,16 +1019,14 @@ void HandlePreviewSetAudioGainDb(
 
 void RegisterHandlers(HandlerTable& table) {
   // Steps 5.3 + 5.5: previewOpen / previewClose / previewPlay /
-  // previewPause / previewSeekTo all drive PreviewEngine now.
-  // previewPeekTo (preview-time scrubbing without play) stays a
-  // Phase 1 no-op — it's never called from the current Dart preview
-  // flow and surfaces in a future editor revision.
+  // previewPause / previewSeekTo all drive PreviewEngine. previewPeekTo
+  // (the ruler's hover frame-peek, video_timeline.dart) seeks too.
   table["previewOpen"] = &HandlePreviewOpen;
   table["previewClose"] = &HandlePreviewClose;
   table["previewPlay"] = &HandlePreviewPlay;
   table["previewPause"] = &HandlePreviewPause;
   table["previewSeekTo"] = &HandlePreviewSeekTo;
-  table["previewPeekTo"] = &HandleNoopSetter;
+  table["previewPeekTo"] = &HandlePreviewPeekTo;
 
   table["playerPlay"] = &HandleNoopSetter;
   table["playerPause"] = &HandleNoopSetter;
