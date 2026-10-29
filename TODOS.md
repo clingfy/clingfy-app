@@ -1049,7 +1049,6 @@ Tags:
 
 - **Windows mic-out-of-loopback cancellation ('Listen to this device')** — idea, not started. With 'Listen to this device' on, the mic plays to the render endpoint and leaks into the system-audio loopback. Removing it would need the reverse of the export-time speaker-bleed canceller. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:225-237
 
-- **Windows hardware-accelerated preview decode (GPU end to end)** — code, not started. The preview reader uses CPU advanced video processing. Pairing it with the D3D manager measured about 1 fps because of GPU-to-CPU readback, so keeping frames on the GPU needs the compositor's upload seam redesigned. *Source:* GitHub issue #296; windows/runner/preview/preview_source_reader.cpp:95-106
 
 - **Windows automatic updates (WinSparkle, in-app download, release notes)** — parked, deferred. Only a manual 'Check for Updates' exists; it opens the installer URL in the browser. There are no background checks, no in-app download or SHA check, and no release notes, and WinSparkle is not integrated (planned for the public beta). *Source:* windows/runner/Updater/; lib/app/settings/sections/about_settings_section.dart:72; docs/windows-port.md:357-362
 
@@ -1059,6 +1058,11 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows hardware-accelerated preview decode** (2026-10-30, W13a in
+  `docs/windows-machine-work.md`, issue #296). The stitched preview decodes
+  on its own device and copies surface to surface: 4K60 152 fps against 24
+  on the CPU path.
 
 - **Windows fixed-target zoom** (2026-10-29, W10 in
   `docs/windows-machine-work.md`). The draggable focus point works in the
