@@ -1020,8 +1020,6 @@ Tags:
 
 ### Windows parity (Windows machine)
 
-- **Windows capture quality and frame-rate control** — code, not started. setRecordingQuality and setCaptureFrameRate are no-ops, so the Quality and frame-rate group is hidden on Windows. Windows always records at the display's resolution and frame rate. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:425, :430; lib/app/home/recording/widgets/recording_output_section.dart:46-49
-
 - **Windows 'Exclude Clingfy from capture'** — code, not started. setExcludeRecorderApp is a no-op and the toggle is hidden. The obvious WDA approach risks the hybrid-GPU blank-window failure. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:219-223, :427; lib/app/home/recording/widgets/recording_options_sidebar.dart:531-534
 
 - **Windows live cursor highlight while recording** — code, not started. setCursorHighlightEnabled and setCursorHighlightLinkedToRecording are no-ops, so there is no live cursor halo on Windows and the Pointer control is hidden. *Source:* windows/runner/Bridge/Routers/camera_overlay_router.cpp:304-305; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
@@ -1060,6 +1058,11 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows capture frame-rate control** (2026-10-29, W9 in
+  `docs/windows-machine-work.md`). The 30 / 60 fps dropdown shows on Windows,
+  and `CaptureFramePacer` caps WGC's display-cadence frames to it in the drain
+  loop. `setRecordingQuality` has no UI caller on either platform.
 
 - **Windows colour-grade parity with Core Image** (2026-10-29, W8 in
   `docs/windows-machine-work.md`). Already fixed by #275 (golden worst 0.0017

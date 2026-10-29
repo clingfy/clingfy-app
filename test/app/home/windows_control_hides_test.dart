@@ -13,7 +13,6 @@ import 'package:macos_ui/macos_ui.dart';
 /// Phase 10.3 honest-UI sweep: controls whose native half is a no-op on
 /// Windows are hidden there — and stay visible on macOS where they work.
 /// Covered here (standalone sections):
-///   - RecordingOutputSection: frame-rate group (setCaptureFrameRate no-op)
 ///   - RecordingSourceSection: area Reveal button (reveal overlay missing)
 ///   - PostBackgroundSection: image/preset modes (export renders color only)
 ///   - RecordingAudioSection: exclude-mic toggle — hidden for a DIFFERENT
@@ -61,17 +60,18 @@ void main() {
       onCountdownDurationChanged: (_) {},
     );
 
-    testWidgets('hidden on Windows (setCaptureFrameRate is a no-op)', (
+    testWidgets('visible on Windows (the engine paces to the setting)', (
       tester,
     ) async {
+      // Hidden until 2026-10-29, when Windows recorded at the display's
+      // cadence whatever was picked. CaptureFramePacer now caps it.
       debugPlatformKindOverride = PlatformKind.windows;
       await tester.pumpWidget(host(section()));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const Key('recording_output_quality_group')),
-        findsNothing,
+        findsOneWidget,
       );
-      // The rest of the section still renders.
       expect(
         find.byKey(const Key('recording_output_start_stop_group')),
         findsOneWidget,

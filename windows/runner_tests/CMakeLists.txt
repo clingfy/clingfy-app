@@ -42,6 +42,7 @@ add_executable(runner_tests
   "updater_router_test.cpp"
   "area_picker_geometry_test.cpp"
   "display_label_test.cpp"
+  "capture_frame_pacer_test.cpp"
   "canvas_composition_test.cpp"
   "background_image_cache_test.cpp"
   "abstract_waves_params_test.cpp"

@@ -3,7 +3,6 @@ import 'package:clingfy/ui/platform/widgets/app_form_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_settings_group.dart';
 import 'package:clingfy/ui/platform/widgets/app_sidebar_tokens.dart';
 import 'package:clingfy/ui/platform/widgets/platform_dropdown.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 import 'package:flutter/material.dart' hide PlatformMenuItem;
 
 class RecordingOutputSection extends StatelessWidget {
@@ -43,38 +42,36 @@ class RecordingOutputSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Phase 10.3 (Windows): setCaptureFrameRate is a native no-op — the
-        // engine records at the display cadence. A dropdown that persists
-        // but never applies is hidden until the setter is real.
-        if (!isWindows())
-          AppSettingsGroup(
-            sectionKey: const Key('recording_output_quality_group'),
-            title: l10n.quality,
-            showHeader: false,
-            children: [
-              AppFormRow(
-                label: l10n.frameRate,
-                control: PlatformDropdown<int>(
-                  value: captureFrameRate,
-                  labelText: l10n.frameRate,
-                  minWidth: 0,
-                  maxWidth: double.infinity,
-                  expand: true,
-                  items: [30, 60]
-                      .map(
-                        (fps) =>
-                            PlatformMenuItem(value: fps, label: l10n.fps(fps)),
-                      )
-                      .toList(),
-                  onChanged: isRecording
-                      ? null
-                      : (value) {
-                          if (value != null) onFrameRateChanged(value);
-                        },
-                ),
+        // The frame rate reaches native in startRecording's `frameRate`; both
+        // platforms honour it (Windows paces WGC frames, CaptureFramePacer).
+        AppSettingsGroup(
+          sectionKey: const Key('recording_output_quality_group'),
+          title: l10n.quality,
+          showHeader: false,
+          children: [
+            AppFormRow(
+              label: l10n.frameRate,
+              control: PlatformDropdown<int>(
+                value: captureFrameRate,
+                labelText: l10n.frameRate,
+                minWidth: 0,
+                maxWidth: double.infinity,
+                expand: true,
+                items: [30, 60]
+                    .map(
+                      (fps) =>
+                          PlatformMenuItem(value: fps, label: l10n.fps(fps)),
+                    )
+                    .toList(),
+                onChanged: isRecording
+                    ? null
+                    : (value) {
+                        if (value != null) onFrameRateChanged(value);
+                      },
               ),
-            ],
-          ),
+            ),
+          ],
+        ),
         AppSettingsGroup(
           anchorKey: startAndStopGuideAnchorKey,
           sectionKey: const Key('recording_output_start_stop_group'),
