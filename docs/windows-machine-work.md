@@ -390,13 +390,41 @@ the Windows dropdown visible in `windows_control_hides_test.dart`.
 
 ---
 
-## Not briefed yet
+## Not briefed yet — triage, 2026-10-29
 
-`TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists
-every other Windows gap found on 2026-10-20, each with its source. Some
-examples: capture quality and frame rate, exclude-from-capture, cursor
-highlight, the side-by-side / stacked / background camera layouts, the export
-destination pre-flight, colour-grade parity, automatic updates and signing.
-When one is picked up, write its brief here as W3, W4, and so on, in the
+`TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
+remaining gaps, each with its source. After W1-W9, none of them is a
+self-contained task a session can finish and verify alone. Each one is
+waiting on something:
+
+**Needs the owner watching a real capture.** `WDA_EXCLUDEFROMCAPTURE` makes
+screenshots a false oracle, so these cannot be verified unsupervised:
+- Exclude Clingfy from capture (`setExcludeRecorderApp`). The obvious WDA
+  approach risks the hybrid-GPU blank-window failure, and there is an open
+  hide-vs-show product call for the four capture-excluded windows.
+- Live cursor highlight while recording.
+- The Reveal Area overlay.
+
+**Blocked on a design decision:**
+- Fixed-target zoom. On macOS the draggable focus point is honoured only by
+  the live preview: `zoom.manual.json` never stores `focusMode` /
+  `fixedTarget` (`ZoomManualStore.swift`), and the exporter rebuilds segments
+  without them (`LetterboxExporter.swift`, "Load manual segments"). So the
+  point is lost on reopen and never reaches the export. Copying it would
+  ship the same preview ≠ export gap; decide the store format first.
+- Preview mic gain / voice cleanup before the first cut, and preview
+  speaker-echo removal. Both need a host for the DSP on the passthrough path,
+  which `docs/decisions/windows-editing-step4-7-preview-audio.md` (D6.1)
+  blocks on the preview audio clock, not the maths.
+- GPU-end-to-end preview decode (#296): the compositor's upload seam needs a
+  redesign first.
+
+**Parked by an earlier decision:** area selection remembered across restarts,
+window capture following resizes, crash salvage via fragmented MP4, the true
+squircle mask, automatic updates (WinSparkle), and code signing (not planned).
+
+**Ideas, not started:** the burned-in desktop bubble mode and mic-out-of-
+loopback cancellation.
+
+When one is unblocked, write its brief here as W10, W11, and so on, in the
 shape of W1.
-
