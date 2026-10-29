@@ -144,6 +144,29 @@ which are the only recorded numbers for this defect.
   declares limited range and contains it (#372). See
   `docs/decisions/macos-export-transfer-curve.md`.
 
+## Export — engine
+
+### An export crashed once inside CVPixelBufferPoolCreatePixelBuffer — code (watch)
+
+*Seen once, 2026-10-29,* in the test host during a combined run of the export
+suites, in `ColorGradeValidatorMarginTests.testGradeMarginsWithPaddingOnALightModeUIFixture`.
+`EXC_BREAKPOINT` in `CFDictionaryGetValue`, reached from
+`CVPixelBuffer::setDefaultAttachments` → `CVPixelBufferPoolCreatePixelBufferWithAuxAttributes`
+← `makePooledPixelBuffer` (`ExportMemory.swift:46`) ← `awaitPooledPixelBuffer` ←
+`renderNextFrame` (`LetterboxExporter.swift:~2494`), on the writer's request queue.
+That is the pool's default-attachments dictionary being read while invalid.
+
+It did not reproduce in five more runs: three of the same combined suite (one on
+develop without the change under test), and two of that class alone. It is in
+the no-camera writer path, which that change did not touch. Likely a rare race
+around the pool, the writer's lifetime, or buffer attachments
+(`VideoColorPipeline.tag(pixelBuffer:)` sets four propagated attachments on every
+rendered buffer).
+
+**To close:** if it is seen again, in a test run or a user report, compare the
+stack. With two sightings, look for the pool used after its writer
+finished or cancelled, or a buffer being tagged while it returns to the pool.
+
 ## Export — GIF
 
 ### Windows GIF has no size presets, cap or drift-free timing — code (Windows machine)
@@ -1000,8 +1023,6 @@ Tags:
 
 ### Engine and tech debt
 
-- **Delete the dead pre-styled camera pass** — code, macOS, cleanup. `CameraStyledIntermediatePipeline.runStyledPass` (~700 lines) and the `cameraAssetIsPreStyled` / `placementSourceRect` plumbing through `CameraPreparedIntermediate`, `LetterboxExporter` and `CompositionBuilder` are unreachable since #33. `requiresPrepass` is chroma key only, and that branch returns `false`. Two tests still build pre-styled compositions by hand (`testIntroAnimationAppliesToPreStyledCameraAsset`). *Source:* macos/Runner/Capture/Export/CameraStyledIntermediatePipeline.swift:49-196; CompositionBuilder.swift:2515-2531
-
 - **Metal/CIImage replacement for AVVideoCompositionCoreAnimationTool** — parked, macOS, parked. A future spike. The ~100-CALayer ceiling has never been hit, so nothing is blocked on it. *Source:* docs/editing-platform-plan.md:852-855
 
 - **Finish the ScreenRecorderFacade strangler (coordinators into RecordingEngine)** — code, macOS, not planned. The facade is still a ~3,000-line orchestrator. Moving the camera, overlay, cursor and indicator coordinators into RecordingEngine was judged a large slice with little payoff. *Source:* docs/windows-port-inventory.md:485-503
@@ -1068,6 +1089,13 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **The dead pre-styled camera pass is deleted** (2026-10-29). `runStyledPass`, the
+  styled intermediate renderer and its validation, and the `cameraAssetIsPreStyled`
+  / placement-source-rect plumbing are gone, along with the non-inline camera
+  branch of `CompositionBuilder`: about 1,300 lines across three files. All were
+  unreachable since #33. An independent review found no behaviour change, and the
+  combined export, camera and validator suites pass (185).
 
 - **No-camera exports graded their background and padding, unlike the preview**
   (fixed 2026-10-26, decided: grade the screen only). The composition now renders

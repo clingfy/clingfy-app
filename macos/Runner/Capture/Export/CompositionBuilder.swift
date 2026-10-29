@@ -1964,7 +1964,6 @@ final class CompositionBuilder {
     let cameraTrackID: CMPersistentTrackID
     let zOrder: CameraLayoutResolution.ZOrder
     let sourceSize: CGSize
-    let sourceRect: CGRect?
     let shape: CameraShape
     let cornerRadius: Double
     let borderWidth: Double
@@ -2042,8 +2041,6 @@ final class CompositionBuilder {
     cameraParams: CameraCompositionParams?,
     cursorRecording: CursorRecording?,
     cameraSyncTimeline: CameraSyncTimeline? = nil,
-    cameraAssetIsPreStyled: Bool = false,
-    cameraPlacementSourceRect: CGRect? = nil,
     screenSourceMode: ScreenSourceMode = .liveScreenTrack,
     screenAudioAsset: AVAsset? = nil
   ) -> ExportCompositionResult? {
@@ -2059,8 +2056,6 @@ final class CompositionBuilder {
         cameraParams: cameraParams,
         cursorRecording: cursorRecording,
         cameraSyncTimeline: cameraSyncTimeline,
-        cameraAssetIsPreStyled: cameraAssetIsPreStyled,
-        cameraPlacementSourceRect: cameraPlacementSourceRect,
         screenSourceMode: screenSourceMode,
         screenAudioAsset: screenAudioAsset
       )
@@ -2369,8 +2364,6 @@ final class CompositionBuilder {
     cameraParams: CameraCompositionParams,
     cursorRecording: CursorRecording?,
     cameraSyncTimeline: CameraSyncTimeline?,
-    cameraAssetIsPreStyled: Bool,
-    cameraPlacementSourceRect: CGRect?,
     screenSourceMode: ScreenSourceMode,
     screenAudioAsset: AVAsset?
   ) -> ExportCompositionResult? {
@@ -2491,7 +2484,6 @@ final class CompositionBuilder {
         canvasSize: target,
         params: cameraParams
       )
-      var cameraMaskSamples: [VisibleRegionMaskSample] = []
       var cameraValidationSamples: [ExportValidationInfo.CameraSample] = []
       var inlineCameraRenderPlan: InlineCameraRenderPlan?
       let screenDuration = max(0.0, screenAsset.duration.seconds)
@@ -2530,32 +2522,18 @@ final class CompositionBuilder {
             )
           }
 
-          let cameraLayerInstruction = AVMutableVideoCompositionLayerInstruction(
-            assetTrack: composedCameraTrack
-          )
-          let cameraFitMode: String =
-            cameraAssetIsPreStyled ? "fit" : (cameraParams.contentMode == .fit ? "fit" : "fill")
           let cameraSourceSize = orientedSize(cameraTrack)
-          let fullNormalizedCameraSourceSize = fullNormalizedSourceSize(
-            for: cameraTrack,
-            sourceSize: cameraSourceSize
-          )
-          let rawPlacementSourceRect = cameraAssetIsPreStyled ? cameraPlacementSourceRect?.standardized : nil
-          let normalizedPlacementSourceRect = rawPlacementSourceRect.flatMap {
-            normalizedTrackSourceRect(from: $0, fullSourceSize: fullNormalizedCameraSourceSize)
-          }
           let effectiveDuration = screenDuration
           // Every camera goes through the inline renderer, which grades only
           // the screen. A plain square camera used to skip it, and the writer
           // then graded the whole canvas, bubble and padding included, unlike
-          // the live preview and every other camera shape.
-          let shouldInlineCameraRender = !cameraAssetIsPreStyled
+          // the live preview and every other camera shape. The camera track
+          // therefore gets no layer instruction of its own: InlineCameraRenderer
+          // shapes, places and fades it from the plan built below.
 
           if CameraPlacementDebug.enabled {
             var context: [String: Any] = [
-              "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
-              "cameraInlineRenderSelected": shouldInlineCameraRender,
-              "cameraFitMode": cameraFitMode,
+              "cameraContentMode": cameraParams.contentMode == .fit ? "fit" : "fill",
               "zoomSamplesCount": exportZoomSamples.count,
               "cameraSyncSegmentsCount": insertionSegments.count,
               "zoomApplicationMode": screenSourceMode == .precompositedCanvas
@@ -2572,20 +2550,6 @@ final class CompositionBuilder {
             )
             context.merge(
               CameraPlacementDebug.sizeContext(prefix: "cameraSourceSize", size: cameraSourceSize),
-              uniquingKeysWith: { _, new in new }
-            )
-            context.merge(
-              CameraPlacementDebug.rectContext(
-                prefix: "rawPlacementSourceRect",
-                rect: rawPlacementSourceRect
-              ),
-              uniquingKeysWith: { _, new in new }
-            )
-            context.merge(
-              CameraPlacementDebug.rectContext(
-                prefix: "normalizedPlacementSourceRect",
-                rect: normalizedPlacementSourceRect
-              ),
               uniquingKeysWith: { _, new in new }
             )
 
@@ -2633,36 +2597,10 @@ final class CompositionBuilder {
             return cameraOpacities[idx]
           }
           var didLogFirstActiveZoomSample = false
-          let cameraTransforms = resolvedCameraPresentation.enumerated().map { idx, animatedCamera in
-            // CameraLayoutResolver returns frames in CG bottom-left-origin
-            // coordinates (y=0 at bottom), but AVVideoComposition layer
-            // instructions use top-left-origin (y=0 at top). Flip the
-            // y-coordinate so the camera appears at the correct vertical
-            // position in the exported video.
-            let cgFrame = animatedCamera.frame
-            let flippedDestinationRect = CGRect(
-              x: cgFrame.minX,
-              y: target.height - cgFrame.maxY,
-              width: cgFrame.width,
-              height: cgFrame.height
-            )
-            let transform = fittedTransform(
-              for: cameraTrack,
-              sourceSize: cameraSourceSize,
-              sourceRect: cameraAssetIsPreStyled ? cameraPlacementSourceRect : nil,
-              destinationRect: flippedDestinationRect,
-              fitMode: cameraFitMode,
-              mirror: cameraAssetIsPreStyled ? false : cameraParams.mirror
-            )
+          for (idx, animatedCamera) in resolvedCameraPresentation.enumerated() {
             let sample = cameraPresentation[idx]
             let cameraOpacity = synchronizedCameraOpacities[idx]
             let resolvedCameraFrame = cameraOpacity > 0.001 ? animatedCamera.frame.standardized : nil
-            cameraMaskSamples.append(
-              VisibleRegionMaskSample(
-                time: sample.time,
-                cameraFrame: resolvedCameraFrame
-              )
-            )
             cameraValidationSamples.append(
               ExportValidationInfo.CameraSample(
                 time: sample.time,
@@ -2698,31 +2636,6 @@ final class CompositionBuilder {
                 ),
                 uniquingKeysWith: { _, new in new }
               )
-              context.merge(
-                CameraPlacementDebug.rectContext(
-                  prefix: "flippedCameraFrame",
-                  rect: flippedDestinationRect
-                ),
-                uniquingKeysWith: { _, new in new }
-              )
-              context.merge(
-                CameraPlacementDebug.rectContext(
-                  prefix: "rawPlacementSourceRect",
-                  rect: rawPlacementSourceRect
-                ),
-                uniquingKeysWith: { _, new in new }
-              )
-              context.merge(
-                CameraPlacementDebug.rectContext(
-                  prefix: "normalizedPlacementSourceRect",
-                  rect: normalizedPlacementSourceRect
-                ),
-                uniquingKeysWith: { _, new in new }
-              )
-              context.merge(
-                CameraPlacementDebug.transformContext(prefix: "cameraTransform", transform: transform),
-                uniquingKeysWith: { _, new in new }
-              )
 
               NativeLogger.d(
                 "CameraPlacementDbg",
@@ -2730,7 +2643,6 @@ final class CompositionBuilder {
                 context: context
               )
             }
-            return transform
           }
           let inlineSamples = cameraPresentation.enumerated().map { idx, sample in
             let opacity = CGFloat(synchronizedCameraOpacities[idx])
@@ -2744,12 +2656,6 @@ final class CompositionBuilder {
           if effectiveDuration < screenAsset.duration.seconds {
             let frameDuration = 1.0 / max(Double(params.fpsHint), 30.0)
             let hideTime = min(screenAsset.duration.seconds, effectiveDuration + frameDuration)
-            cameraMaskSamples.append(
-              VisibleRegionMaskSample(
-                time: hideTime,
-                cameraFrame: nil
-              )
-            )
             cameraValidationSamples.append(
               ExportValidationInfo.CameraSample(
                 time: hideTime,
@@ -2757,31 +2663,27 @@ final class CompositionBuilder {
                 zoomActive: false
               )
             )
-            if shouldInlineCameraRender {
-              inlineCameraRenderPlan = InlineCameraRenderPlan(
-                cameraTrackID: composedCameraTrack.trackID,
-                zOrder: cameraResolution.zOrder,
-                sourceSize: cameraSourceSize,
-                sourceRect: normalizedPlacementSourceRect,
-                shape: cameraParams.shape,
-                cornerRadius: cameraParams.cornerRadius,
-                borderWidth: cameraParams.borderWidth,
-                borderColorArgb: cameraParams.borderColorArgb,
-                shadowPreset: cameraParams.shadowPreset,
-                mirror: cameraParams.mirror,
-                opacity: cameraParams.opacity,
-                contentMode: cameraParams.contentMode,
-                samples: inlineSamples + [
-                  InlineCameraRenderPlan.Sample(time: hideTime, frame: nil, opacity: 0.0)
-                ]
-              )
-            }
-          } else if shouldInlineCameraRender {
             inlineCameraRenderPlan = InlineCameraRenderPlan(
               cameraTrackID: composedCameraTrack.trackID,
               zOrder: cameraResolution.zOrder,
               sourceSize: cameraSourceSize,
-              sourceRect: normalizedPlacementSourceRect,
+              shape: cameraParams.shape,
+              cornerRadius: cameraParams.cornerRadius,
+              borderWidth: cameraParams.borderWidth,
+              borderColorArgb: cameraParams.borderColorArgb,
+              shadowPreset: cameraParams.shadowPreset,
+              mirror: cameraParams.mirror,
+              opacity: cameraParams.opacity,
+              contentMode: cameraParams.contentMode,
+              samples: inlineSamples + [
+                InlineCameraRenderPlan.Sample(time: hideTime, frame: nil, opacity: 0.0)
+              ]
+            )
+          } else {
+            inlineCameraRenderPlan = InlineCameraRenderPlan(
+              cameraTrackID: composedCameraTrack.trackID,
+              zOrder: cameraResolution.zOrder,
+              sourceSize: cameraSourceSize,
               shape: cameraParams.shape,
               cornerRadius: cameraParams.cornerRadius,
               borderWidth: cameraParams.borderWidth,
@@ -2792,63 +2694,6 @@ final class CompositionBuilder {
               contentMode: cameraParams.contentMode,
               samples: inlineSamples
             )
-          }
-
-          if !shouldInlineCameraRender {
-            if let firstTransform = cameraTransforms.first {
-              cameraLayerInstruction.setTransform(firstTransform, at: .zero)
-            }
-            if let firstOpacity = synchronizedCameraOpacities.first {
-              cameraLayerInstruction.setOpacity(firstOpacity, at: .zero)
-            }
-
-            if cameraTransforms.count >= 2,
-              let firstTransform = cameraTransforms.first,
-              cameraTransforms.dropFirst().contains(where: {
-                !transformsApproximatelyEqual($0, firstTransform)
-              })
-            {
-              for idx in 0..<(cameraPresentation.count - 1) {
-                let startSeconds = cameraPresentation[idx].time
-                let endSeconds = min(cameraPresentation[idx + 1].time, effectiveDuration)
-                guard endSeconds > startSeconds else { continue }
-
-                let startTime = CMTime(seconds: startSeconds, preferredTimescale: 600)
-                let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
-                let timeRange = CMTimeRange(start: startTime, end: endTime)
-                cameraLayerInstruction.setTransformRamp(
-                  fromStart: cameraTransforms[idx],
-                  toEnd: cameraTransforms[idx + 1],
-                  timeRange: timeRange
-                )
-              }
-            }
-
-            if synchronizedCameraOpacities.count >= 2,
-              let firstOpacity = synchronizedCameraOpacities.first,
-              synchronizedCameraOpacities.dropFirst().contains(where: { abs($0 - firstOpacity) > 0.0001 })
-            {
-              for idx in 0..<(cameraPresentation.count - 1) {
-                let startSeconds = cameraPresentation[idx].time
-                let endSeconds = min(cameraPresentation[idx + 1].time, effectiveDuration)
-                guard endSeconds > startSeconds else { continue }
-
-                let startTime = CMTime(seconds: startSeconds, preferredTimescale: 600)
-                let endTime = CMTime(seconds: endSeconds, preferredTimescale: 600)
-                let timeRange = CMTimeRange(start: startTime, end: endTime)
-                cameraLayerInstruction.setOpacityRamp(
-                  fromStartOpacity: synchronizedCameraOpacities[idx],
-                  toEndOpacity: synchronizedCameraOpacities[idx + 1],
-                  timeRange: timeRange
-                )
-              }
-            }
-
-            if cameraResolution.zOrder == .behindScreen {
-              layerInstructions = [screenLayerInstruction, cameraLayerInstruction]
-            } else {
-              layerInstructions = [cameraLayerInstruction, screenLayerInstruction]
-            }
           }
         }
       }
@@ -2882,10 +2727,10 @@ final class CompositionBuilder {
         ty: ty,
         videoToTargetScale: screenScale,
         zoomSamples: exportZoomSamples,
-        visibleRegionMaskSamples: inlineCameraRenderPlan == nil ? cameraMaskSamples : [],
-        forceVisibleRegionMask: inlineCameraRenderPlan == nil
-          && screenSourceMode == .precompositedCanvas
-          && !cameraMaskSamples.isEmpty,
+        // Camera mask samples only ever carved a hole for a camera drawn by a
+        // layer instruction; every visible camera now renders inline, so the
+        // screen layer has no camera region to mask.
+        visibleRegionMaskSamples: [],
         zoomApplicationMode: screenSourceMode == .liveScreenTrack ? .screenOverlayOnly : .none,
         // When the camera is composited inline (InlineCameraRenderer), the
         // screen layer is rendered onto a transparent background so the

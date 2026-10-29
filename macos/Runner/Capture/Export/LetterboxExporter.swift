@@ -298,7 +298,7 @@ final class LetterboxExporter {
   }
 
   private func shouldSweepStaleTemporaryArtifact(named fileName: String) -> Bool {
-    // Intermediates are .mov (styled/prepass renders) or .caf (the echo-cancelled
+    // Intermediates are .mov (keyed/prepass renders) or .caf (the echo-cancelled
     // mic). A .mov-only guard silently stranded every mic-echo-cancelled-*.caf,
     // so the one backstop that could reclaim crash-orphaned canceller files never
     // matched them.
@@ -478,12 +478,6 @@ final class LetterboxExporter {
     generator.requestedTimeToleranceBefore = .zero
     generator.requestedTimeToleranceAfter = .zero
     return try generator.copyCGImage(at: sampleTime, actualTime: nil)
-  }
-
-  private func orientedSize(for asset: AVAsset) -> CGSize? {
-    guard let track = asset.tracks(withMediaType: .video).first else { return nil }
-    let rect = CGRect(origin: .zero, size: track.naturalSize).applying(track.preferredTransform)
-    return CGSize(width: abs(rect.width), height: abs(rect.height))
   }
 
   private func analyzeFrameContent(
@@ -798,30 +792,6 @@ final class LetterboxExporter {
     }
   }
 
-  private func bestMetrics(
-    from image: CGImage,
-    cropRect: CGRect?,
-    canvasSize: CGSize,
-    ignoreTransparentPixels: Bool
-  ) -> FrameContentMetrics? {
-    let candidateImages: [CGImage]
-    if let cropRect {
-      candidateImages = croppedImageVariants(
-        from: image,
-        cropRect: cropRect,
-        canvasSize: canvasSize
-      )
-    } else {
-      candidateImages = [image]
-    }
-
-    return candidateImages
-      .compactMap { analyzeFrameContent($0, ignoreTransparentPixels: ignoreTransparentPixels) }
-      .max(by: { lhs, rhs in
-        lhs.nonBlackVisibleRatio < rhs.nonBlackVisibleRatio
-      })
-  }
-
   private func bestColorMetrics(
     from image: CGImage,
     cropRect: CGRect?,
@@ -912,69 +882,6 @@ final class LetterboxExporter {
         category,
         "\(message) exceeded warning threshold",
         context: context
-      )
-    }
-  }
-
-  private func validateStyledCameraIntermediate(
-    rawCameraAsset: AVAsset,
-    styledCameraAsset: AVAsset,
-    placementSourceRect: CGRect?
-  ) -> NSError? {
-    do {
-      let rawImage = try sampleFrameImage(asset: rawCameraAsset)
-      let styledImage = try sampleFrameImage(asset: styledCameraAsset)
-      let styledCanvasSize = orientedSize(for: styledCameraAsset)
-        ?? CGSize(width: styledImage.width, height: styledImage.height)
-
-      guard
-        let rawMetrics = analyzeFrameContent(rawImage, ignoreTransparentPixels: false),
-        let styledMetrics = bestMetrics(
-          from: styledImage,
-          cropRect: placementSourceRect,
-          canvasSize: styledCanvasSize,
-          ignoreTransparentPixels: true
-        )
-      else {
-        return makeAdvancedCameraExportError(
-          stage: .styledIntermediateValidation,
-          reason: "The camera export validator could not analyze the rendered frame."
-        )
-      }
-
-      NativeLogger.d(
-        "Export",
-        "Styled camera validation metrics",
-        context: [
-          "rawVisibleRatio": rawMetrics.visibleRatio,
-          "rawNonBlackRatio": rawMetrics.nonBlackVisibleRatio,
-          "styledVisibleRatio": styledMetrics.visibleRatio,
-          "styledNonBlackRatio": styledMetrics.nonBlackVisibleRatio,
-        ]
-      )
-
-      guard rawMetrics.nonBlackVisibleRatio >= 0.05 else {
-        return nil
-      }
-
-      if styledMetrics.visiblePixels == 0 || styledMetrics.nonBlackVisibleRatio < 0.01 {
-        return makeAdvancedCameraExportError(
-          stage: .styledIntermediateValidation,
-          reason: "The styled camera intermediate rendered blank or black video.",
-          context: [
-            "rawNonBlackRatio": rawMetrics.nonBlackVisibleRatio,
-            "styledVisibleRatio": styledMetrics.visibleRatio,
-            "styledNonBlackRatio": styledMetrics.nonBlackVisibleRatio,
-          ]
-        )
-      }
-
-      return nil
-    } catch {
-      return makeAdvancedCameraExportError(
-        stage: .styledIntermediateValidation,
-        reason: "The camera export validator could not sample the styled intermediate.",
-        context: ["error": error.localizedDescription]
       )
     }
   }
@@ -3308,8 +3215,6 @@ final class LetterboxExporter {
       resolvedScreenInputURL: URL,
       resolvedCameraInputURL: URL?,
       progressRange: ClosedRange<Double>,
-      cameraAssetIsPreStyled: Bool,
-      cameraPlacementSourceRect: CGRect?,
       screenSourceMode: CompositionBuilder.ScreenSourceMode
     ) {
       let screenAsset = AVAsset(url: resolvedScreenInputURL)
@@ -3319,18 +3224,10 @@ final class LetterboxExporter {
         var context: [String: Any] = [
           "resolvedScreenInputURL": resolvedScreenInputURL.path,
           "resolvedCameraInputURL": resolvedCameraInputURL?.path ?? "nil",
-          "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
           "screenSourceMode": screenSourceMode.rawValue,
         ]
         context.merge(
           CameraPlacementDebug.sizeContext(prefix: "target", size: target),
-          uniquingKeysWith: { _, new in new }
-        )
-        context.merge(
-          CameraPlacementDebug.rectContext(
-            prefix: "cameraPlacementSourceRect",
-            rect: cameraPlacementSourceRect
-          ),
           uniquingKeysWith: { _, new in new }
         )
         if let cameraParams {
@@ -3364,8 +3261,6 @@ final class LetterboxExporter {
           cameraParams: cameraParams,
           cursorRecording: cursorRecording,
           cameraSyncTimeline: cameraSyncTimeline,
-          cameraAssetIsPreStyled: cameraAssetIsPreStyled,
-          cameraPlacementSourceRect: cameraPlacementSourceRect,
           screenSourceMode: screenSourceMode,
           screenAudioAsset: screenSourceMode == .precompositedCanvas ? asset : nil
         )
@@ -3541,7 +3436,6 @@ final class LetterboxExporter {
       var exportStartContext: [String: Any] = [
         "input": resolvedScreenInputURL.path,
         "cameraInput": resolvedCameraInputURL?.path ?? "nil",
-        "cameraAssetIsPreStyled": cameraAssetIsPreStyled,
         "screenSourceMode": screenSourceMode.rawValue,
         "screenZoomBaked": comp.debugInfo.screenZoomIsPrecomposited,
         "output": outputURL.path,
@@ -3679,8 +3573,6 @@ final class LetterboxExporter {
 
     func beginScreenPhase(
       resolvedCameraInputURL: URL?,
-      cameraAssetIsPreStyled: Bool,
-      cameraPlacementSourceRect: CGRect?,
       screenPrepassRange: ClosedRange<Double>?,
       finalRange: ClosedRange<Double>
     ) {
@@ -3689,8 +3581,6 @@ final class LetterboxExporter {
           resolvedScreenInputURL: inputURL,
           resolvedCameraInputURL: resolvedCameraInputURL,
           progressRange: finalRange,
-          cameraAssetIsPreStyled: cameraAssetIsPreStyled,
-          cameraPlacementSourceRect: cameraPlacementSourceRect,
           screenSourceMode: .liveScreenTrack
         )
         return
@@ -3727,8 +3617,6 @@ final class LetterboxExporter {
             resolvedScreenInputURL: prepared.url,
             resolvedCameraInputURL: resolvedCameraInputURL,
             progressRange: finalRange,
-            cameraAssetIsPreStyled: cameraAssetIsPreStyled,
-            cameraPlacementSourceRect: cameraPlacementSourceRect,
             screenSourceMode: .precompositedCanvas
           )
 
@@ -3743,7 +3631,6 @@ final class LetterboxExporter {
       let cameraParams,
       shouldUseCameraPrepass
     {
-      let cameraAsset = AVAsset(url: cameraInputURL)
       let cameraRange: ClosedRange<Double> = shouldUseScreenPrepass ? (0.0...0.35) : (0.0...0.35)
       let screenRange: ClosedRange<Double>? = shouldUseScreenPrepass ? (0.35...0.65) : nil
       let finalRange: ClosedRange<Double> = shouldUseScreenPrepass ? (0.65...1.0) : (0.35...1.0)
@@ -3761,37 +3648,16 @@ final class LetterboxExporter {
         case .success(let prepared):
           prepared.temporaryArtifacts.forEach { self.registerTemporaryArtifact($0) }
 
-          if prepared.cameraAssetIsPreStyled,
-            let validationError = self.validateStyledCameraIntermediate(
-              rawCameraAsset: cameraAsset,
-              styledCameraAsset: AVAsset(url: prepared.url),
-              placementSourceRect: prepared.placementSourceRect
-            )
-          {
-            NativeLogger.e(
-              "Export",
-              "Camera pre-pass validation failed",
-              context: validationError.userInfo
-            )
-            self.cleanupTemporaryArtifacts()
-            completion(.failure(validationError))
-            return
-          }
-
           NativeLogger.i(
             "Export",
             "Camera pre-pass intermediate ready",
             context: [
               "path": prepared.url.path,
-              "cameraAssetIsPreStyled": prepared.cameraAssetIsPreStyled,
-              "placementSourceRect": NSStringFromRect(prepared.placementSourceRect ?? .zero),
             ]
           )
 
           beginScreenPhase(
             resolvedCameraInputURL: prepared.url,
-            cameraAssetIsPreStyled: prepared.cameraAssetIsPreStyled,
-            cameraPlacementSourceRect: prepared.placementSourceRect,
             screenPrepassRange: screenRange,
             finalRange: finalRange
           )
@@ -3806,8 +3672,6 @@ final class LetterboxExporter {
 
     beginScreenPhase(
       resolvedCameraInputURL: cameraInputURL,
-      cameraAssetIsPreStyled: false,
-      cameraPlacementSourceRect: nil,
       screenPrepassRange: shouldUseScreenPrepass ? (0.0...0.30) : nil,
       finalRange: shouldUseScreenPrepass ? (0.30...1.0) : (0.0...1.0)
     )
@@ -4161,18 +4025,6 @@ final class LetterboxExporter {
       durationSeconds: durationSeconds,
       tempRoot: tempRoot,
       availableCapacityBytesOverride: availableCapacityBytes
-    )
-  }
-
-  func _testValidateStyledCameraIntermediate(
-    rawCameraURL: URL,
-    styledCameraURL: URL,
-    placementSourceRect: CGRect? = nil
-  ) -> NSError? {
-    validateStyledCameraIntermediate(
-      rawCameraAsset: AVAsset(url: rawCameraURL),
-      styledCameraAsset: AVAsset(url: styledCameraURL),
-      placementSourceRect: placementSourceRect
     )
   }
 

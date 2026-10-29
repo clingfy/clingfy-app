@@ -2670,8 +2670,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
     XCTAssertNotNil(result.inlineCameraRenderPlan)
@@ -2866,8 +2865,6 @@ final class LetterboxExporterTests: XCTestCase {
       prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
     }
 
-    XCTAssertFalse(prepared.cameraAssetIsPreStyled)
-    XCTAssertNil(prepared.placementSourceRect)
     let image = try sampleFrameImage(url: prepared.url)
     XCTAssertLessThan(try visibleRatio(for: image), 0.55)
     XCTAssertLessThan(try dominantGreenRatio(for: image, ignoreTransparentPixels: true), 0.10)
@@ -3034,8 +3031,6 @@ final class LetterboxExporterTests: XCTestCase {
       prepared.temporaryArtifacts.forEach { try? FileManager.default.removeItem(at: $0) }
     }
 
-    XCTAssertFalse(prepared.cameraAssetIsPreStyled)
-    XCTAssertNil(prepared.placementSourceRect)
     XCTAssertEqual(prepared.temporaryArtifacts.count, 1)
 
     let builder = CompositionBuilder()
@@ -3045,9 +3040,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: prepared.url),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: prepared.cameraAssetIsPreStyled,
-        cameraPlacementSourceRect: prepared.placementSourceRect
+        cursorRecording: nil
       )
     )
     XCTAssertNotNil(result.inlineCameraRenderPlan)
@@ -3144,8 +3137,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
     let inlinePlan = try XCTUnwrap(result.inlineCameraRenderPlan)
@@ -3252,8 +3244,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cursorRecording: makeZoomCursorRecording()
       )
     )
 
@@ -3342,8 +3333,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cursorRecording: makeZoomCursorRecording()
       )
     )
 
@@ -3444,7 +3434,6 @@ final class LetterboxExporterTests: XCTestCase {
         params: params,
         cameraParams: cameraParams,
         cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false,
         screenSourceMode: .precompositedCanvas,
         screenAudioAsset: AVAsset(url: screenURL)
       )
@@ -3523,8 +3512,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: nil,
         params: params,
         cameraParams: nil,
-        cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cursorRecording: makeZoomCursorRecording()
       )
     )
 
@@ -3570,8 +3558,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: nil,
         params: params,
         cameraParams: nil,
-        cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cursorRecording: makeZoomCursorRecording()
       )
     )
 
@@ -3692,7 +3679,6 @@ final class LetterboxExporterTests: XCTestCase {
         params: params,
         cameraParams: cameraParams,
         cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false,
         screenSourceMode: .precompositedCanvas,
         screenAudioAsset: AVAsset(url: screenURL)
       )
@@ -3903,8 +3889,7 @@ final class LetterboxExporterTests: XCTestCase {
     let result = try XCTUnwrap(
       CompositionBuilder().buildExport(
         asset: AVAsset(url: screenURL), cameraAsset: AVAsset(url: cameraURL),
-        params: params, cameraParams: cameraParams, cursorRecording: nil,
-        cameraAssetIsPreStyled: false))
+        params: params, cameraParams: cameraParams, cursorRecording: nil))
     XCTAssertNotNil(result.inlineCameraRenderPlan, "a square camera renders inline")
 
     func render(_ grade: ColorGrade, _ name: String) throws -> CGImage {
@@ -4017,8 +4002,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
 
@@ -4093,8 +4077,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
 
@@ -4170,8 +4153,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: makeZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cursorRecording: makeZoomCursorRecording()
       )
     )
 
@@ -4204,92 +4186,6 @@ final class LetterboxExporterTests: XCTestCase {
     }
 
     XCTAssertTrue(foundVaryingRamp)
-  }
-
-  func testIntroAnimationAppliesToPreStyledCameraAsset() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let screenURL = tempDir.appendingPathComponent("screen.mov")
-    let cameraURL = tempDir.appendingPathComponent("camera.mov")
-    try makeSolidColorVideo(
-      url: screenURL,
-      size: CGSize(width: 320, height: 180),
-      durationSeconds: 1.0,
-      color: .systemBlue
-    )
-    try makeSolidColorVideo(
-      url: cameraURL,
-      size: CGSize(width: 128, height: 128),
-      durationSeconds: 1.0,
-      color: .systemRed
-    )
-
-    let params = CompositionParams(
-      targetSize: CGSize(width: 640, height: 360),
-      padding: 0.0,
-      cornerRadius: 0.0,
-      backgroundColor: nil,
-      backgroundImagePath: nil,
-      cursorSize: 1.0,
-      showCursor: false,
-      zoomEnabled: true,
-      zoomFactor: 1.8,
-      followStrength: 0.15,
-      fpsHint: 30,
-      fitMode: "fit",
-      audioGainDb: 0.0,
-      audioVolumePercent: 100.0
-    )
-    var cameraParams = CameraCompositionParams(
-      visible: true,
-      layoutPreset: .overlayTopRight,
-      normalizedCanvasCenter: nil,
-      sizeFactor: 0.2,
-      shape: .square,
-      cornerRadius: 0.0,
-      opacity: 1.0,
-      mirror: false,
-      contentMode: .fill,
-      zoomBehavior: .fixed,
-      borderWidth: 0.0,
-      borderColorArgb: nil,
-      shadowPreset: 0,
-      chromaKeyEnabled: false,
-      chromaKeyStrength: 0.4,
-      chromaKeyColorArgb: nil
-    )
-    cameraParams.introPreset = .pop
-
-    let builder = CompositionBuilder()
-    let result = try XCTUnwrap(
-      builder.buildExport(
-        asset: AVAsset(url: screenURL),
-        cameraAsset: AVAsset(url: cameraURL),
-        params: params,
-        cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: true
-      )
-    )
-
-    let instruction = try XCTUnwrap(
-      result.videoComposition.instructions.first as? AVMutableVideoCompositionInstruction
-    )
-    let cameraInstruction = try XCTUnwrap(instruction.layerInstructions.first)
-    var startTransform = CGAffineTransform.identity
-    var endTransform = CGAffineTransform.identity
-    var timeRange = CMTimeRange.zero
-
-    let hasRamp = cameraInstruction.getTransformRamp(
-      for: CMTime(seconds: 0.05, preferredTimescale: 600),
-      start: &startTransform,
-      end: &endTransform,
-      timeRange: &timeRange
-    )
-
-    XCTAssertTrue(hasRamp)
-    XCTAssertFalse(transformsApproximatelyEqual(startTransform, endTransform))
   }
 
   func testChromaKeySeparateCameraExportRemovesKeyColorInFinalCrop() throws {
@@ -5023,34 +4919,6 @@ final class LetterboxExporterTests: XCTestCase {
       lumaDelta, 0.02,
       "a graded reference should land near the identity floor, not just inside the budget")
     XCTAssertLessThan(chanDelta, 0.02)
-  }
-
-  func testStyledCameraIntermediateValidationFailsForBlackStyledAsset() throws {
-    let tempDir = makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: tempDir) }
-
-    let rawURL = tempDir.appendingPathComponent("raw.mov")
-    let styledURL = tempDir.appendingPathComponent("styled.mov")
-    try makeSolidColorVideo(
-      url: rawURL,
-      size: CGSize(width: 128, height: 128),
-      durationSeconds: 1.0,
-      color: .systemRed
-    )
-    try makeSolidColorVideo(
-      url: styledURL,
-      size: CGSize(width: 128, height: 128),
-      durationSeconds: 1.0,
-      color: .black
-    )
-
-    let exporter = LetterboxExporter()
-    let error = exporter._testValidateStyledCameraIntermediate(
-      rawCameraURL: rawURL,
-      styledCameraURL: styledURL
-    )
-
-    XCTAssertEqual(error?.userInfo["stage"] as? String, "styled_intermediate_validation")
   }
 
   func testInlineCameraRenderBuildsStyledActiveZoomPlan() throws {
@@ -5878,8 +5746,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: makeLongZoomCursorRecording(),
-        cameraAssetIsPreStyled: false
+        cursorRecording: makeLongZoomCursorRecording()
       )
     )
 
@@ -8001,8 +7868,7 @@ final class LetterboxExporterTests: XCTestCase {
         cameraAsset: AVAsset(url: cameraURL),
         params: params,
         cameraParams: cameraParams,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       )
     )
     XCTAssertNotNil(result.inlineCameraRenderPlan)

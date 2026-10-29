@@ -111,8 +111,7 @@ final class CaptionBurnInProofTests: XCTestCase {
         cameraAsset: nil,
         params: params,
         cameraParams: nil,
-        cursorRecording: nil,
-        cameraAssetIsPreStyled: false
+        cursorRecording: nil
       ))
 
     // A non-identity grade on purpose. If captions were composited at the
