@@ -751,11 +751,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // loop stays single-path.
   clingfy::encoding::MfSinkWriterEncoder encoder;
   clingfy::encoding::GifEncoder gif_encoder;
+  // A GIF is composited at the full canvas, so canvas-pixel arguments keep
+  // their proportions, then downscaled by the encoder to its size preset's
+  // long-edge cap. `ResolveExportPixelSize` reports the same size to Flutter.
+  const PixelSize encoded =
+      gif ? GifIntermediateRenderSize(
+                SizeF{static_cast<double>(canvas.width),
+                      static_cast<double>(canvas.height)},
+                GifMaxLongEdgeForSizePreset(request.gif_size))
+          : canvas;
   if (gif) {
     clingfy::encoding::EncoderConfig gif_config;
     gif_config.output_path = request.destination_path;
-    gif_config.width = canvas.width;
-    gif_config.height = canvas.height;
+    gif_config.width = encoded.width;
+    gif_config.height = encoded.height;
     if (auto err = gif_encoder.Open(gif_config, device)) {
       return Failure(request.destination_path,
                      "export: GIF encoder open failed — " + err->message,
@@ -1692,8 +1701,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
   RenderResult out;
   out.ok = true;
-  out.output_width = canvas.width;
-  out.output_height = canvas.height;
+  out.output_width = encoded.width;
+  out.output_height = encoded.height;
   out.video_frames_written = video_frames;
   out.audio_packets_written = audio_packets;
   out.had_audio = has_audio || sep_merge.has_value();

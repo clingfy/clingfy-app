@@ -73,6 +73,12 @@ struct PassthroughInput {
   // sends a stale codec/bitrate (the dialog hides them) — both are ignored.
   std::string format;
 
+  // GIF size preset wire value ("small" / "medium" / "large"), straight from
+  // the `exportVideo` map. Caps the GIF's long edge through
+  // `GifMaxLongEdgeForSizePreset`; empty or unknown caps at 1080. Ignored for
+  // every other format.
+  std::string gif_size;
+
   // Slice 2 composition args, straight from the `exportVideo` map. Empty
   // / "auto" leaves the export on the copy fast-path; any concrete value
   // routes through the decode → composite → re-encode pipeline.

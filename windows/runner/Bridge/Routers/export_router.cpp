@@ -509,6 +509,8 @@ void HandleExportVideo(
     input.directory_override = ReadString(*args, "directoryOverride");
     input.filename = ReadString(*args, "filename");
     input.format = ReadString(*args, "format");
+    // GIF size preset; the pipeline caps the GIF's long edge from it.
+    input.gif_size = ReadString(*args, "gifSize");
     // Slice 2 composition args. Absent/auto leaves the export on the copy
     // fast-path; concrete values route through the re-encode pipeline.
     input.layout = ReadString(*args, "layoutPreset");

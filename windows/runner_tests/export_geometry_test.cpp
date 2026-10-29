@@ -5,6 +5,9 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <tuple>
+
+#include "Capture/Export/gif_export_policy.h"
 
 namespace clingfy::capture::export_ {
 namespace {
@@ -364,32 +367,51 @@ TEST(ResolveExportPixelSizeTest, MatchesTheExporterCanvasForEveryPreset) {
   }
 }
 
-// Windows encodes GIF through WIC at the full canvas — export_pipeline hands
-// the GIF encoder `canvas.width/height`, the same canvas every other format
-// gets, and gif_export_policy is purely temporal. macOS caps its GIF
-// intermediate's long edge and therefore reports a SMALLER size for gif; if
-// anyone ports that cap here without also capping the Windows encoder,
-// captions get rasterized for a canvas Windows never renders and are drawn
-// ~1.8x too wide. This test is the tripwire for that.
-TEST(ResolveExportPixelSizeTest, GifIsNotCappedBecauseWindowsRendersItUncapped) {
+// A GIF is encoded at its size preset's capped long edge, and this answer must
+// be that encoded size: the pipeline hands the GIF encoder
+// `GifIntermediateRenderSize(canvas, GifMaxLongEdgeForSizePreset(gif_size))`.
+// Report the uncapped canvas and a caption laid out for 3840 px lands on a
+// 1080-wide GIF ~3.6x too wide. Same numbers as macOS's
+// `intermediateRenderSize`.
+TEST(ResolveExportPixelSizeTest, GifIsCappedToTheSizeTheEncoderWrites) {
   const SizeF source{3840.0, 2160.0};
   const PixelSize mp4 =
       ResolveExportPixelSize(source, "youtube169", "p2160", "mp4", "");
-  const PixelSize gif =
-      ResolveExportPixelSize(source, "youtube169", "p2160", "gif", "large");
-  EXPECT_EQ(gif.width, mp4.width);
-  EXPECT_EQ(gif.height, mp4.height);
-  EXPECT_EQ(gif.width, 3840u);
-  EXPECT_EQ(gif.height, 2160u);
+  EXPECT_EQ(mp4.width, 3840u);
+  EXPECT_EQ(mp4.height, 2160u);
+  for (const auto& [gif_size, w, h] :
+       {std::tuple<std::string, std::uint32_t, std::uint32_t>{"small", 480,
+                                                              270},
+        {"medium", 720, 406},
+        {"large", 1080, 608}}) {
+    const PixelSize gif =
+        ResolveExportPixelSize(source, "youtube169", "p2160", "gif", gif_size);
+    EXPECT_EQ(gif.width, w) << "gifSize=" << gif_size;
+    EXPECT_EQ(gif.height, h) << "gifSize=" << gif_size;
+    // Literally the exporter's expression, so the two cannot drift.
+    const PixelSize canvas =
+        ToEvenPixelSize(ResolveTargetSize(source, "youtube169", "p2160"));
+    const PixelSize exporter = GifIntermediateRenderSize(
+        SizeF{static_cast<double>(canvas.width),
+              static_cast<double>(canvas.height)},
+        GifMaxLongEdgeForSizePreset(gif_size));
+    EXPECT_EQ(gif.width, exporter.width) << "gifSize=" << gif_size;
+    EXPECT_EQ(gif.height, exporter.height) << "gifSize=" << gif_size;
+  }
 }
 
-TEST(ResolveExportPixelSizeTest, FormatAndGifSizeNeverChangeTheAnswer) {
+// Rewritten from `FormatAndGifSizeNeverChangeTheAnswer`, which pinned the
+// pre-cap behaviour. What still holds: `gif_size` never changes a VIDEO
+// answer, and an unknown/empty preset caps a GIF at the Large 1080.
+TEST(ResolveExportPixelSizeTest, GifSizeOnlyChangesAGifAnswer) {
   const SizeF source{1920.0, 1080.0};
   const PixelSize baseline =
       ResolveExportPixelSize(source, "auto", "auto", "", "");
-  const std::string formats[] = {"", "mp4", "mov", "gif", "GIF", "webm"};
+  EXPECT_EQ(baseline.width, 1920u);
+  EXPECT_EQ(baseline.height, 1080u);
+  const std::string video_formats[] = {"", "mp4", "MP4", "mov", "webm"};
   const std::string gif_sizes[] = {"", "small", "medium", "large", "nonsense"};
-  for (const auto& format : formats) {
+  for (const auto& format : video_formats) {
     for (const auto& gif_size : gif_sizes) {
       const PixelSize out =
           ResolveExportPixelSize(source, "auto", "auto", format, gif_size);
@@ -399,6 +421,36 @@ TEST(ResolveExportPixelSizeTest, FormatAndGifSizeNeverChangeTheAnswer) {
           << "format=" << format << " gifSize=" << gif_size;
     }
   }
+  // The format test is the pipeline's own (ResolveExportExtension), so it is
+  // case-insensitive like the .gif fork it predicts.
+  for (const std::string format : {"gif", "GIF"}) {
+    for (const std::string gif_size : {"", "large", "nonsense"}) {
+      const PixelSize out =
+          ResolveExportPixelSize(source, "auto", "auto", format, gif_size);
+      EXPECT_EQ(out.width, 1080u) << "format=" << format << " gifSize=" << gif_size;
+      EXPECT_EQ(out.height, 608u) << "format=" << format << " gifSize=" << gif_size;
+    }
+    const PixelSize small =
+        ResolveExportPixelSize(source, "auto", "auto", format, "small");
+    EXPECT_EQ(small.width, 480u);
+    EXPECT_EQ(small.height, 270u);
+  }
+}
+
+// A source already inside the cap is not upscaled: a 960x540 recording is a
+// 960x540 GIF at Large, and only Small shrinks it.
+TEST(ResolveExportPixelSizeTest, GifNeverUpscalesASmallCanvas) {
+  const SizeF source{960.0, 540.0};
+  for (const std::string gif_size : {"large", "medium"}) {
+    const PixelSize out =
+        ResolveExportPixelSize(source, "auto", "auto", "gif", gif_size);
+    EXPECT_EQ(out.width, gif_size == "large" ? 960u : 720u);
+    EXPECT_EQ(out.height, gif_size == "large" ? 540u : 406u);
+  }
+  const PixelSize small =
+      ResolveExportPixelSize(source, "auto", "auto", "gif", "small");
+  EXPECT_EQ(small.width, 480u);
+  EXPECT_EQ(small.height, 270u);
 }
 
 // An odd source must not reach the encoder odd, and must not reach Flutter
