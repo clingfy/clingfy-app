@@ -1,4 +1,13 @@
-## [Unreleased]
+## [1.2.1] - 2026-10-29
+
+A robustness release. Most of it makes recording and exporting harder to break
+and easier to trust. A paused take keeps its camera in sync, keeps its audio
+tracks apart, and is no longer left half-saved when its parts will not join;
+Clingfy now joins them at the next launch. A colour grade now changes only the
+screen, as the preview always showed. GIFs export in one pass, faster and
+smaller, and are capped at 60 seconds. You can pick the export audio quality and
+the speech model, and an Arabic subtitle file plays in the same order as the
+video.
 
 ### Export
 - **Colour-graded camera exports are checked again.** The export's colour check skipped every graded export with a camera bubble, because it could not tell the grade from a fault. It now applies the grade the way the export does, so a faulty camera export is caught again, and a correct one is never deleted.
@@ -35,6 +44,16 @@
 - **The click highlight is a whole ring again.** With the live cursor highlight on, every click drew a quarter of a circle beside the pointer, on screen and in the recording; after the first click its outline also stayed on for good, and on a Retina display it was soft. (#617)
 - Launching no longer logs an "unrecognized selector" exception. (#610)
 - A macOS log line survives a crash that happens right after it. (#604)
+
+### Internal
+
+- Every native method name has exactly one spelling, shared by Dart and Swift,
+  and the bridge contract check that should have caught drift now does.
+- Dead code is gone: the unused colour-grade plumbing, the retired Azure release
+  lanes, and the pre-styled camera export path, which nothing had reached since
+  #33.
+- Native tests can no longer reach the real recordings folder; one test helper
+  used to delete it.
 
 ## [1.2.0] - 2026-09-23
 
