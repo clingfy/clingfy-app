@@ -17,6 +17,7 @@ video.
 - **GIFs are capped at 60 seconds** of exported length (after cuts). The export dialog says so and disables Export, rather than producing a huge, slow GIF. (#614)
 
 ### Subtitles
+- **Speech played through your speakers is captioned once, not twice.** With both the microphone and system audio as sources, the microphone also hears the speakers, and that copy is meant to be dropped. When the two copies were split into sentences differently, it was not, and every line appeared twice.
 - **Arabic subtitle files play in the right order in mpv- and ffmpeg-style players.** Those players lay every line out left to right, so a `.srt` line like "مرحبا Clingfy" showed its words in the opposite order to the video. Right-to-left lines now carry a direction mark, so the file and the burned-in subtitles agree.
 - **Choose the speech model**, and switch it without restarting the app. (#597)
 - **A transcript records which model produced it**, and Settings › Storage names each speech model on disk with its real size. (#596, #593, #591)

@@ -68,6 +68,15 @@ struct TranscriptionJob {
   /// boundaries far more than the speakers do.
   static let bleedStartToleranceMs = 1200
   static let bleedSimilarityThreshold = 0.8
+  /// The fewest words a mic segment needs before it is judged by whether the
+  /// system audio around it contains them (see `merge`).
+  static let bleedContainmentMinimumWords = 3
+  /// How many of a mic segment's words the overlapping system audio must hold
+  /// for it to count as bleed. Lower than the one-to-one similarity bar,
+  /// because the mic copy is heard through speakers and loses whole words to
+  /// it: live, "Clingfy" came back as "Klingfy" from the system audio and as
+  /// "cling-free" from the mic, leaving 5 of 7 words, 0.71.
+  static let bleedContainmentThreshold = 0.7
 
   let transcriber: CaptionTranscriber
 
@@ -224,12 +233,34 @@ struct TranscriptionJob {
   static func merge(
     mic: [TranscribedSegment], system: [TranscribedSegment]
   ) -> [Caption] {
-    // 1. Bleed: drop mic segments that duplicate a system segment.
+    // 1. Bleed: drop mic segments that duplicate system audio.
+    //
+    // Two rules. The first compares one segment with one segment. It misses
+    // the common case, because Whisper splits the two copies of the same
+    // speech differently: the speakers' copy came back as one sentence, the
+    // microphone's as two halves, and each half shares too few words with
+    // the whole (and the second starts too late) to match. Every word was
+    // then captioned twice. So the second rule asks whether most of the mic
+    // segment's words are in the system segments that overlap it in time,
+    // however they were split. It needs a few words to go on: a
+    // short reply ("yes") that happens to appear in a long system sentence
+    // nearby is not judged by containment.
     let micKept = mic.filter { micSegment in
-      !system.contains { systemSegment in
+      let sameSegment = system.contains { systemSegment in
         abs(micSegment.startMs - systemSegment.startMs) <= bleedStartToleranceMs
           && similarity(micSegment.text, systemSegment.text) >= bleedSimilarityThreshold
       }
+      if sameSegment { return false }
+      let micTokens = tokens(micSegment.text)
+      guard micTokens.count >= bleedContainmentMinimumWords else { return true }
+      let overlapping = system.filter { systemSegment in
+        systemSegment.startMs <= micSegment.endMs + bleedStartToleranceMs
+          && systemSegment.endMs >= micSegment.startMs - bleedStartToleranceMs
+      }
+      guard !overlapping.isEmpty else { return true }
+      let systemTokens = Set(overlapping.flatMap { tokens($0.text) })
+      let contained = micTokens.filter { systemTokens.contains($0) }.count
+      return Double(contained) / Double(micTokens.count) < bleedContainmentThreshold
     }
 
     // 2. Union and order.
@@ -326,6 +357,11 @@ struct TranscriptionJob {
       .components(separatedBy: CharacterSet.alphanumerics.inverted)
       .filter { !$0.isEmpty }
       .joined(separator: " ")
+  }
+
+  /// The words of [text], normalized, in order.
+  static func tokens(_ text: String) -> [Substring] {
+    normalized(text).split(separator: " ")
   }
 
   /// Token overlap (Jaccard), 0...1.
