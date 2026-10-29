@@ -41,6 +41,7 @@
 #define RUNNER_CAPTURE_EXPORT_EXPORT_PASSTHROUGH_H_
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -277,6 +278,12 @@ enum class PassthroughError {
   // output was created. `gif_duration_ms` / `gif_max_duration_ms` carry both
   // lengths. Maps to EXPORT_GIF_TOO_LONG. Never retried.
   kGifTooLong,
+  // W3: the destination folder is unreachable (drive or share not connected),
+  // gone, not a folder, or refuses a probe write. Decided BEFORE any render or
+  // copy, so a missing USB drive fails in a second rather than after the whole
+  // export. Maps to EXPORT_ERROR with the folder path as details, as macOS's
+  // `destinationProblem` does.
+  kDestinationUnavailable,
 };
 
 struct PassthroughResult {
@@ -302,6 +309,9 @@ struct PassthroughResult {
   // and the cap it went over, both in ms.
   std::int64_t gif_duration_ms = -1;
   std::int64_t gif_max_duration_ms = -1;
+  // W3: populated when error == kDestinationUnavailable. The UTF-8 folder the
+  // export was going to write to.
+  std::string destination_folder;
   // Standby-resume recovery: true when error == kRenderFailed and the
   // pipeline classified the failure as a lost D3D device (Modern Standby
   // resume, driver reset, TDR — see RenderResult::device_removed). The
@@ -387,6 +397,23 @@ std::string ResolveExportDestination(const std::string& directory,
 // a worker thread so it can be cancelled. `on_progress` (optional) receives a
 // 0..1 fraction; `is_cancelled` (optional) is polled so a cancel aborts and
 // returns PassthroughError::kCancelled. Both default to no-ops.
+// W3 export destination pre-flight, the Windows counterpart of macOS's
+// `ExportEngine.destinationProblem(folder:)`. Returns a user-facing reason the
+// export cannot write to `folder`, or nullopt when it can:
+//   * the drive or network share the folder lives on is not connected (an
+//     ejected USB drive, a disconnected mapped drive, an unreachable share).
+//     Said separately from a missing folder, because "your folder no longer
+//     exists" sends people looking for something that is just unplugged;
+//   * the folder does not exist (the caller has already tried to create it);
+//   * the path is not a folder;
+//   * a probe write fails. A real write, not an attribute: a share can report
+//     writable and still refuse, and a read-only volume only shows on write.
+// `probe_write` replaces the real probe in tests; empty = create, write and
+// delete a hidden temp file in `folder`.
+std::optional<std::string> ExportDestinationProblem(
+    const std::filesystem::path& folder,
+    const std::function<bool(const std::filesystem::path&)>& probe_write = {});
+
 PassthroughResult ExportPassthroughCopy(
     const PassthroughInput& input,
     std::function<void(double)> on_progress = {},

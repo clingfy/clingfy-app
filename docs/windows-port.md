@@ -199,7 +199,12 @@ opens; `CLINGFY_CRASH_TEST=1` + diagnostics button → process dies →
 relaunch → crash event appears in Sentry symbolicated (after running
 `upload_symbols.ps1` on the same build).
 
-### Open parity gap — export destination is not pre-flighted
+### ~~Open parity gap — export destination is not pre-flighted~~ — closed 2026-10-29
+
+Closed by W3 (`docs/windows-machine-work.md`): `ExportDestinationProblem`
+runs in `ExportPassthroughCopy` right after the folder is resolved, before
+any probe, copy or render. The original write-up follows.
+
 
 macOS validates the export destination before it renders anything; Windows
 still does not. Reported on macOS 2026-07-20: exporting to a remembered folder
