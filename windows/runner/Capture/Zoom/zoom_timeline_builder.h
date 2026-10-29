@@ -23,6 +23,13 @@ namespace clingfy::capture {
 struct ZoomSegment {
   std::int64_t start_ms = 0;
   std::int64_t end_ms = 0;
+  // The user pinned this segment's zoom on a point (the draggable target in
+  // the editor). `target_x` / `target_y` are normalized [0,1] over the source
+  // recording, top-left origin. False keeps the cursor-driven focus, which
+  // is what every auto segment and every pre-fixed-target file gets.
+  bool fixed_target = false;
+  double target_x = 0.5;
+  double target_y = 0.5;
 };
 
 // How long a click keeps zoom "wanted". Windows-specific (macOS uses the
@@ -61,6 +68,10 @@ std::vector<ZoomSegment> BuildZoomSegments(
 struct ZoomSegmentState {
   bool in_segment = false;
   std::int64_t local_ms = 0;  // ms since the active segment's start_ms
+  // The active segment's pinned point, when it has one (see ZoomSegment).
+  bool fixed_target = false;
+  double target_x = 0.5;
+  double target_y = 0.5;
 };
 ZoomSegmentState ZoomSegmentStateAt(const std::vector<ZoomSegment>& segments,
                                     std::int64_t source_ms);

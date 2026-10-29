@@ -17,6 +17,7 @@
 #include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
+#include "Bridge/Routers/zoom_focus_args.h"
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
@@ -278,6 +279,11 @@ void HandleSaveManualZoomSegments(
         s.end_ms = static_cast<std::int64_t>(ReadDouble(*map, "endMs", 0.0));
         s.source = ReadString(*map, "source");
         s.base_id = ReadString(*map, "baseId");
+        const auto focus = clingfy::bridge::ReadZoomFocusArgs(*map);
+        s.focus_mode = focus.focus_mode;
+        s.has_fixed_target = focus.has_point;
+        s.fixed_x = focus.x;
+        s.fixed_y = focus.y;
         if (s.source.empty()) {
           s.source = "manual";
         }
@@ -329,6 +335,19 @@ void HandleGetManualZoomSegments(
     if (!s.base_id.empty()) {
       map[flutter::EncodableValue("baseId")] =
           flutter::EncodableValue(s.base_id);
+    }
+    // The pinned point, in the shape ZoomSegment.fromMap reads. Without it a
+    // reopened project would show the segment as follow-cursor again.
+    if (!s.focus_mode.empty()) {
+      map[flutter::EncodableValue("focusMode")] =
+          flutter::EncodableValue(s.focus_mode);
+    }
+    if (clingfy::capture::IsZoomFixedTarget(s)) {
+      map[flutter::EncodableValue("fixedTarget")] =
+          flutter::EncodableValue(flutter::EncodableMap{
+              {flutter::EncodableValue("dx"), flutter::EncodableValue(s.fixed_x)},
+              {flutter::EncodableValue("dy"), flutter::EncodableValue(s.fixed_y)},
+          });
     }
     out.push_back(flutter::EncodableValue(std::move(map)));
   }

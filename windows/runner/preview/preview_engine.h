@@ -495,6 +495,25 @@ class PreviewEngine {
   void SetZoomSettings(const std::string& session_id, double factor,
                        bool effect_enabled);
 
+  // Fixed-target zoom: what the editor's focus heuristic and draggable target
+  // read. `GetCursorSamples` selects from the cursor sidecar loaded at Open;
+  // `width` / `height` are the space its x / y are in (the sidecar header's
+  // capture dims, else the decoded video's). `GetSourceDimensions` is the
+  // decoded video's size, known from the first frame. Both report nothing
+  // (ok == false / false) for a stale session or before the data exists, and
+  // never block on the frame thread for longer than a copy.
+  struct CursorSamples {
+    bool ok = false;
+    capture::CursorSampleWindow window;
+    double width = 0.0;
+    double height = 0.0;
+  };
+  CursorSamples GetCursorSamples(const std::string& session_id,
+                                 std::int64_t start_ms, std::int64_t end_ms,
+                                 std::int64_t playhead_ms);
+  bool GetSourceDimensions(const std::string& session_id, int* width,
+                           int* height);
+
   // Editing port (color): update the live color grade for the inline preview.
   // Driven by Dart's previewSetColorGrade on every slider tick / auto-enhance
   // toggle. Applies to the VIDEO ONLY (the cursor halo and camera bubble stay

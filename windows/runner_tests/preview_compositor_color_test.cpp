@@ -315,5 +315,54 @@ TEST(PreviewCompositorColorTest, AfterBackgroundHookDrawsUnderTheScreen) {
   EXPECT_LT(Chan(middle, 8), 50) << std::hex << middle;
 }
 
+TEST(PreviewCompositorZoomTest, APinnedSegmentAimsTheZoomAtItsPoint) {
+  // Fixed-target zoom: inside a pinned segment the preview zooms on the
+  // user's point, not the cursor (the export rule, ZoomExportController).
+  HeadlessD2D gpu;
+  const std::string err = gpu.Create(kTargetSize, kTargetSize);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  PreviewCompositor compositor;
+  if (FAILED(compositor.EnsureResources(gpu.device.device(), gpu.ctx.Get(),
+                                        kVideoSize, kVideoSize))) {
+    SKIP_OR_FAIL("PreviewCompositor::EnsureResources failed headless");
+  }
+  gpu.FillTexture(compositor.video_texture(), kVideoSize, kVideoSize,
+                  kOpaqueRed);
+
+  capture::CursorSidecarData cursor;
+  cursor.width = kVideoSize;
+  cursor.height = kVideoSize;
+  cursor.samples = {{0, 8, 8, true}, {2000, 8, 8, true}};
+  capture::ZoomSegment follow{0, 1000};
+  capture::ZoomSegment pinned{1000, 2000};
+  pinned.fixed_target = true;
+  pinned.target_x = 0.75;
+  pinned.target_y = 0.25;
+  const std::vector<capture::ZoomSegment> segments{follow, pinned};
+
+  const auto compose = [&](std::int64_t playback_ms, ZoomState& zoom) {
+    gpu.ctx->BeginDraw();
+    compositor.ComposeFrame(
+        gpu.ctx.Get(),
+        D2D1::RectF(0.0f, 0.0f, static_cast<float>(kTargetSize),
+                    static_cast<float>(kTargetSize)),
+        cursor, segments, playback_ms * 1000, /*now_seconds=*/0.0, zoom);
+    return SUCCEEDED(gpu.ctx->EndDraw());
+  };
+
+  ZoomState in_follow;
+  ASSERT_TRUE(compose(500, in_follow));
+  EXPECT_TRUE(in_follow.segment_active);
+  EXPECT_DOUBLE_EQ(in_follow.target_x, 8.0);  // the cursor
+  EXPECT_DOUBLE_EQ(in_follow.target_y, 8.0);
+
+  ZoomState in_pinned;
+  ASSERT_TRUE(compose(1500, in_pinned));
+  EXPECT_TRUE(in_pinned.segment_active);
+  EXPECT_DOUBLE_EQ(in_pinned.target_x, 0.75 * kVideoSize);  // the pin
+  EXPECT_DOUBLE_EQ(in_pinned.target_y, 0.25 * kVideoSize);
+}
+
 }  // namespace
 }  // namespace clingfy::preview

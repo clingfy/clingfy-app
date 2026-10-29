@@ -104,6 +104,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/camera_composition_args.cpp"
   "Bridge/Routers/clip_args.cpp"
   "Bridge/Routers/color_grade_args.cpp"
+  "Bridge/Routers/zoom_focus_args.cpp"
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
