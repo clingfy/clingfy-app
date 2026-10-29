@@ -41,6 +41,7 @@ add_executable(runner_tests
   "updater_event_publisher_test.cpp"
   "updater_router_test.cpp"
   "area_picker_geometry_test.cpp"
+  "cursor_highlight_test.cpp"
   "display_label_test.cpp"
   "capture_frame_pacer_test.cpp"
   "canvas_composition_test.cpp"

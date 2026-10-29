@@ -437,6 +437,46 @@ queued on the macOS follow-up list.
 
 ---
 
+## W11. Live cursor highlight while recording — BUILT 2026-10-30, control hidden until checked
+
+*Owner's call 2026-10-30: build the overlays now, check them on screen
+later, keep the controls hidden until then.*
+
+macOS draws a 60 pt, 25% systemYellow disc that follows the pointer, with an
+outline that pulses (scale 1 -> 1.35, fade, 0.35 s ease-out) on each left
+click. It is a plain on-screen panel, so it is recorded into the video.
+Linked to recording, it shows only while recording (not while paused);
+unlinked, whenever it is on. The request's `disableCursorHighlight` turns it
+off for the session.
+
+**Done:**
+- `Overlay/cursor_highlight_model`: the show rule, the pulse curve (the real
+  ease-out bezier), and the pixels (premultiplied, anti-aliased, 120 dip
+  window scaled per monitor DPI).
+- `Overlay/cursor_highlight_overlay`: a topmost, click-through, per-pixel
+  alpha layered window on its own thread. A 60 Hz timer follows
+  `GetCursorPos` and watches the primary button (honouring swapped
+  buttons); polling because the recording's `CursorClickHook` already owns
+  the process's low-level mouse hook. No display affinity: it is meant to be
+  recorded, as on macOS.
+- `setCursorHighlightEnabled` / `setCursorHighlightLinkedToRecording` are
+  real; the engine reports start / pause / resume / every end path.
+
+**Still hidden:** the Pointer control in `recording_options_sidebar.dart`.
+Dart pushes the saved setting, which defaults to off, and Windows has never
+shown the control, so nothing appears until it is unhidden.
+
+**Tests:** the show rule (linked, unlinked, suppression through pause), the
+pulse (endpoints, monotonic, ease-out not linear), the raster (60 dip disc
+at 25%, premultiplied, DPI scaling, the outline's position and fade, the
+largest pulse inside the window), and the overlay's window coming up and
+going with the recording state.
+
+**Owner check, then unhide:** the halo follows the pointer on every
+monitor, at mixed DPI, pulses on click, and shows in the recorded video.
+
+---
+
 ## Not briefed yet — triage, 2026-10-29
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
@@ -449,7 +489,8 @@ screenshots a false oracle, so these cannot be verified unsupervised:
 - Exclude Clingfy from capture (`setExcludeRecorderApp`). The obvious WDA
   approach risks the hybrid-GPU blank-window failure, and there is an open
   hide-vs-show product call for the four capture-excluded windows.
-- Live cursor highlight while recording.
+- ~~Live cursor highlight while recording.~~ Built as W11, control hidden
+  until checked on screen.
 - The Reveal Area overlay.
 
 **Blocked on a design decision:**

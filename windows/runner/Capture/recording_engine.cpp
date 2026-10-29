@@ -52,6 +52,7 @@
 #include "Encoding/mf_sink_writer_encoder.h"
 #include "Graphics/d3d_device.h"
 #include "Permissions/camera_readiness.h"
+#include "Overlay/cursor_highlight_overlay.h"
 #include "Permissions/permission_probe.h"
 #include <string>
 
@@ -1337,6 +1338,11 @@ std::optional<RecordingError> RecordingEngine::Start(
   // lock here, and Hide() never joins that thread, so teardown can't deadlock.
   RecordingIndicatorController::Instance().Show(
       []() -> std::uint64_t { return RecordingEngine::Instance().ElapsedSeconds(); });
+  // The live cursor highlight follows the recording when linked to it (and
+  // the request can suppress it for this session). Non-blocking.
+  session_disable_cursor_highlight_ = request.disable_cursor_highlight;
+  clingfy::overlay::CursorHighlightOverlay::Instance().SetRecordingState(
+      /*actively_recording=*/true, session_disable_cursor_highlight_);
 
   // Lifecycle event: the recording is officially live. Phase 3E onward
   // the Flutter UI transitions to its `recording` phase on this event
@@ -1412,6 +1418,10 @@ std::optional<RecordingError> RecordingEngine::Pause(
   // turns amber, the primary control becomes resume). Non-blocking.
   RecordingIndicatorController::Instance().SetState(
       IndicatorVisualState::kPaused);
+  // macOS hides a linked highlight while paused (isActivelyRecording is
+  // state == .recording). The session's suppression flag is kept.
+  clingfy::overlay::CursorHighlightOverlay::Instance().SetRecordingState(
+      /*actively_recording=*/false, session_disable_cursor_highlight_);
 
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingPaused(
       std::string(session_.session_id()));
@@ -1476,6 +1486,8 @@ std::optional<RecordingError> RecordingEngine::Resume(
   // pause control). Non-blocking.
   RecordingIndicatorController::Instance().SetState(
       IndicatorVisualState::kRecording);
+  clingfy::overlay::CursorHighlightOverlay::Instance().SetRecordingState(
+      /*actively_recording=*/true, session_disable_cursor_highlight_);
 
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingResumed(
       std::string(session_.session_id()));
@@ -2042,6 +2054,7 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   // joins it, so calling it under `mutex_` cannot deadlock against the
   // indicator's elapsed-seconds provider (which takes `mutex_`).
   RecordingIndicatorController::Instance().Hide();
+  clingfy::overlay::CursorHighlightOverlay::Instance().ClearRecordingState();
 
   // Strict ordering: stop the capture producers first, then signal the
   // drain / mixer consumer threads via queue Close, join them, then

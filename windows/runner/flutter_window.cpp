@@ -14,6 +14,7 @@
 #include "Capture/PreRecordingBar/pre_recording_bar_controller.h"
 #include "Audio/microphone_level_monitor.h"
 #include "Capture/recording_engine.h"
+#include "Overlay/cursor_highlight_overlay.h"
 #include "Services/temp_orphan_scan.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "preview/preview_engine.h"
@@ -159,6 +160,7 @@ void FlutterWindow::OnDestroy() {
   // StopActiveSessionForShutdown above already hid the pill; this reclaims the
   // thread + window.
   clingfy::capture::RecordingIndicatorController::Instance().Shutdown();
+  clingfy::overlay::CursorHighlightOverlay::Instance().Shutdown();
 
   // Slice 4 (Windows pre-recording bar): same idle-persistent overlay thread —
   // join it at teardown so the window + thread are reclaimed cleanly.
