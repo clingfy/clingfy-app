@@ -275,8 +275,9 @@ camera file in the project → export with a simple bubble). 9.3 preview and
 
 - Post-record **preview-player** camera compositing (the `PreviewEngine.camera_path`
   hook) — preview parity can trail export.
-- Hexagon/star shapes; side-by-side / stacked / background-behind layout presets
-  beyond the corner-overlay MVP (add as needed).
+- Hexagon/star shapes (since shipped, #241); side-by-side / stacked /
+  background-behind layout presets beyond the corner-overlay MVP (shipped
+  2026-10-29, W7 in `docs/windows-machine-work.md`).
 - Camera segment files / multi-segment merge (Windows uses one file, D2).
 
 ## 9. Key references

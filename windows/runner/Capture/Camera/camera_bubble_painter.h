@@ -93,7 +93,8 @@ class CameraBubblePainter {
 
  private:
   void PrepareShadow(ID2D1Factory1* factory, ID2D1DeviceContext* ctx,
-                     const std::string& shape, double corner_radius, double side,
+                     const std::string& shape, double corner_radius,
+                     double width, double height,
                      double bubble_x, double bubble_y);
   // Phase 9.7 enhanced draw (chroma and/or animation). Keeps the fast path in
   // Draw() untouched so the preview's static bubble never regresses.

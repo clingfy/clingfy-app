@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
+
 // Headless by construction: camera_render_plan.h is D2D-free, so every property
 // below is asserted without a device. That is the whole point of the layer —
 // the wiring bugs these tests catch used to be reachable only through the pixel
@@ -28,6 +30,28 @@ CameraRenderSpec StyledSpec() {
 // These pin the effect_scale correction that PR #485 made load-bearing. They
 // moved here BEFORE the preview leg switches over, so no commit exists where
 // the proportionality guard is missing.
+
+TEST(BuildCameraRenderPlanTest, OnlyBackgroundBehindDrawsBehindTheScreen) {
+  // Both legs read plan.behind_screen to draw the camera before the screen
+  // (export_pipeline.cpp, preview_engine.cpp). One derivation, so they agree.
+  for (const char* layout :
+       {"backgroundBehind", "sideBySideLeft", "stackedBottom",
+        "overlayBottomRight", ""}) {
+    CameraRenderSpec spec;
+    spec.layout_preset = layout;
+    const CameraRenderPlan plan = BuildCameraRenderPlan(spec, 1920, 1080, 1.0);
+    EXPECT_EQ(plan.behind_screen, std::string(layout) == "backgroundBehind")
+        << layout;
+  }
+}
+
+TEST(BuildCameraRenderPlanTest, APanelPlanIsNotSquare) {
+  CameraRenderSpec spec;
+  spec.layout_preset = "stackedTop";
+  const CameraRenderPlan plan = BuildCameraRenderPlan(spec, 1920, 1080, 1.0);
+  EXPECT_GT(plan.bubble.width, plan.bubble.height * 3.0)
+      << "a stacked band is wide and short";
+}
 
 TEST(BuildCameraRenderPlanTest, CarriesTheScaleOntoTheStyle) {
   // If this stops being set, the painter silently reverts to export-sized

@@ -1627,9 +1627,24 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // (The export pipeline re-binds per frame for the same reason.)
   impl->d2d_context->SetTarget(impl->shared_bitmap.Get());
   impl->d2d_context->BeginDraw();
-  impl->compositor.ComposeFrame(impl->d2d_context.Get(), dest,
-                                impl->cursor, impl->zoom_segments, playback_us,
-                                NowSeconds(), impl->zoom);
+  // backgroundBehind draws the camera between the canvas background and the
+  // screen (the export does the same). Its pulse reads the zoom state from the
+  // PREVIOUS frame here, since ComposeFrame refreshes it afterwards; the
+  // full-canvas layout never scales with zoom (ResolveCameraZoomScale), so
+  // only the emphasis pulse could notice, one frame late.
+  const bool camera_behind =
+      impl->camera_renderer && impl->camera_renderer->behind_screen();
+  const auto draw_camera = [&](ID2D1DeviceContext* ctx) {
+    impl->camera_renderer->Draw(ctx, emit_pos_ms, emit_dur_ms,
+                                impl->zoom.current_zoom,
+                                impl->zoom.segment_active,
+                                impl->zoom.segment_local_ms);
+  };
+  impl->compositor.ComposeFrame(
+      impl->d2d_context.Get(), dest, impl->cursor, impl->zoom_segments,
+      playback_us, NowSeconds(), impl->zoom,
+      camera_behind ? std::function<void(ID2D1DeviceContext*)>(draw_camera)
+                    : std::function<void(ID2D1DeviceContext*)>());
   // Camera bubble draws on top of the composited screen frame, in canvas space.
   // The intro/outro clock is the EDITED position + edited duration, not
   // `playback_us` (source time, used above to advance the camera VIDEO frame).
@@ -1639,11 +1654,8 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // `impl->zoom` was just refreshed by ComposeFrame above, so the segment state
   // is this frame's — the same [start_ms, end_ms) membership the export reads,
   // which is what keeps the camera pulse in phase between the two surfaces.
-  if (impl->camera_renderer) {
-    impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
-                                emit_dur_ms, impl->zoom.current_zoom,
-                                impl->zoom.segment_active,
-                                impl->zoom.segment_local_ms);
+  if (impl->camera_renderer && !camera_behind) {
+    draw_camera(impl->d2d_context.Get());
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();

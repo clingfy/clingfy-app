@@ -314,6 +314,35 @@ output AAC track declares the expected bitrate, and the dialog on Windows.
 
 ---
 
+## ~~W7. Camera panel layouts: side-by-side, stacked, background~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The shared UI offers seven camera layouts. Windows rendered only the four
+corner bubbles; side-by-side (left / right), stacked (top / bottom) and
+background-behind all fell back to a bottom-right bubble.
+
+**Done**, value for value with macOS `CameraLayoutResolver.resolve`:
+- `ComputeCameraBubbleRect` returns macOS's panel frames (y-UP converted to
+  Direct2D y-DOWN): a 32%-wide full-height column, a 28%-tall full-width band,
+  or the whole canvas, inset by max(16, 3% of the short side). Panels ignore
+  the size factor and the bubble floor; a dragged panel becomes a square
+  bubble at the drag point (macOS `manualFrame`).
+- `CameraBubblePainter` takes any w x h (cover / fit, centre and shadow were
+  square-only).
+- `CameraRenderPlan.behind_screen`: backgroundBehind draws over the canvas
+  background and UNDER the screen, in the export (`draw_camera` before the
+  content) and the preview (`ComposeFrame`'s new `after_background` hook).
+
+**Tests:** each frame and the margin floor, tiny canvases, the drag override,
+the plan flag, an export whose pixels show the camera in the letterbox and the
+screen on top for backgroundBehind and the camera on top for side-by-side, and
+the preview hook drawing under the screen.
+
+**Not checked by eye:** a real recording with a camera in each layout.
+
+---
+
 ## Not briefed yet
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists

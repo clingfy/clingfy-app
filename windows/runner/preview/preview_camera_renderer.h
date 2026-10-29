@@ -139,6 +139,10 @@ class PreviewCameraRenderer {
   // between the editor and the exported file; see
   // CameraAnimationParams::zoom_local_seconds for why phase is the whole game.
   // Not defaulted, for the reason given on CameraExportRenderer::Draw.
+  // backgroundBehind: draw before the screen recording, not after it. Valid
+  // after Prepare (export) / PrepareAndAdvance (preview).
+  bool behind_screen() const { return plan_.behind_screen; }
+
   void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
             std::int64_t total_duration_ms, double screen_zoom,
             bool zoom_in_segment, std::int64_t zoom_segment_local_ms);
