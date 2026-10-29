@@ -39,6 +39,7 @@ video.
 - The wait for a recording segment to finish writing is bounded. (#584)
 
 ### Fixed
+- **An export with cuts is no longer deleted by its own colour check.** With no subtitles, the check compared the recording's midpoint with the same moment in the export. After a cut that moment was elsewhere in the file, or past its end, and a correct export was rejected and removed.
 - **No more off-thread sends to the app's interface.** Some recording, preview, export-progress and device events were sent from background threads, which Flutter warns can lose data or crash. They are now delivered on the main thread, in order.
 - **A failed recording says why.** It read "A recording error occurred: " with nothing after the colon; the reason from macOS or Windows was dropped on the way to the screen. Export errors had the same gap, and showed the English "Unknown error" in every language. With no reason to give, the message now says so and points to Settings › Diagnostics. On macOS, a recording that failed to start with no message showed nothing at all; it now shows the message for its cause, including the screen-permission message and its Open Settings button.
 - **The click highlight is a whole ring again.** With the live cursor highlight on, every click drew a quarter of a circle beside the pointer, on screen and in the recording; after the first click its outline also stayed on for good, and on a Retina display it was soft. (#617)

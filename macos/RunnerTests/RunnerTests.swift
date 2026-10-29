@@ -3806,6 +3806,46 @@ final class LetterboxExporterTests: XCTestCase {
     XCTAssertEqual(fittedRect.height, destinationRect.height, accuracy: 1.0)
   }
 
+  /// An uncaptioned export that cuts most of the recording away is checked at
+  /// a moment the file has. The colour check used to sample the SOURCE
+  /// midpoint on both sides: 2 s into a 1.5 s file, which failed, and the
+  /// check then deleted a correct export (found by the 1.2.1 end-to-end run).
+  func testACutExportWithoutCaptionsIsValidatedInsideTheFile() throws {
+    let tempDir = makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let screenURL = tempDir.appendingPathComponent("screen.mov")
+    try makeSolidColorVideo(
+      url: screenURL, size: CGSize(width: 320, height: 180), durationSeconds: 4.0,
+      color: NSColor(calibratedWhite: 0.6, alpha: 1.0))
+    let params = CompositionParams(
+      targetSize: CGSize(width: 640, height: 360), padding: 0.0, cornerRadius: 0.0,
+      backgroundColor: nil, backgroundImagePath: nil, cursorSize: 1.0,
+      showCursor: false, zoomEnabled: false, zoomFactor: 1.0, followStrength: 0.15,
+      fpsHint: 30, fitMode: "fit", audioGainDb: 0.0, audioVolumePercent: 100.0)
+    let result = try XCTUnwrap(
+      CompositionBuilder().buildExport(
+        asset: AVAsset(url: screenURL), cameraAsset: nil, params: params,
+        cameraParams: nil, cursorRecording: nil))
+    let kept = [ClipKeptRange(sourceInMs: 0, sourceOutMs: 1500)]
+    let outputURL = tempDir.appendingPathComponent("cut.mov")
+    let done = expectation(description: "cut render")
+    var outcome: Result<URL, Error>?
+    LetterboxExporter()._testRenderFinalExport(
+      result: result, outputURL: outputURL, keptRanges: kept
+    ) {
+      outcome = $0
+      done.fulfill()
+    }
+    wait(for: [done], timeout: 60.0)
+    _ = try XCTUnwrap(try outcome?.get())
+    XCTAssertLessThan(AVAsset(url: outputURL).duration.seconds, 1.7, "the cut was applied")
+
+    let evaluation = LetterboxExporter()._testEvaluateFinalExportReferenceRender(
+      referenceResult: result, finalExportURL: outputURL, keptRanges: kept)
+    XCTAssertNil(evaluation.error, "a correct cut export must pass its colour check")
+    XCTAssertNotNil(evaluation.lumaDelta, "and must actually be measured")
+  }
+
   /// A screen-only export grades the screen, not the padding or the canvas
   /// background, as in the live preview: the composition renders the screen
   /// on a transparent canvas and the writer puts the background under it

@@ -163,7 +163,12 @@ struct CaptionCueTrack {
     sourceDurationMs: Int,
     frameDurationMs: Int = 1
   ) -> ValidationSample? {
-    guard !cues.isEmpty, sourceDurationMs > 0 else { return nil }
+    // No cues is the ordinary case, not "nothing to do": the whole recording is
+    // one caption-free gap, and it still has to be mapped through the cuts.
+    // Returning nil here left the caller sampling the SOURCE midpoint on both
+    // sides, which after a cut is a different moment in the file, or past its
+    // end -- and the validator then deleted a correct export.
+    guard sourceDurationMs > 0 else { return nil }
     let minimumUsableWidthMs = max(2 * max(frameDurationMs, 1), 2)
 
     // Same sorting and overlap rejection the renderer applies, so the cue set
@@ -174,7 +179,6 @@ struct CaptionCueTrack {
         let end = min(max(cue.endMs, 0), sourceDurationMs)
         return end > start ? (start, end) : nil
       }
-    guard !painted.isEmpty else { return nil }
 
     var gaps: [(start: Int, end: Int)] = []
     var uncovered = 0

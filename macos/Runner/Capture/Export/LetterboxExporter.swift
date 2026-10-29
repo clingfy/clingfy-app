@@ -1227,9 +1227,10 @@ final class LetterboxExporter {
         finalSampleTime = min(
           max(Double(captionFreeSample.finalMs) / 1000.0, 0.0), lastFinalSecond)
       } else {
-        // No captions: unchanged from before captions existed.
+        // Only when the edit cannot be mapped at all (no captions now map
+        // through the cuts above). Still clamped to the file that exists.
         referenceSampleTime = min(max(referenceDurationSeconds * 0.5, 0.0), lastReferenceSecond)
-        finalSampleTime = referenceSampleTime
+        finalSampleTime = min(referenceSampleTime, lastFinalSecond)
       }
       let sampleTime = referenceSampleTime
       let referenceImage: CGImage

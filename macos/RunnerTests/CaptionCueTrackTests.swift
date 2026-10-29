@@ -211,11 +211,46 @@ final class CaptionCueTrackTests: XCTestCase {
     XCTAssertNil(chosen, "the caller must skip the comparison, not sample anyway")
   }
 
-  func testReturnsNilWithNoCuesSoTheCallerKeepsItsOwnMidpoint() {
-    XCTAssertNil(
+  /// No cues and no cuts: the midpoint, the same frame the validator always
+  /// sampled for an uncut, uncaptioned export.
+  func testNoCuesAndNoCutsSamplesTheMidpoint() {
+    let chosen = CaptionCueTrack.captionFreeSample(
+      cues: [], keptRanges: [], sourceDurationMs: 10000)
+    XCTAssertEqual(chosen?.referenceMs, 5000)
+    XCTAssertEqual(chosen?.finalMs, 5000)
+  }
+
+  /// No cues, but a cut: the sample is mapped onto the edited timeline. The
+  /// source midpoint (5000) was cut away, and the 3s file has no 5s at all;
+  /// sampling it there failed and the validator deleted a correct export.
+  func testNoCuesWithACutMapsTheSampleIntoTheFile() throws {
+    let chosen = try XCTUnwrap(
       CaptionCueTrack.captionFreeSample(
-        cues: [], keptRanges: [], sourceDurationMs: 10000),
-      "no captions means nothing to avoid")
+        cues: [], keptRanges: [ClipKeptRange(sourceInMs: 0, sourceOutMs: 3000)],
+        sourceDurationMs: 10000))
+    XCTAssertLessThan(chosen.finalMs, 3000, "inside the exported file")
+    XCTAssertEqual(chosen.referenceMs, chosen.finalMs, "the kept range starts at 0")
+  }
+
+  /// No cues, reordered clips: both timebases name the same moment.
+  func testNoCuesWithAReorderNamesTheSameMomentOnBothSides() throws {
+    let chosen = try XCTUnwrap(
+      CaptionCueTrack.captionFreeSample(
+        cues: [],
+        keptRanges: [
+          ClipKeptRange(sourceInMs: 6000, sourceOutMs: 10000),
+          ClipKeptRange(sourceInMs: 0, sourceOutMs: 2000),
+        ],
+        sourceDurationMs: 10000))
+    XCTAssertEqual(
+      ClipPlaybackPlanner.editedMsForKeptSourceMs(
+        chosen.referenceMs,
+        ranges: [
+          ClipKeptRange(sourceInMs: 6000, sourceOutMs: 10000),
+          ClipKeptRange(sourceInMs: 0, sourceOutMs: 2000),
+        ]),
+      chosen.finalMs)
+    XCTAssertLessThan(chosen.finalMs, 6000)
   }
 
   func testMapsTheGapThroughACutOntoTheEditedTimeline() {
