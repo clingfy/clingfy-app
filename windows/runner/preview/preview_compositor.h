@@ -33,6 +33,7 @@
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
 
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -183,12 +184,17 @@ class PreviewCompositor {
   //                     smoother every frame.
   // `cursor` is the parsed sidecar; empty samples = the video-only path (no
   // zoom, no halo), which is what a recording with cursor capture off yields.
+  //   after_background — optional; runs after the canvas background (fill +
+  //                     image) and before the screen frame, in canvas space.
+  //                     The backgroundBehind camera draws here.
   void ComposeFrame(ID2D1DeviceContext* d2d_context,
                     const D2D1_RECT_F& dest_rect,
                     const capture::CursorSidecarData& cursor,
                     const std::vector<capture::ZoomSegment>& zoom_segments,
                     std::int64_t playback_us, double now_seconds,
-                    ZoomState& zoom);
+                    ZoomState& zoom,
+                    const std::function<void(ID2D1DeviceContext*)>&
+                        after_background = {});
 
   UINT video_width() const { return video_width_; }
   UINT video_height() const { return video_height_; }

@@ -85,6 +85,10 @@ class CameraExportRenderer {
   // Deliberately NOT defaulted. A default would let a new call site compile
   // while silently never pulsing — the same shape as the intro/outro keys that
   // shipped parsed on one path only. Make the next caller state its answer.
+  // backgroundBehind: draw before the screen recording, not after it. Valid
+  // after Prepare (export) / PrepareAndAdvance (preview).
+  bool behind_screen() const { return plan_.behind_screen; }
+
   void Draw(ID2D1DeviceContext* ctx, std::int64_t frame_ms,
             std::int64_t total_duration_ms, double screen_zoom,
             bool zoom_in_segment, std::int64_t zoom_segment_local_ms);

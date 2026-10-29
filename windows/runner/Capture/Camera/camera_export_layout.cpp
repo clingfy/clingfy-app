@@ -11,11 +11,11 @@ double Clamp(double v, double lo, double hi) {
   return v < lo ? lo : (v > hi ? hi : v);
 }
 
-// Default normalized center for a layout preset when the user hasn't dragged the
-// bubble. Corner presets sit a little in from the edge; the post-clamp keeps the
-// bubble on-canvas regardless of size. Full-canvas / side-by-side / stacked
-// layouts are not bubble layouts (deferred past 9.4) — default them to the
-// bottom-right corner so the camera still appears somewhere sensible.
+// Default normalized center for a corner preset when the user hasn't dragged
+// the bubble. Corner presets sit a little in from the edge; the post-clamp
+// keeps the bubble on-canvas regardless of size. The panel layouts
+// (side-by-side, stacked, background) are not bubbles and are resolved by
+// `PanelLayoutRect` below; an unknown preset defaults to bottom-right.
 void PresetCenter(const std::string& preset, double* cx, double* cy) {
   constexpr double kNear = 0.18;
   constexpr double kFar = 0.82;
@@ -35,7 +35,61 @@ void PresetCenter(const std::string& preset, double* cx, double* cy) {
   }
 }
 
+// The panel layouts, value for value with macOS
+// `CameraLayoutResolver.resolve` (CameraLayoutResolver.swift), converted from
+// its y-UP CGRect to Direct2D's y-DOWN. They ignore the size factor and the
+// bubble floor, as macOS does:
+//   sideBySideLeft / Right — a full-height column, 32% of the width (min 120),
+//     inset by the margin, on that side;
+//   stackedTop / Bottom — a full-width band, 28% of the height (min 120 tall,
+//     160 wide), inset by the margin, on that edge;
+//   backgroundBehind — the whole canvas (drawn BEHIND the screen).
+// The margin is max(16, 3% of the short side). Returns false for anything else.
+bool PanelLayoutRect(const std::string& preset, double canvas_w,
+                     double canvas_h, CameraBubbleRect* rect) {
+  const double margin = std::max(16.0, std::min(canvas_w, canvas_h) * 0.03);
+  if (preset == "sideBySideLeft" || preset == "sideBySideRight") {
+    rect->width = std::max(120.0, canvas_w * 0.32);
+    rect->height = std::max(120.0, canvas_h - (margin * 2.0));
+    rect->x = preset == "sideBySideLeft" ? margin
+                                         : canvas_w - margin - rect->width;
+    rect->y = margin;
+  } else if (preset == "stackedTop" || preset == "stackedBottom") {
+    rect->width = std::max(160.0, canvas_w - (margin * 2.0));
+    rect->height = std::max(120.0, canvas_h * 0.28);
+    rect->x = margin;
+    // macOS stackedTop sits at y = H - margin - h in y-UP, i.e. `margin` from
+    // the top in y-DOWN; stackedBottom is the mirror.
+    rect->y = preset == "stackedTop" ? margin
+                                     : canvas_h - margin - rect->height;
+  } else if (preset == "backgroundBehind") {
+    rect->x = 0.0;
+    rect->y = 0.0;
+    rect->width = canvas_w;
+    rect->height = canvas_h;
+  } else {
+    return false;
+  }
+  // A tiny canvas can be smaller than the minimums; keep the panel on it.
+  rect->width = std::min(rect->width, canvas_w);
+  rect->height = std::min(rect->height, canvas_h);
+  rect->x = Clamp(rect->x, 0.0, canvas_w - rect->width);
+  rect->y = Clamp(rect->y, 0.0, canvas_h - rect->height);
+  return true;
+}
+
 }  // namespace
+
+bool IsCameraPanelLayout(const std::string& layout_preset) {
+  return layout_preset == "sideBySideLeft" ||
+         layout_preset == "sideBySideRight" || layout_preset == "stackedTop" ||
+         layout_preset == "stackedBottom" ||
+         layout_preset == "backgroundBehind";
+}
+
+bool CameraDrawsBehindScreen(const std::string& layout_preset) {
+  return layout_preset == "backgroundBehind";
+}
 
 CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
                                          bool has_center, double center_x,
@@ -46,6 +100,13 @@ CameraBubbleRect ComputeCameraBubbleRect(double canvas_w, double canvas_h,
   CameraBubbleRect rect;
   if (canvas_w <= 0.0 || canvas_h <= 0.0) {
     return rect;  // degenerate canvas → empty bubble
+  }
+  // A panel layout the user has not dragged is a fixed frame. A dragged one
+  // falls through to the square bubble at the manual center, as macOS's
+  // `manualFrame` does.
+  if (!has_center &&
+      PanelLayoutRect(layout_preset, canvas_w, canvas_h, &rect)) {
+    return rect;
   }
 
   const double factor = Clamp(size_factor, 0.08, 0.45);

@@ -1450,18 +1450,13 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
             D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
       }
-      if (grading) {
-        // The intermediate is canvas-sized, so the graded output lands at the
-        // origin 1:1 — no scaling, no interpolation surprises.
-        d2d_ctx->DrawImage(grade_chain.Output());
-      } else {
-        draw_content();
-      }
-      // Phase 9.4: the camera bubble draws LAST, in canvas space with an
-      // identity transform (the zoom transform was reset above and the content
-      // clip/layer popped), so it sits on top of the screen + cursor + clicks
-      // and is NOT magnified by smart zoom. Its own mask clips the bubble.
-      if (camera_renderer != nullptr) {
+      // Phase 9.4: the camera draws in canvas space with an identity transform
+      // (the zoom transform was reset and the content clip/layer popped), so it
+      // is NOT magnified by smart zoom. Its own mask clips the bubble. It draws
+      // LAST, on top of the screen + cursor + clicks, except backgroundBehind,
+      // which draws here — over the canvas background, under the screen — as
+      // macOS's `.behindScreen` z-order does.
+      const auto draw_camera = [&]() {
         // The animation clock must share the same time base as the clip it
         // animates over. Under clips (D4, §5.5) the intro/outro run in EDITED
         // time (the trimmed length = edited_total_ms) at the frame's edited
@@ -1487,6 +1482,21 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         // edited: deliberate, and matched exactly on the preview leg.
         camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms,
                               zf.zoom, zf.in_segment, zf.segment_local_ms);
+      };
+      const bool camera_behind =
+          camera_renderer != nullptr && camera_renderer->behind_screen();
+      if (camera_behind) {
+        draw_camera();
+      }
+      if (grading) {
+        // The intermediate is canvas-sized, so the graded output lands at the
+        // origin 1:1 — no scaling, no interpolation surprises.
+        d2d_ctx->DrawImage(grade_chain.Output());
+      } else {
+        draw_content();
+      }
+      if (camera_renderer != nullptr && !camera_behind) {
+        draw_camera();
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);

@@ -182,7 +182,8 @@ void PreviewCompositor::ComposeFrame(
     ID2D1DeviceContext* d2d_context, const D2D1_RECT_F& dest_rect,
     const capture::CursorSidecarData& cursor,
     const std::vector<capture::ZoomSegment>& zoom_segments,
-    std::int64_t playback_us, double now_seconds, ZoomState& zoom) {
+    std::int64_t playback_us, double now_seconds, ZoomState& zoom,
+    const std::function<void(ID2D1DeviceContext*)>& after_background) {
   // Canvas background. This Clear runs BEFORE the colour-grade effect chain
   // below, which is precisely what keeps the canvas ungraded — same rule the
   // cursor halo and camera bubble already follow. Defaults to opaque black, so
@@ -218,6 +219,10 @@ void PreviewCompositor::ComposeFrame(
     d2d_context->DrawBitmap(
         bg_image, D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
+  }
+
+  if (after_background) {
+    after_background(d2d_context);
   }
 
   if (!video_bitmap_) return;

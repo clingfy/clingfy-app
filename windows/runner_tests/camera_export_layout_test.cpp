@@ -97,12 +97,106 @@ TEST(CameraExportLayoutTest, PresetCornersDiffer) {
 }
 
 TEST(CameraExportLayoutTest, UnknownPresetFallsBackToBottomRight) {
+  // sideBySideLeft was the "unknown" stand-in here until the panel layouts
+  // shipped (W7); a genuinely unknown preset still lands bottom-right.
   const auto unknown =
-      ComputeCameraBubbleRect(kW, kH, false, 0, 0, "sideBySideLeft", 0.18);
+      ComputeCameraBubbleRect(kW, kH, false, 0, 0, "cinemascope", 0.18);
   const auto br = ComputeCameraBubbleRect(kW, kH, false, 0, 0,
                                           "overlayBottomRight", 0.18);
   EXPECT_NEAR(unknown.x, br.x, 0.001);
   EXPECT_NEAR(unknown.y, br.y, 0.001);
+}
+
+// --- panel layouts (W7), value for value with macOS CameraLayoutResolver ----
+// macOS frames are y-UP CGRects; these are the same rects in Direct2D y-DOWN.
+// 1920x1080: margin = max(16, 1080 * 0.03 = 32.4) = 32.4.
+
+void ExpectRect(const CameraBubbleRect& r, double x, double y, double w,
+                double h) {
+  EXPECT_NEAR(r.x, x, 0.001);
+  EXPECT_NEAR(r.y, y, 0.001);
+  EXPECT_NEAR(r.width, w, 0.001);
+  EXPECT_NEAR(r.height, h, 0.001);
+}
+
+TEST(CameraPanelLayoutTest, SideBySideIsAFullHeightColumnOnItsSide) {
+  const double m = 32.4;
+  ExpectRect(ComputeCameraBubbleRect(1920, 1080, false, 0, 0,
+                                     "sideBySideLeft", 0.18),
+             m, m, 1920 * 0.32, 1080 - 2 * m);
+  ExpectRect(ComputeCameraBubbleRect(1920, 1080, false, 0, 0,
+                                     "sideBySideRight", 0.18),
+             1920 - m - 1920 * 0.32, m, 1920 * 0.32, 1080 - 2 * m);
+}
+
+TEST(CameraPanelLayoutTest, StackedIsAFullWidthBandOnItsEdge) {
+  const double m = 32.4;
+  const double h = 1080 * 0.28;
+  // stackedTop is at the TOP of the frame (y-DOWN y = margin); macOS writes it
+  // as y = H - margin - h in y-UP.
+  ExpectRect(ComputeCameraBubbleRect(1920, 1080, false, 0, 0, "stackedTop",
+                                     0.18),
+             m, m, 1920 - 2 * m, h);
+  ExpectRect(ComputeCameraBubbleRect(1920, 1080, false, 0, 0,
+                                     "stackedBottom", 0.18),
+             m, 1080 - m - h, 1920 - 2 * m, h);
+}
+
+TEST(CameraPanelLayoutTest, BackgroundBehindFillsTheCanvas) {
+  ExpectRect(ComputeCameraBubbleRect(1920, 1080, false, 0, 0,
+                                     "backgroundBehind", 0.18),
+             0, 0, 1920, 1080);
+  EXPECT_TRUE(CameraDrawsBehindScreen("backgroundBehind"));
+  for (const char* other : {"overlayBottomRight", "sideBySideLeft",
+                            "stackedTop", "", "cinemascope"}) {
+    EXPECT_FALSE(CameraDrawsBehindScreen(other)) << other;
+  }
+}
+
+TEST(CameraPanelLayoutTest, PanelsIgnoreTheSizeFactorAndTheFloor) {
+  const auto small = ComputeCameraBubbleRect(1920, 1080, false, 0, 0,
+                                             "sideBySideRight", 0.08, 400.0);
+  const auto large = ComputeCameraBubbleRect(1920, 1080, false, 0, 0,
+                                             "sideBySideRight", 0.45, 0.0);
+  ExpectRect(small, large.x, large.y, large.width, large.height);
+}
+
+TEST(CameraPanelLayoutTest, TheMarginHasASixteenPixelFloor) {
+  // 400x300: 3% of 300 = 9 < 16, so the margin is 16.
+  ExpectRect(ComputeCameraBubbleRect(400, 300, false, 0, 0, "sideBySideLeft",
+                                     0.18),
+             16, 16, 128, 300 - 32);
+}
+
+TEST(CameraPanelLayoutTest, ATinyCanvasKeepsThePanelOnIt) {
+  // The 120 / 160 minimums exceed a 100x80 canvas; the panel is cut to fit and
+  // stays on it.
+  for (const char* preset : {"sideBySideLeft", "sideBySideRight", "stackedTop",
+                             "stackedBottom"}) {
+    const auto r = ComputeCameraBubbleRect(100, 80, false, 0, 0, preset, 0.18);
+    EXPECT_GE(r.x, 0.0) << preset;
+    EXPECT_GE(r.y, 0.0) << preset;
+    EXPECT_LE(r.x + r.width, 100.0 + 1e-9) << preset;
+    EXPECT_LE(r.y + r.height, 80.0 + 1e-9) << preset;
+  }
+}
+
+TEST(CameraPanelLayoutTest, ADraggedPanelBecomesASquareBubbleAtTheCenter) {
+  // macOS `manualFrame` wins over every preset, panels included.
+  const auto dragged = ComputeCameraBubbleRect(1920, 1080, true, 0.5, 0.5,
+                                               "sideBySideLeft", 0.18);
+  EXPECT_NEAR(dragged.width, dragged.height, 0.001);
+  EXPECT_NEAR(dragged.x + dragged.width / 2.0, 960.0, 0.001);
+}
+
+TEST(CameraPanelLayoutTest, IsCameraPanelLayoutNamesExactlyTheFive) {
+  for (const char* p : {"sideBySideLeft", "sideBySideRight", "stackedTop",
+                        "stackedBottom", "backgroundBehind"}) {
+    EXPECT_TRUE(IsCameraPanelLayout(p)) << p;
+  }
+  for (const char* p : {"overlayTopLeft", "overlayBottomRight", "hidden", ""}) {
+    EXPECT_FALSE(IsCameraPanelLayout(p)) << p;
+  }
 }
 
 TEST(CameraExportLayoutTest, DegenerateCanvasIsEmpty) {

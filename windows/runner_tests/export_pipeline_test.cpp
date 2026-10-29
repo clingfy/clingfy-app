@@ -2906,6 +2906,79 @@ TEST(CameraPlanForExportRequestTest, CarriesTheZoomTrioOntoTheExportPlan) {
       /*zoom_in_segment=*/false, /*zoom_segment_local_ms=*/0);
   EXPECT_DOUBLE_EQ(at_zoom.scale, 1.35);
 }
+// W7: the panel layouts. A red screen (320x240) letterboxed onto a 320x320
+// canvas (40 px bars top and bottom) with a green camera. backgroundBehind puts
+// the camera UNDER the screen, so the bars show camera and the middle shows
+// screen; sideBySideLeft draws a full-height column ON TOP of the screen.
+TEST(ExportPipelineTest, CameraPanelLayoutsDrawInMacOSOrder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("camera_panels");
+  const auto screen = (dir / "screen.mov").u8string();
+  const auto camera = (dir / "camera.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeColorHalvesSource(&device, screen, 320, 240, 0xFFFF0000u,
+                                   0xFFFF0000u, &skip_reason) ||
+      !SynthesizeColorHalvesSource(&device, camera, 160, 120, 0xFF00FF00u,
+                                   0xFF00FF00u, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  const auto red_of = [](std::uint32_t c) {
+    return static_cast<int>((c >> 16) & 0xFF);
+  };
+  const auto green_of = [](std::uint32_t c) {
+    return static_cast<int>((c >> 8) & 0xFF);
+  };
+  const auto render = [&](const char* layout, const char* name) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(screen).wstring();
+    r.destination_path = (dir / name).u8string();
+    r.layout = "square11";  // 320x240 -> 320x320, 40 px bars
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.draw_camera = true;
+    r.camera_video_path = fs::u8path(camera).wstring();
+    r.camera.layout_preset = layout;
+    r.camera.shape = "square";
+    r.camera.content_mode = "fill";
+    r.camera.opacity = 1.0;
+    const RenderResult result = RenderComposedExport(r);
+    EXPECT_TRUE(result.ok) << layout << ": " << result.message;
+    return r.destination_path;
+  };
+  const auto pixel = [&](const std::string& path, int x, int y) {
+    std::vector<std::uint32_t> colors;
+    if (!ReadFramePixelColors(fs::u8path(path).wstring(), x, y, &colors) ||
+        colors.empty()) {
+      return std::uint32_t{0};
+    }
+    return colors[colors.size() / 2];
+  };
+
+  const std::string behind = render("backgroundBehind", "behind.mov");
+  const std::uint32_t bar = pixel(behind, 160, 15);        // top letterbox bar
+  const std::uint32_t middle = pixel(behind, 160, 160);    // the screen
+  EXPECT_GT(green_of(bar), 180) << std::hex << bar << ": camera behind the bar";
+  EXPECT_LT(red_of(bar), 80) << std::hex << bar;
+  EXPECT_GT(red_of(middle), 180) << std::hex << middle << ": screen on top";
+  EXPECT_LT(green_of(middle), 80) << std::hex << middle;
+
+  // sideBySideLeft: x in [16, 16 + 320*0.32 = 118.4) on a 320 canvas, full
+  // height minus the 16 px margin. Its middle is camera, drawn over the screen.
+  const std::string side = render("sideBySideLeft", "side.mov");
+  const std::uint32_t column = pixel(side, 60, 160);
+  const std::uint32_t right = pixel(side, 260, 160);
+  EXPECT_GT(green_of(column), 180) << std::hex << column << ": camera on top";
+  EXPECT_LT(red_of(column), 80) << std::hex << column;
+  EXPECT_GT(red_of(right), 180) << std::hex << right << ": screen beside it";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 // jumps BACKWARD and the forward-only camera reader must be re-primed
 // (CameraExportRenderer::SeekTo, added in 3b-2a) or the bubble would freeze on a
 // stale later frame. Proof: a camera colored by source time (green first source

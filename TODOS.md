@@ -1044,8 +1044,6 @@ Tags:
 
 - **Windows preview speaker-echo removal** — code, not started. Windows applies the mic echo canceller only at export, while the macOS preview plays the echo-cancelled mic. With echo removal on, the Windows preview does not match its export. *Source:* windows/runner/preview/preview_engine.h; windows/runner/Bridge/Routers/export_router.cpp:563; macos/Runner/Preview/InlinePreviewView.swift:1117
 
-- **Windows camera layouts: side-by-side, stacked, background** — code, not started. Only the four corner layouts work. Side-by-side, stacked and full-canvas background fall back to a bottom-right bubble, while the shared UI still offers them. *Source:* windows/runner/Capture/Camera/camera_export_layout.cpp:14-35; docs/decisions/windows-phase-9-camera-overlay-architecture.md:279-280
-
 - **Windows true squircle (superellipse) camera mask** — parked, deferred. 'Squircle' is drawn as a rounded rect with a minimum 0.3 corner fraction (the code says 'true superellipse deferred'). macOS draws a real squircle path. *Source:* windows/runner/Capture/Camera/camera_bubble_painter.cpp:78-79, :101-115
 
 - **Windows in-app live camera bubble: chroma key** — code, not started. The floating DComp bubble, the inline preview and the export apply chroma key, but the in-app Flutter bubble does not, because it needs a shader. *Source:* lib/app/home/widgets/camera_overlay_bubble.dart:193-195; docs/decisions/windows-camera-bubble-renderer-architecture.md:246-248
@@ -1064,6 +1062,12 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows camera layouts: side-by-side, stacked, background** (2026-10-29,
+  W7 in `docs/windows-machine-work.md`). They fell back to a bottom-right
+  bubble. Now macOS's frames (value for value with `CameraLayoutResolver`), a
+  painter that takes any w x h, and backgroundBehind drawn under the screen in
+  both the export and the preview.
 
 - **Windows export audio tiers above 192 kbps** (2026-10-29, W6 in
   `docs/windows-machine-work.md`). Measured: the Windows 11 AAC encoder MFT

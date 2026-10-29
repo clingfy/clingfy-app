@@ -60,6 +60,7 @@ CameraRenderPlan BuildCameraRenderPlan(const CameraRenderSpec& spec,
   plan.zoom_behavior = spec.zoom_behavior;
   plan.zoom_scale_multiplier = spec.zoom_scale_multiplier;
   plan.layout_preset = spec.layout_preset;
+  plan.behind_screen = CameraDrawsBehindScreen(spec.layout_preset);
   return plan;
 }
 

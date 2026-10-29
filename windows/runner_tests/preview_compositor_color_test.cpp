@@ -269,5 +269,51 @@ TEST(PreviewCompositorColorTest, GradeChangeUpdatesNextFrame) {
   EXPECT_LT(Chan(restored, 0), 12);
 }
 
+// W7: the backgroundBehind camera draws in the `after_background` hook, which
+// runs after the canvas background and BEFORE the screen frame. Pinned with a
+// hook that paints the whole surface green and a red screen inset in the
+// middle: the margin must be green (the hook ran) and the middle red (the
+// screen drew over it).
+TEST(PreviewCompositorColorTest, AfterBackgroundHookDrawsUnderTheScreen) {
+  HeadlessD2D gpu;
+  const std::string err = gpu.Create(kTargetSize, kTargetSize);
+  if (!err.empty()) SKIP_OR_FAIL(err);
+
+  PreviewCompositor compositor;
+  if (FAILED(compositor.EnsureResources(gpu.device.device(), gpu.ctx.Get(),
+                                        kVideoSize, kVideoSize))) {
+    SKIP_OR_FAIL("PreviewCompositor::EnsureResources failed headless");
+  }
+  gpu.FillTexture(compositor.video_texture(), kVideoSize, kVideoSize,
+                  kOpaqueRed);
+
+  ComPtr<ID2D1SolidColorBrush> green;
+  ASSERT_TRUE(SUCCEEDED(gpu.ctx->CreateSolidColorBrush(
+      D2D1::ColorF(0.0f, 1.0f, 0.0f, 1.0f), &green)));
+  int hook_calls = 0;
+  ZoomState zoom;
+  gpu.ctx->BeginDraw();
+  compositor.ComposeFrame(
+      gpu.ctx.Get(), D2D1::RectF(32.0f, 32.0f, 96.0f, 96.0f), {}, {},
+      /*playback_us=*/0, /*now_seconds=*/0.0, zoom,
+      [&](ID2D1DeviceContext* ctx) {
+        ++hook_calls;
+        ctx->FillRectangle(D2D1::RectF(0.0f, 0.0f, 128.0f, 128.0f),
+                           green.Get());
+      });
+  ASSERT_TRUE(SUCCEEDED(gpu.ctx->EndDraw()));
+  gpu.device.context()->Flush();
+  std::vector<std::uint32_t> pixels;
+  ASSERT_TRUE(gpu.ReadTarget(kTargetSize, kTargetSize, &pixels));
+
+  EXPECT_EQ(hook_calls, 1);
+  const std::uint32_t margin = pixels[8 * kTargetSize + 8];
+  const std::uint32_t middle = pixels[64 * kTargetSize + 64];
+  EXPECT_GT(Chan(margin, 8), 200) << std::hex << margin;
+  EXPECT_LT(Chan(margin, 16), 50) << std::hex << margin;
+  EXPECT_GT(Chan(middle, 16), 200) << std::hex << middle;
+  EXPECT_LT(Chan(middle, 8), 50) << std::hex << middle;
+}
+
 }  // namespace
 }  // namespace clingfy::preview

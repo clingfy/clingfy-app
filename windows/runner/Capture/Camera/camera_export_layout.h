@@ -24,6 +24,15 @@ struct CameraBubbleRect {
 // Smallest bubble side in output pixels (matches macOS). Exposed for tests.
 inline constexpr double kCameraBubbleMinSidePx = 96.0;
 
+// True for the layouts that are panels rather than bubbles: side-by-side
+// (left / right), stacked (top / bottom) and background-behind.
+bool IsCameraPanelLayout(const std::string& layout_preset);
+
+// True when the camera is drawn BEHIND the screen recording ("backgroundBehind",
+// macOS's `.behindScreen` z-order): over the canvas background, under the
+// screen, so it shows through the padding and letterbox around the video.
+bool CameraDrawsBehindScreen(const std::string& layout_preset);
+
 // Compute the bubble rect on a `canvas_w` x `canvas_h` output.
 //   has_center / center_x / center_y — the manual normalized center (0..1) when
 //     the user dragged the bubble; ignored when has_center is false. `center_y`
