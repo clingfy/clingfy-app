@@ -390,10 +390,57 @@ the Windows dropdown visible in `windows_control_hides_test.dart`.
 
 ---
 
+## ~~W10. Fixed-target zoom (draggable focus point)~~ — DONE 2026-10-29
+
+*Unblocked 2026-10-29 by the owner's call: save the point and export it.*
+
+macOS honours the dragged point only in the live preview: `zoom.manual.json`
+never stores it, so it is lost on reopen and never exported. Windows does not
+copy that gap. The store format gains two optional keys, the ones Dart's
+`ZoomSegment.toMap` already sends on save:
+
+    "focusMode": "fixedTarget", "fixedTarget": {"dx": 0.3, "dy": 0.6}
+
+Both are optional, so old files load as before and a reader that ignores
+unknown keys (macOS today) still loads new ones.
+
+**Done:**
+- `zoom_manual_store` reads and writes both keys (the point only with
+  `fixedTarget`, clamped to [0,1]). Its scanner now skips nested unknown
+  values whole instead of stopping at the first comma inside them.
+- `MergeZoomSegments` carries the point into `ZoomSegment`; the export
+  (`ZoomExportController`) zooms on it instead of running the cursor
+  heuristic. Unpinned segments keep the heuristic.
+- One wire parser, `Bridge/Routers/zoom_focus_args`, for both
+  `saveManualZoomSegments` and `previewSetZoomSegments`.
+- The preview (`PreviewCompositor`) aims a pinned segment at its point. The
+  preview halo now marks the cursor where the zoom puts it, not the zoom
+  centre, which only differed once the centre could be somewhere else.
+- `previewGetCursorSamples` answers from the open session's cursor sidecar
+  (Dart's "cursor is still here" hint and its default focus for a new
+  segment); `previewGetSourceDimensions` answers the video size (the sidecar
+  header's before the first frame).
+- `previewGetZoomCapabilities` reports all three capabilities true, so Dart
+  offers the draggable target and the follow / fixed toggle. No Dart change:
+  the UI was capability-gated all along.
+
+**Tests:** store round-trip, Dart's exact shape, clamping and bad points,
+nested unknown values, mode-without-point; merge carries the point; the
+export zooms on a pin while the cursor moves and clamps a corner pin;
+`ZoomSegmentStateAt` reports it; sample selection (inclusive range, nearest
+with ties to the earlier); the parser; a router save → reopen round trip; the
+compositor aims at the pin; capability and no-session shapes.
+
+**Not checked:** dragging the target in the running app and exporting the
+result (owner, with the other visual checks). **macOS** still drops the point:
+queued on the macOS follow-up list.
+
+---
+
 ## Not briefed yet — triage, 2026-10-29
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
-remaining gaps, each with its source. After W1-W9, none of them is a
+remaining gaps, each with its source. After W1-W10, none of them is a
 self-contained task a session can finish and verify alone. Each one is
 waiting on something:
 
@@ -406,12 +453,6 @@ screenshots a false oracle, so these cannot be verified unsupervised:
 - The Reveal Area overlay.
 
 **Blocked on a design decision:**
-- Fixed-target zoom. On macOS the draggable focus point is honoured only by
-  the live preview: `zoom.manual.json` never stores `focusMode` /
-  `fixedTarget` (`ZoomManualStore.swift`), and the exporter rebuilds segments
-  without them (`LetterboxExporter.swift`, "Load manual segments"). So the
-  point is lost on reopen and never reaches the export. Copying it would
-  ship the same preview ≠ export gap; decide the store format first.
 - Preview mic gain / voice cleanup before the first cut, and preview
   speaker-echo removal. Both need a host for the DSP on the passthrough path,
   which `docs/decisions/windows-editing-step4-7-preview-audio.md` (D6.1)

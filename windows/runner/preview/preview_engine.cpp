@@ -2849,6 +2849,70 @@ void PreviewEngine::SetZoomSettings(const std::string& session_id,
   RepaintPausedPreview();
 }
 
+PreviewEngine::CursorSamples PreviewEngine::GetCursorSamples(
+    const std::string& session_id, std::int64_t start_ms, std::int64_t end_ms,
+    std::int64_t playhead_ms) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return {};
+    }
+    if (impl_ == nullptr) {
+      return {};
+    }
+    impl = impl_.get();
+  }
+  CursorSamples out;
+  // render_mutex ALONE, after mutex_ is released (the SetZoomSettings
+  // discipline): the frame thread reads `cursor` under it.
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  out.window = capture::SelectCursorSamples(impl->cursor.samples, start_ms,
+                                            end_ms, playhead_ms);
+  if (impl->cursor.width > 0 && impl->cursor.height > 0) {
+    out.width = impl->cursor.width;
+    out.height = impl->cursor.height;
+  } else {
+    out.width = impl->last_video_width.load();
+    out.height = impl->last_video_height.load();
+  }
+  out.ok = true;
+  return out;
+}
+
+bool PreviewEngine::GetSourceDimensions(const std::string& session_id,
+                                        int* width, int* height) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return false;
+    }
+    if (impl_ == nullptr) {
+      return false;
+    }
+    impl = impl_.get();
+  }
+  UINT w = impl->last_video_width.load();
+  UINT h = impl->last_video_height.load();
+  if (w == 0 || h == 0) {
+    // Before the first frame. Dart asks once, at editor init, which can beat
+    // the decoder; the cursor sidecar's header is the capture size (the
+    // encoded frame's), loaded at Open. Same lock order as GetCursorSamples.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->cursor.width > 0 && impl->cursor.height > 0) {
+      w = static_cast<UINT>(impl->cursor.width);
+      h = static_cast<UINT>(impl->cursor.height);
+    }
+  }
+  if (w == 0 || h == 0) {
+    return false;
+  }
+  *width = static_cast<int>(w);
+  *height = static_cast<int>(h);
+  return true;
+}
+
 void PreviewEngine::SetColorGrade(
     const std::string& session_id,
     const capture::export_::color::ColorGrade& grade) {

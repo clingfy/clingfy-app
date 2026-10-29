@@ -11,6 +11,7 @@
 #include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
+#include "Bridge/Routers/zoom_focus_args.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
 #include "Bridge/result_helpers.h"
@@ -31,51 +32,6 @@ namespace {
 using clingfy::preview::PreviewEngine;
 
 void HandleNoopSetter(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  reply::Null(*result);
-}
-
-// `previewGetZoomCapabilities` gates the Phase 1 smart-fixed-target zoom UX
-// on the Dart side. Reporting `false` for every capability is the
-// documented way to keep the legacy follow-cursor experience and avoid
-// surfacing UI that has no native backing yet.
-void HandleGetZoomCapabilities(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  flutter::EncodableMap value{
-      {flutter::EncodableValue("cursorSamples"),
-       flutter::EncodableValue(false)},
-      {flutter::EncodableValue("fixedTargetPreview"),
-       flutter::EncodableValue(false)},
-      {flutter::EncodableValue("fixedTargetExport"),
-       flutter::EncodableValue(false)},
-  };
-  reply::Map(*result, std::move(value));
-}
-
-// Empty cursor-samples response. Shape matches `CursorSamplesResult.fromMap`:
-// an empty `samples` list and zero width/height. `playheadSample` is omitted
-// (the Dart parser tolerates the absence). The "samples not available"
-// signal is communicated via the Phase 1 zoom-capabilities probe above;
-// returning a structured empty payload here keeps any rogue call from
-// failing.
-void HandleGetCursorSamples(
-    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
-    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
-  flutter::EncodableMap value{
-      {flutter::EncodableValue("samples"),
-       flutter::EncodableValue(flutter::EncodableList{})},
-      {flutter::EncodableValue("width"), flutter::EncodableValue(0.0)},
-      {flutter::EncodableValue("height"), flutter::EncodableValue(0.0)},
-  };
-  reply::Map(*result, std::move(value));
-}
-
-// `previewGetSourceDimensions` returns null when no preview is active. Dart
-// hides hit-testing UI when this is null, which is exactly the Phase 1
-// behavior we want.
-void HandleGetSourceDimensions(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   reply::Null(*result);
@@ -838,6 +794,14 @@ void HandlePreviewSetZoomSegments(
           // half-open [start, end), so a non-positive span would be a segment
           // no frame can ever be inside.
           if (seg.end_ms > seg.start_ms) {
+            // The pinned point the user dragged in the editor, parsed by the
+            // same helper the saved file goes through.
+            const auto focus = clingfy::bridge::ReadZoomFocusArgs(*map);
+            if (focus.fixed_target()) {
+              seg.fixed_target = true;
+              seg.target_x = focus.x;
+              seg.target_y = focus.y;
+            }
             segments.push_back(seg);
           }
         }
@@ -846,6 +810,119 @@ void HandlePreviewSetZoomSegments(
     PreviewEngine::Instance()->SetZoomSegments(session_id, segments);
   }
   reply::Null(*result);
+}
+
+// `previewGetZoomCapabilities` gates the fixed-target zoom UX on the Dart
+// side (the draggable target, the follow / fixed toggle and the "cursor is
+// still here" hint). All three are backed on Windows: the cursor samples
+// below, the preview pinning a segment on its point (PreviewCompositor), and
+// the export doing the same from zoom.manual.json (ZoomExportController).
+void HandleGetZoomCapabilities(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  flutter::EncodableMap value{
+      {flutter::EncodableValue("cursorSamples"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("fixedTargetPreview"),
+       flutter::EncodableValue(true)},
+      {flutter::EncodableValue("fixedTargetExport"),
+       flutter::EncodableValue(true)},
+  };
+  reply::Map(*result, std::move(value));
+}
+
+flutter::EncodableMap EncodeCursorSample(
+    const clingfy::capture::CursorSidecarSample& s) {
+  return flutter::EncodableMap{
+      {flutter::EncodableValue("tMs"),
+       flutter::EncodableValue(static_cast<std::int64_t>(s.t_ms))},
+      {flutter::EncodableValue("x"),
+       flutter::EncodableValue(static_cast<double>(s.x))},
+      {flutter::EncodableValue("y"),
+       flutter::EncodableValue(static_cast<double>(s.y))},
+      {flutter::EncodableValue("visible"), flutter::EncodableValue(s.visible)},
+  };
+}
+
+// The cursor samples inside [startMs, endMs] plus the one nearest the
+// playhead, in the shape `CursorSamplesResult.fromMap` reads (macOS:
+// previewGetCursorSamplesResponse). x / y are in the sidecar's pixel space and
+// width / height say what that space is, so Dart can normalize.
+//
+// Never an error: no session, a stale session or missing args answer with an
+// empty list and zero size, which Dart treats as "no cursor data here" and
+// falls back to pinning the zoom on the centre.
+void HandleGetCursorSamples(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  flutter::EncodableMap value{
+      {flutter::EncodableValue("samples"),
+       flutter::EncodableValue(flutter::EncodableList{})},
+      {flutter::EncodableValue("width"), flutter::EncodableValue(0.0)},
+      {flutter::EncodableValue("height"), flutter::EncodableValue(0.0)},
+  };
+  const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+  if (args == nullptr) {
+    reply::Map(*result, std::move(value));
+    return;
+  }
+  const auto start_ms = ReadOptionalInt(*args, "startMs");
+  const auto end_ms = ReadOptionalInt(*args, "endMs");
+  const auto playhead_ms = ReadOptionalInt(*args, "playheadMs");
+  if (!start_ms || !end_ms || !playhead_ms) {
+    reply::Map(*result, std::move(value));
+    return;
+  }
+  const auto samples = PreviewEngine::Instance()->GetCursorSamples(
+      ReadString(*args, "sessionId"), *start_ms, *end_ms, *playhead_ms);
+  if (!samples.ok) {
+    reply::Map(*result, std::move(value));
+    return;
+  }
+  flutter::EncodableList list;
+  list.reserve(samples.window.in_range.size());
+  for (const auto& s : samples.window.in_range) {
+    list.push_back(flutter::EncodableValue(EncodeCursorSample(s)));
+  }
+  value[flutter::EncodableValue("samples")] =
+      flutter::EncodableValue(std::move(list));
+  if (samples.window.has_nearest) {
+    value[flutter::EncodableValue("playheadSample")] =
+        flutter::EncodableValue(EncodeCursorSample(samples.window.nearest));
+  }
+  value[flutter::EncodableValue("width")] =
+      flutter::EncodableValue(samples.width);
+  value[flutter::EncodableValue("height")] =
+      flutter::EncodableValue(samples.height);
+  reply::Map(*result, std::move(value));
+}
+
+// `{width, height}` of the open preview's decoded video, which the draggable
+// target uses to place itself over the picture. Zero (Dart reads "unknown"
+// and hides the target) with no session, a stale one, or before the first
+// frame has told us the size.
+void HandleGetSourceDimensions(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  std::string session_id;
+  if (const auto* args =
+          std::get_if<flutter::EncodableMap>(call.arguments())) {
+    session_id = ReadString(*args, "sessionId");
+  }
+  int width = 0;
+  int height = 0;
+  if (!PreviewEngine::Instance()->GetSourceDimensions(session_id, &width,
+                                                      &height)) {
+    width = 0;
+    height = 0;
+  }
+  reply::Map(*result,
+             flutter::EncodableMap{
+                 {flutter::EncodableValue("width"),
+                  flutter::EncodableValue(static_cast<double>(width))},
+                 {flutter::EncodableValue("height"),
+                  flutter::EncodableValue(static_cast<double>(height))},
+             });
 }
 
 // Canvas framing (background colour, padding, corner radius) for the live

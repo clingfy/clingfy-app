@@ -15,12 +15,14 @@ namespace clingfy::bridge::routers::preview {
 //     the Flutter post-processing UI fires these to "warm up" preview state.
 //   - `previewSetCameraPlacement`, `previewSetZoomSegments`,
 //     `previewSetAudioMix` are no-op success for the same reason.
-//   - `previewGetZoomCapabilities` reports `{cursorSamples:false,
-//     fixedTargetPreview:false, fixedTargetExport:false}` so the Dart side
-//     hides the smart fixed-target UX.
-//   - `previewGetCursorSamples` returns an empty samples response so the
-//     fallback path takes over.
-//   - `previewGetSourceDimensions` returns null.
+//
+// Fixed-target zoom (2026-10-29):
+//   - `previewGetZoomCapabilities` reports all three capabilities true.
+//   - `previewGetCursorSamples` answers from the open session's cursor
+//     sidecar (empty, never an error, without one).
+//   - `previewGetSourceDimensions` answers the decoded video's size, zero
+//     before the first frame.
+//   - `previewSetZoomSegments` carries each segment's pinned point.
 void RegisterHandlers(HandlerTable& table);
 
 }  // namespace clingfy::bridge::routers::preview

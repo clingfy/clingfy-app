@@ -987,6 +987,8 @@ Tags:
 
 - **One undo history across editing domains** — parked, macOS + Windows, parked. There are four separate EditSessions, so undoing a colour change cannot undo a clip split. Deliberately parked until a user complains. *Source:* docs/editing-platform-plan.md:31-36, :873-876, :912-914
 
+- **macOS: save and export the fixed zoom target** — code, macOS (MacBook). The draggable focus point works only in the live preview: `ZoomManualStore.swift` drops `focusMode` / `fixedTarget` on save, and the exporter rebuilds segments without them, so a pinned zoom comes back as follow-cursor and exports that way. Windows stores both as optional keys in `zoom.manual.json` (W10, 2026-10-29); mirror that shape so a project behaves the same on both. *Source:* macos/Runner/Capture/Zoom/ZoomManualStore.swift; macos/Runner/Capture/Export/LetterboxExporter.swift:3025-3062; windows/runner/Capture/Zoom/zoom_manual_store.h
+
 - **Editable zoom lane lines up with the ruler under cuts and reorders** — code, macOS, partial. Only the display-only lane maps segments onto the edited timeline. The editable lane shows raw source-time segments, so on a cut or reordered project the pills do not line up with the ruler. *Source:* lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart:436-447; lib/core/zoom/zoom_editor_controller.dart:313-335
 
 
@@ -1024,7 +1026,6 @@ Tags:
 
 - **Windows live cursor highlight while recording** — code, not started. setCursorHighlightEnabled and setCursorHighlightLinkedToRecording are no-ops, so there is no live cursor halo on Windows and the Pointer control is hidden. *Source:* windows/runner/Bridge/Routers/camera_overlay_router.cpp:304-305; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
 
-- **Windows fixed-target zoom (draggable focus point)** — decide first, partial. Manual zoom segments shipped (#471), but previewGetZoomCapabilities reports fixedTargetPreview, fixedTargetExport and cursorSamples as false, so the macOS draggable focus UI is not offered. *Checked 2026-10-29:* macOS honours the point only in the live preview. `zoom.manual.json` never stores focusMode / fixedTarget, and the exporter rebuilds segments without them, so the point is lost on reopen and never exported. Decide the store format (and fix macOS export) before porting, or Windows inherits the same preview ≠ export gap. *Source:* windows/runner/Bridge/Routers/preview_router.cpp:38-54; macos/Runner/Capture/Zoom/ZoomManualStore.swift; macos/Runner/Capture/Export/LetterboxExporter.swift:3025-3062; docs/features.md:75
 
 - **Windows area selection remembered across restarts** — parked, deferred. The crop region lives only in process memory, so Dart clears the saved area at launch and the user has to pick it again. macOS saves it natively. *Source:* lib/app/home/overlay/overlay_controller.dart:260-266; windows/runner/Capture/windows_selection_state.cpp:40; docs/windows-port.md:728-732
 
@@ -1058,6 +1059,12 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows fixed-target zoom** (2026-10-29, W10 in
+  `docs/windows-machine-work.md`). The draggable focus point works in the
+  Windows preview and is saved in `zoom.manual.json` (`focusMode` +
+  `fixedTarget`, both optional) and honoured by the export. macOS still drops
+  it on save and export: see *macOS: save and export the fixed zoom target*.
 
 - **Windows capture frame-rate control** (2026-10-29, W9 in
   `docs/windows-machine-work.md`). The 30 / 60 fps dropdown shows on Windows,

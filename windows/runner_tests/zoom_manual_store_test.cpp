@@ -95,6 +95,105 @@ TEST(ZoomManualStoreTest, UnknownKeysFromANewerWriterAreIgnored) {
   EXPECT_EQ(out[0].start_ms, 1);
 }
 
+// --- fixed-target zoom: the pinned point survives the file -----------------
+
+TEST(ZoomManualStoreTest, APinnedPointRoundTrips) {
+  ZoomManualSegment pinned = Manual("m1", 1000, 2500, "auto_0");
+  pinned.focus_mode = "fixedTarget";
+  pinned.has_fixed_target = true;
+  pinned.fixed_x = 0.25;
+  pinned.fixed_y = 0.8125;
+  ZoomManualSegment follow = Manual("m2", 4000, 4800);
+  follow.focus_mode = "followCursor";
+
+  const auto out =
+      ParseZoomManualJson(SerializeZoomManualJson({pinned, follow}));
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(out[0].focus_mode, "fixedTarget");
+  EXPECT_TRUE(out[0].has_fixed_target);
+  EXPECT_DOUBLE_EQ(out[0].fixed_x, 0.25);
+  EXPECT_DOUBLE_EQ(out[0].fixed_y, 0.8125);
+  EXPECT_EQ(out[0].base_id, "auto_0");  // keys after the point still read
+  EXPECT_TRUE(IsZoomFixedTarget(out[0]));
+  EXPECT_EQ(out[1].focus_mode, "followCursor");
+  EXPECT_FALSE(out[1].has_fixed_target);
+  EXPECT_FALSE(IsZoomFixedTarget(out[1]));
+}
+
+TEST(ZoomManualStoreTest, ReadsThePointInTheShapeDartWrites) {
+  // ZoomSegment.toMap order: the point comes LAST, as a nested object, and
+  // ints may stand in for doubles.
+  const auto out = ParseZoomManualJson(
+      R"({"version":2,"segments":[{"id":"m","startMs":10,"endMs":20,)"
+      R"("source":"manual","focusMode":"fixedTarget",)"
+      R"("fixedTarget":{"dx":1,"dy":0.5}},)"
+      R"({"id":"n","startMs":30,"endMs":40,"source":"manual"}]})");
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_TRUE(IsZoomFixedTarget(out[0]));
+  EXPECT_DOUBLE_EQ(out[0].fixed_x, 1.0);
+  EXPECT_DOUBLE_EQ(out[0].fixed_y, 0.5);
+  EXPECT_EQ(out[1].id, "n");  // the nested object did not derail the scan
+  EXPECT_TRUE(out[1].focus_mode.empty());
+}
+
+TEST(ZoomManualStoreTest, APointIsClampedAndABadOneLosesOnlyThePin) {
+  const auto out = ParseZoomManualJson(
+      R"({"segments":[)"
+      R"({"id":"a","startMs":0,"endMs":5,"focusMode":"fixedTarget",)"
+      R"("fixedTarget":{"dx":-2,"dy":7}},)"
+      R"({"id":"b","startMs":5,"endMs":9,"focusMode":"fixedTarget",)"
+      R"("fixedTarget":{"dx":"left"}},)"
+      R"({"id":"c","startMs":9,"endMs":12,"focusMode":"fixedTarget",)"
+      R"("fixedTarget":null}]})");
+  ASSERT_EQ(out.size(), 3u);
+  EXPECT_DOUBLE_EQ(out[0].fixed_x, 0.0);
+  EXPECT_DOUBLE_EQ(out[0].fixed_y, 1.0);
+  EXPECT_FALSE(out[1].has_fixed_target);
+  EXPECT_EQ(out[1].end_ms, 9);
+  EXPECT_FALSE(out[2].has_fixed_target);
+  EXPECT_EQ(out[2].id, "c");
+}
+
+TEST(ZoomManualStoreTest, NestedUnknownValuesAreSkippedWhole) {
+  const auto out = ParseZoomManualJson(
+      R"({"segments":[{"id":"x","futureObj":{"a":[1,{"b":"}"}],"c":2},)"
+      R"("startMs":3,"endMs":4}]})");
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].start_ms, 3);
+  EXPECT_EQ(out[0].end_ms, 4);
+}
+
+TEST(ZoomManualStoreTest, ThePointIsWrittenOnlyWithTheModeThatUsesIt) {
+  ZoomManualSegment s = Manual("m", 0, 10);
+  s.focus_mode = "followCursor";
+  s.has_fixed_target = true;  // a leftover point from before a mode switch
+  const std::string json = SerializeZoomManualJson({s});
+  EXPECT_EQ(json.find("fixedTarget\":{"), std::string::npos) << json;
+  EXPECT_EQ(json.find("\"fixedTarget\""), std::string::npos) << json;
+  EXPECT_NE(json.find("\"focusMode\":\"followCursor\""), std::string::npos)
+      << json;
+}
+
+TEST(MergeZoomSegmentsTest, APinnedManualSegmentCarriesItsPoint) {
+  ZoomManualSegment pinned = Manual("m", 500, 900, "auto_0");
+  pinned.focus_mode = "fixedTarget";
+  pinned.has_fixed_target = true;
+  pinned.fixed_x = 0.1;
+  pinned.fixed_y = 0.9;
+  ZoomManualSegment mode_only = Manual("n", 2000, 2500);
+  mode_only.focus_mode = "fixedTarget";  // no point: falls back to the cursor
+
+  const std::vector<ZoomSegment> autos{{0, 1000}, {5000, 6000}};
+  const auto merged = MergeZoomSegments(autos, {pinned, mode_only});
+  ASSERT_EQ(merged.size(), 3u);
+  EXPECT_EQ(merged[0].start_ms, 500);
+  EXPECT_TRUE(merged[0].fixed_target);
+  EXPECT_DOUBLE_EQ(merged[0].target_x, 0.1);
+  EXPECT_DOUBLE_EQ(merged[0].target_y, 0.9);
+  EXPECT_FALSE(merged[1].fixed_target);  // mode without a point
+  EXPECT_FALSE(merged[2].fixed_target);  // auto segments never pin
+}
+
 // --- the merge rule, which is where the semantics live ----------------------
 
 TEST(MergeZoomSegmentsTest, NoManualEditsLeavesAutoUntouched) {

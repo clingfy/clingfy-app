@@ -1413,8 +1413,8 @@ windows/runner/Bridge/
 | Getters returning a list | `[]` |
 | Getters returning a map / model | shape-correct empty (zero-filled `StorageSnapshot`, `{canPauseResume:false}`, etc.) |
 | Boolean getters | `false` (Dart parsers treat this as "feature off" / "not granted") |
-| `previewGetZoomCapabilities` | all-`false` so the smart fixed-target UX hides |
-| `previewGetCursorSamples` | empty samples + zero dimensions |
+| `previewGetZoomCapabilities` | real since W10 (2026-10-29): all `true`, fixed-target zoom is backed |
+| `previewGetCursorSamples` | real since W10: samples from the open session's sidecar; empty + zero dimensions without one |
 | `getRecordingSceneInfo` | echo `projectPath` as both `projectPath` and `screenPath` (matches Dart's own fallback) |
 | `clearCachedRecordings` | `{deletedCount: 0}` |
 | `startRecording`, `stopRecording`, `exportVideo`, `processVideo` | `WINDOWS_NOT_IMPLEMENTED` error so the user gets a clean "not on Windows yet" message |
