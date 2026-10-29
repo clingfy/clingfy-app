@@ -11,13 +11,14 @@ namespace {
 constexpr std::uint32_t kMinBitrateBps = 2'000'000;    // 2 Mbps floor
 constexpr std::uint32_t kMaxBitrateBps = 100'000'000;  // 100 Mbps ceiling
 
-// Export AAC bitrates. 192 kbps matches what macOS has always produced, so
-// `standard` means the same thing on both platforms. Both values must stay
-// divisible by 8: the encoder sets MF_MT_AUDIO_AVG_BYTES_PER_SECOND as
+// Export AAC bitrates, macOS's ladder. 192 kbps matches what macOS has always
+// produced, so `standard` means the same thing on both platforms. All must
+// stay divisible by 8: the encoder sets MF_MT_AUDIO_AVG_BYTES_PER_SECOND as
 // `avg_bitrate_bps / 8` with integer arithmetic, so a remainder is silently
 // truncated (mf_sink_writer_encoder.cpp, audio_sidecar_writer.cpp).
 constexpr std::uint32_t kAudioBitrateStandardBps = 192'000;
-constexpr std::uint32_t kAudioBitrateCeilingBps = 192'000;
+constexpr std::uint32_t kAudioBitrateHighBps = 256'000;
+constexpr std::uint32_t kAudioBitrateBestBps = 320'000;
 
 std::string ToLowerAscii(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(),
@@ -49,15 +50,26 @@ bool FormatWasDowngraded(const std::string& /*format*/) {
 }
 
 std::uint32_t ResolveAudioBitrateBps(const std::string& quality) {
-  // Every tier lands on the same value for now; see the header for why. The
-  // switch is still written out so raising the ceiling later is a one-line
-  // change in the obvious place, with a test already pinning each tier.
   const std::string preset = ToLowerAscii(quality);
-  if (preset == "high" || preset == "best") {
-    return kAudioBitrateCeilingBps;
+  if (preset == "best") {
+    return kAudioBitrateBestBps;
+  }
+  if (preset == "high") {
+    return kAudioBitrateHighBps;
   }
   // "standard", empty (an older Flutter payload sends no key, and ReadString
   // yields "") and anything unrecognised all take the default.
+  return kAudioBitrateStandardBps;
+}
+
+std::uint32_t ClampAudioBitrateToEncoder(
+    std::uint32_t requested_bps,
+    const std::function<bool(std::uint32_t)>& encoder_accepts) {
+  for (const std::uint32_t rung : {kAudioBitrateBestBps, kAudioBitrateHighBps}) {
+    if (rung <= requested_bps && encoder_accepts && encoder_accepts(rung)) {
+      return rung;
+    }
+  }
   return kAudioBitrateStandardBps;
 }
 

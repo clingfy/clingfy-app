@@ -31,6 +31,7 @@ FetchContent_MakeAvailable(googletest)
 # binary never spins up a `FlutterViewController`; it constructs a
 # `MethodRouter` directly and exercises `Dispatch`.
 add_executable(runner_tests
+  "aac_encoder_bitrate_test.cpp"
   "method_router_test.cpp"
   "device_event_publisher_test.cpp"
   "zoom_manual_store_test.cpp"

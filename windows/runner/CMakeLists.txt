@@ -168,6 +168,7 @@ add_library(runner_bridge STATIC
   "Capture/video_frame_queue.cpp"
   "Capture/wgc_display_capture_backend.cpp"
   "Capture/windows_selection_state.cpp"
+  "Encoding/aac_bitrate_probe.cpp"
   "Encoding/audio_sidecar_writer.cpp"
   "Encoding/encoder_output_path.cpp"
   "Encoding/gif_encoder.cpp"
@@ -249,6 +250,12 @@ target_link_libraries(runner_bridge PUBLIC
 #   * avrt — AvSetMmThreadCharacteristics (Pro Audio MMCSS task)
 target_link_libraries(runner_bridge PUBLIC
   "avrt.lib"
+)
+
+# AAC tiers: CLSID_AACMFTEncoder, which aac_bitrate_probe.cpp asks whether it
+# takes 256 / 320 kbps before the export requests them.
+target_link_libraries(runner_bridge PUBLIC
+  "wmcodecdspuuid.lib"
 )
 
 # Phase 5: Direct2D 1.1 + WinRT C++/WinRT runtime are needed by

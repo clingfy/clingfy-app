@@ -37,9 +37,11 @@
 
 #include "Audio/audio_mixer.h"
 #include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Export/export_format.h"
 #include "Capture/Export/export_geometry.h"
 #include "Capture/Export/export_passthrough.h"
 #include "Capture/captured_video_frame.h"
+#include "Encoding/aac_bitrate_probe.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
 #include "Graphics/d3d_device.h"
@@ -1143,6 +1145,63 @@ TEST(ExportPipelineTest, CarriesSourceAudioThroughTheReEncode) {
   ASSERT_TRUE(probe.ok);
   EXPECT_TRUE(probe.has_audio)
       << "audio track was dropped during the re-encode";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// The AAC bitrate the output file's audio track declares, in bits per second,
+// or 0 when there is none.
+std::uint32_t OutputAacBitrate(const std::wstring& path) {
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), nullptr,
+                                           reader.GetAddressOf()))) {
+    return 0;
+  }
+  ComPtr<IMFMediaType> type;
+  if (FAILED(reader->GetNativeMediaType(
+          static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM), 0,
+          type.GetAddressOf()))) {
+    return 0;
+  }
+  UINT32 bytes_per_second = 0;
+  type->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &bytes_per_second);
+  return bytes_per_second * 8;
+}
+
+// The audio-quality tier reaches the encoder: standard 192 kbps, and High /
+// Best 256 / 320 wherever this machine's AAC encoder takes them (stepping
+// down to what it does take otherwise).
+TEST(ExportPipelineTest, AudioQualityTierSetsTheAacBitrate) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("audio_tiers");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/4000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  for (const char* quality : {"standard", "high", "best"}) {
+    const auto dest = (dir / (std::string(quality) + ".mp4")).u8string();
+    RenderRequest request;
+    request.source_video_path = fs::u8path(source).wstring();
+    request.destination_path = dest;
+    request.layout = "youtube169";
+    request.resolution = "auto";
+    request.fit = "fit";
+    request.fps_hint = kFps;
+    request.audio_quality = quality;
+    const RenderResult result = RenderComposedExport(request);
+    ASSERT_TRUE(result.ok) << quality << ": " << result.message;
+    const std::uint32_t expected = ClampAudioBitrateToEncoder(
+        ResolveAudioBitrateBps(quality),
+        clingfy::encoding::AacEncoderAcceptsBitrate);
+    EXPECT_EQ(OutputAacBitrate(fs::u8path(dest).wstring()), expected)
+        << "quality=" << quality;
+  }
 
   std::error_code ec;
   fs::remove_all(dir, ec);

@@ -135,9 +135,12 @@ std::optional<std::string> AudioEncoderConfig::Validate() const {
   // matrix of (rate, channels, bitrate) tuples and refuses the rest LATE, as
   // an opaque HRESULT from AddStream, so an out-of-range value is far cheaper
   // to catch here than to debug there.
-  if (avg_bitrate_bps < 64'000 || avg_bitrate_bps > 192'000) {
+  // 320 kbps is the top of the export ladder; the export only asks for 256
+  // or 320 after the encoder MFT has accepted them
+  // (ClampAudioBitrateToEncoder), because an older encoder refuses them late.
+  if (avg_bitrate_bps < 64'000 || avg_bitrate_bps > 320'000) {
     return std::string(
-        "AudioEncoderConfig.avg_bitrate_bps must be between 64000 and 192000; "
+        "AudioEncoderConfig.avg_bitrate_bps must be between 64000 and 320000; "
         "the AAC MFT refuses rates outside its matrix, and it refuses them at "
         "AddStream rather than here.");
   }
