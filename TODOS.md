@@ -60,21 +60,25 @@ Auto-subtitles row in `docs/features.md` is already merged into one.
 
 ## Export — colour
 
-### Dark recordings have never been checked in QuickTime after the colour fix — verify
+### ~~Dark recordings have never been checked in QuickTime after the colour fix~~ — DONE 2026-10-29
 
-*From the export-colour work (#383, #391, #395).*
+Measured in Apple's decoder (AVFoundation, which QuickTime uses), on two sources.
+Each was exported through the real engine, with `mov-<label>.mov` in
+`testExportsGifProofsForVisualInspection`:
+- **A synthetic dark terminal**, with shadow steps at levels 0–48 on a #1e1e1e
+  background. The export matches its source within 2 code values at every step.
+- **A real recording of this Mac's dark-mode screen**, against its own recording:
 
-The export encodes with gamma 1.961, chosen because Apple's decoders
-(QuickTime, Preview, Safari, Messages) were crushing shadows with the spec curve
-(`ColorTransferFunctions.swift:146`). That choice rests on decoder measurements
-and unit tests. #391 asked for a real dark-clip check, and #395 and #396 both
-still call it pending. The 1.0.7 release check used a bright sRGB chart, not dark
-content, and no later release doc covers shadows.
+| Recording level | Export mean diff | Mean abs diff |
+|---|---|---|
+| 0–15 | +2.51 | 2.52 |
+| 16–31 | −0.01 | 0.12 |
+| 32–47 | +0.04 | 0.28 |
+| 48–63 | +0.10 | 0.49 |
 
-**To close:** record a dark-mode or terminal clip, export it, and compare the
-shadows in QuickTime against the screen. If shadows look right, close this. If
-they look lifted or crushed, reopen the curve decision. The code comment names
-the trade-off and a revisit trigger (`ColorTransferFunctions.swift:141-145`).
+Nothing is crushed. The deepest blacks lift by about 2.5 values, the small lift
+the 1.961 curve accepts by design (`docs/decisions/macos-export-transfer-curve.md`),
+and invisible to the eye.
 
 ### ~~Smaller colour follow-ups~~ — DONE 2026-10-26
 - The 1.961 curve decision, with its revisit trigger, is now in
@@ -183,7 +187,13 @@ moving gradients, a Macbeth colour chart, large text and small text.
 
 ## Recording — camera (macOS)
 
-### Camera-start safeguards have never been seen working on a real device — verify
+### Camera-start safeguards have never been seen working on a real device — verify (needs a USB camera)
+
+> **2026-10-29:** "claim the webcam in another app" does not trigger a refusal on macOS
+> 26. A separate process held the FaceTime camera, with a running session and a
+> configuration lock, while Clingfy recorded a camera take. macOS shared the camera,
+> and the take recorded and finished `ready`. What is left is the unplug case: pull a
+> USB camera during Start.
 
 *From the camera-start work of 2026-07-30 (#386, #387).*
 

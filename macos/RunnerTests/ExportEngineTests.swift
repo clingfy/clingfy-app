@@ -368,7 +368,8 @@ final class ExportEngineTests: XCTestCase {
   /// Exports every `<size>-<label>.mov` in /tmp/clingfy-gif-proof as a GIF at
   /// that size preset (small / medium / large) through the real engine, and
   /// writes `<name>.gif` beside it for a human to judge dither, banding and
-  /// edges. Skips when the folder has no sources, so it never runs in CI.
+  /// edges. A `mov-<label>.mov` source exports as a movie instead. Skips when
+  /// the folder has no sources, so it never runs in CI.
   func testExportsGifProofsForVisualInspection() throws {
     let folder = URL(fileURLWithPath: "/tmp/clingfy-gif-proof")
     let sources = ((try? FileManager.default.contentsOfDirectory(
@@ -379,12 +380,15 @@ final class ExportEngineTests: XCTestCase {
 
     for source in sources {
       let name = source.deletingPathExtension().lastPathComponent
+      // `mov-<label>.mov` exports a movie instead, for checking what a video
+      // export looks like in Apple's decoder (QuickTime).
+      let format = name.hasPrefix("mov-") ? "mov" : "gif"
       let preset = String(name.split(separator: "-").first ?? "large")
       let project = try makeProject(copying: source)
       var input = makeAnyInput(
-        projectPath: project.rootURL.path, format: "gif", directoryOverride: folder.path,
+        projectPath: project.rootURL.path, format: format, directoryOverride: folder.path,
         filename: name)
-      input.gifSize = preset
+      if format == "gif" { input.gifSize = preset }
       var reply: Any?
       let done = expectation(description: "\(name) gif")
       let started = Date()
@@ -394,6 +398,7 @@ final class ExportEngineTests: XCTestCase {
       }
       wait(for: [done], timeout: 600)
       let path = try XCTUnwrap(reply as? String, "\(name): \(String(describing: reply))")
+      guard format == "gif" else { continue }
       let gif = try decodeGif(path)
       let bytes = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0
       print(
