@@ -181,6 +181,7 @@ add_library(runner_bridge STATIC
   "Graphics/d3d_device.cpp"
   "Overlay/area_picker_geometry.cpp"
   "Overlay/area_picker_overlay.cpp"
+  "Overlay/area_reveal_overlay.cpp"
   "Overlay/cursor_highlight_model.cpp"
   "Overlay/cursor_highlight_overlay.cpp"
   "Overlay/display_identify_overlay.cpp"

@@ -477,6 +477,41 @@ monitor, at mixed DPI, pulses on click, and shows in the recorded video.
 
 ---
 
+## W12. Reveal Area overlay — BUILT 2026-10-30, button hidden until checked
+
+*Same owner's call as W11.*
+
+macOS `AreaPreviewOverlay` strokes a 2 pt white line around the selected area
+for one second: on Reveal Area and right after a pick. Clearing the area or
+starting a recording hides it.
+
+**Done:**
+- `Overlay/area_reveal_overlay`: the geometry (the area clamped to its
+  monitor as the recording clamps it, grown by the line's outer half and
+  kept on that monitor, line scaled per DPI), the pixels (opaque white band,
+  clear inside), and a click-through layered window on the platform thread
+  with a 1 s auto-hide that restarts on each reveal.
+- `revealAreaRecordingRegion` is real; a pick shows the outline; clearing
+  hides it; `startRecording` hides it before the engine starts, so it is
+  never recorded.
+
+**Checked:** with the test window made PerMonitorV2 like the app, a
+screenshot at 125% put the 3 px line exactly on the area's edge (1 px out,
+2 px in). This window is not capture-excluded, so the screenshot is a real
+oracle here.
+
+**Still hidden:** the Reveal Area button in `recording_source_section.dart`.
+
+**Tests:** geometry (centred line, DPI scaling, monitor edges, an area
+larger than or off its monitor), the raster, and the lifecycle (no selection
+is a no-op; shows on the primary monitor and hides itself after 1 s; hide is
+immediate).
+
+**Owner check, then unhide:** reveal on each monitor, at mixed DPI, after
+a pick and from the button.
+
+---
+
 ## Not briefed yet — triage, 2026-10-29
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
@@ -491,7 +526,8 @@ screenshots a false oracle, so these cannot be verified unsupervised:
   hide-vs-show product call for the four capture-excluded windows.
 - ~~Live cursor highlight while recording.~~ Built as W11, control hidden
   until checked on screen.
-- The Reveal Area overlay.
+- ~~The Reveal Area overlay.~~ Built as W12, button hidden until checked on
+  screen.
 
 **Blocked on a design decision:**
 - Preview mic gain / voice cleanup before the first cut, and preview

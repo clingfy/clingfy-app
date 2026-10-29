@@ -1029,7 +1029,7 @@ Tags:
 
 - **Windows area selection remembered across restarts** — parked, deferred. The crop region lives only in process memory, so Dart clears the saved area at launch and the user has to pick it again. macOS saves it natively. *Source:* lib/app/home/overlay/overlay_controller.dart:260-266; windows/runner/Capture/windows_selection_state.cpp:40; docs/windows-port.md:728-732
 
-- **Windows 'Reveal area' overlay** — code, not started. revealAreaRecordingRegion is a no-op, so the Reveal Area button is hidden on Windows. *Source:* windows/runner/Bridge/Routers/devices_router.cpp:395-397; lib/app/home/recording/widgets/recording_source_section.dart:285-287
+- **Windows 'Reveal area' overlay** — verify, then unhide (Windows machine). Built 2026-10-30 (W12 in docs/windows-machine-work.md): revealAreaRecordingRegion is real, a pick shows the outline, clear and startRecording hide it. The button stays hidden until the owner checks it on each monitor at mixed DPI; then drop the `!isWindows()` gate. *Source:* windows/runner/Overlay/area_reveal_overlay.cpp; lib/app/home/recording/widgets/recording_source_section.dart:285-287
 
 - **Windows window capture follows resizes and covers whole apps** — parked, deferred. The encoder stays at the window's starting size, so a window that grows is cropped. 'App (all windows)' captures a single HWND. *Source:* windows/runner/Capture/wgc_display_capture_backend.cpp:234-236, :523; docs/windows-port.md:719-722
 
