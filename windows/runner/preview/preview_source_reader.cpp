@@ -134,6 +134,20 @@ ComPtr<IMFSourceReader> OpenReader(const std::wstring& source_path,
   return reader;
 }
 
+std::int64_t ReaderDurationMs(IMFSourceReader* reader) {
+  PROPVARIANT var;
+  PropVariantInit(&var);
+  std::int64_t ms = 0;
+  if (SUCCEEDED(reader->GetPresentationAttribute(
+          static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION,
+          &var)) &&
+      var.vt == VT_UI8) {
+    ms = static_cast<std::int64_t>(var.uhVal.QuadPart / 10000);
+  }
+  PropVariantClear(&var);
+  return ms;
+}
+
 // The decoder surface behind a GPU-path sample, or null for a CPU sample.
 ComPtr<ID3D11Texture2D> SampleTexture(IMFSample* sample, UINT* subresource) {
   ComPtr<IMFMediaBuffer> buffer;
@@ -204,6 +218,7 @@ std::unique_ptr<PreviewSourceReader> PreviewSourceReader::Create(
     self->stream_index_ = kFirstVideoStream;
     self->width_ = w;
     self->height_ = h;
+    self->duration_ms_ = ReaderDurationMs(self->reader_.Get());
     self->SeekTo(0);  // undo the probe read
     return self;
   }
@@ -215,6 +230,7 @@ std::unique_ptr<PreviewSourceReader> PreviewSourceReader::Create(
   self->stream_index_ = kFirstVideoStream;
   self->width_ = w;
   self->height_ = h;
+  self->duration_ms_ = ReaderDurationMs(self->reader_.Get());
   return self;
 }
 

@@ -62,57 +62,59 @@ void main() {
     expect(find.byKey(const ValueKey('post_zoom_export_notice')), findsNothing);
   });
 
-  testWidgets('Windows: cursor + audio sections carry the notice', (
-    tester,
-  ) async {
-    debugPlatformKindOverride = PlatformKind.windows;
-    await tester.pumpWidget(
-      host(
-        Column(
-          children: [
-            PostCursorSection(
-              showCursor: true,
-              cursorAvailable: true,
-              cursorSize: 1.0,
-              onCursorShowChanged: (_) {},
-              onCursorSizeChanged: (_) {},
-              onCursorSizeChangeEnd: (_) {},
-            ),
-            PostAudioSection(
-              hasAudio: true,
-              audioGainDb: 0,
-              voiceCleanup: const VoiceCleanup(),
-              audioVolume: 100,
-              onAudioGainChanged: (_) {},
-              onAudioGainChangeEnd: (_) {},
-              onVoiceCleanupChanged: (_) {},
-              onAudioVolumeChanged: (_) {},
-              onAudioVolumeChangeEnd: (_) {},
-            ),
-          ],
+  testWidgets(
+    'Windows: the cursor section carries the notice, audio does not',
+    (tester) async {
+      debugPlatformKindOverride = PlatformKind.windows;
+      await tester.pumpWidget(
+        host(
+          Column(
+            children: [
+              PostCursorSection(
+                showCursor: true,
+                cursorAvailable: true,
+                cursorSize: 1.0,
+                onCursorShowChanged: (_) {},
+                onCursorSizeChanged: (_) {},
+                onCursorSizeChangeEnd: (_) {},
+              ),
+              PostAudioSection(
+                hasAudio: true,
+                audioGainDb: 0,
+                voiceCleanup: const VoiceCleanup(),
+                audioVolume: 100,
+                onAudioGainChanged: (_) {},
+                onAudioGainChangeEnd: (_) {},
+                onVoiceCleanupChanged: (_) {},
+                onAudioVolumeChanged: (_) {},
+                onAudioVolumeChangeEnd: (_) {},
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-    expect(
-      find.byKey(const ValueKey('post_cursor_export_notice')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('post_audio_export_notice')),
-      findsOneWidget,
-    );
+      );
+      expect(
+        find.byKey(const ValueKey('post_cursor_export_notice')),
+        findsOneWidget,
+      );
+      // W13: every Windows preview plays through the owned audio renderer, so
+      // gain above 0 dB is heard live, uncut or not. The audio panel no longer
+      // says "applied on export".
+      expect(
+        find.byKey(const ValueKey('post_audio_export_notice')),
+        findsNothing,
+      );
 
-    // Regression guard (#281 hijacked appliedOnExportNoticeWindows to an
-    // audio-gain sentence, so the cursor + zoom panels rendered a gain
-    // message). The cursor notice must say the effect renders on export, NOT
-    // talk about gain; only the audio panel talks about gain.
-    String messageFor(String key) =>
-        tester.widget<AppInlineNotice>(find.byKey(ValueKey(key))).message;
-
-    final cursorMessage = messageFor('post_cursor_export_notice');
-    final audioMessage = messageFor('post_audio_export_notice');
-    expect(cursorMessage, isNot(contains('Gain')));
-    expect(audioMessage, contains('Gain'));
-    expect(cursorMessage, isNot(equals(audioMessage)));
-  });
+      // Regression guard (#281 hijacked appliedOnExportNoticeWindows to an
+      // audio-gain sentence, so the cursor + zoom panels rendered a gain
+      // message). The cursor notice must say the effect renders on export, NOT
+      // talk about gain.
+      final cursorMessage = tester
+          .widget<AppInlineNotice>(
+            find.byKey(const ValueKey('post_cursor_export_notice')),
+          )
+          .message;
+      expect(cursorMessage, isNot(contains('Gain')));
+    },
+  );
 }

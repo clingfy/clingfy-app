@@ -454,6 +454,13 @@ struct PreviewEngine::Impl {
   // pacer may consult it every step. nullptr = this session has no audio
   // (no track / no endpoint / renderer failed) — silent-video preview (D7).
   std::unique_ptr<PreviewAudioRenderer> audio_renderer;
+  // W13: this session plays its UNCUT timeline through the stitched path
+  // (StartConvergedPlayback). A passthrough clip list then keeps the session
+  // stitched, as a one-clip timeline, instead of handing it back to the
+  // MediaPlayer. Atomic: SetClips reads it before taking render_mutex.
+  std::atomic<bool> converged{false};
+  // The one-clip timeline's length: the source's duration, from the reader.
+  std::atomic<std::int64_t> converged_duration_ms{0};
   // One WARN per session when the renderer could not be built (D7): the
   // fallback is deliberate, but a beta log must say why a preview is silent.
   bool audio_open_failure_logged = false;
@@ -1338,7 +1345,12 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
           self->HandleMediaFailed(&sender, &args);
         });
 
-    impl_->player.Play();
+    // W13: a converged preview never starts the MediaPlayer — the router
+    // calls StartConvergedPlayback next, which plays the stitched path (or,
+    // if that cannot open, this player).
+    if (!ConvergedPreviewEnabled()) {
+      impl_->player.Play();
+    }
     LogNative("MediaPlayer started + event subscriptions installed");
   } catch (winrt::hresult_error const& e) {
     result.error =
@@ -1776,6 +1788,13 @@ void PreviewEngine::HandlePlaybackStateChanged(
   bool should_emit = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // W13: a converged session's MediaPlayer is never played; its stitched
+    // path reports playing / paused / completed itself. The player's own
+    // late "paused" (from the Pause SetClips issues) would otherwise land
+    // after "playing" and flip Dart's play button.
+    if (impl_ != nullptr && impl_->converged.load()) {
+      return;
+    }
     session_snapshot = active_session_id_;
     // Debounce: only emit when the state actually changed.
     if (state_str != last_emitted_state_) {
@@ -1796,6 +1815,9 @@ void PreviewEngine::HandleMediaEnded(
   bool should_emit = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (impl_ != nullptr && impl_->converged.load()) {
+      return;  // W13: the stitched path reports completion
+    }
     session_snapshot = active_session_id_;
     if (last_emitted_state_ != "completed") {
       last_emitted_state_ = "completed";
@@ -2515,6 +2537,10 @@ void PreviewEngine::Play(const std::string& session_id) {
               "ms; pacer armed=" + (impl->edited_playing ? "true" : "false") +
               ", audio=" +
               (impl->audio_renderer != nullptr ? "on" : "off"));
+      // The stitched path has no MediaPlayer state change to report this.
+      if (impl->edited_playing) {
+        EmitPlayerStateIfChanged("playing");
+      }
       return;
     }
   }
@@ -2553,6 +2579,7 @@ void PreviewEngine::Pause(const std::string& session_id) {
       clingfy::bridge::NativeLogPublisher::Instance().Debug(
           "Preview", "Pause (stitched) at edited " +
                          std::to_string(impl->edited_pos_ms) + "ms");
+      EmitPlayerStateIfChanged("paused");
       return;
     }
   }
@@ -3520,8 +3547,9 @@ void PreviewEngine::NotifyEditedPlaybackCompleteLocked(Impl* impl) {
   clingfy::bridge::NativeLogPublisher::Instance().Debug(
       "Preview", "stitched playback complete at edited " +
                      std::to_string(impl->edited_pos_ms) + "ms");
-  clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
-      session_snapshot, "completed");
+  // Through the shared debounce so a later Play's "playing" is not swallowed
+  // as a repeat of a stale state.
+  EmitPlayerStateIfChanged("completed");
 }
 
 void PreviewEngine::PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms) {
@@ -3699,7 +3727,16 @@ void PreviewEngine::SetClips(
     impl = impl_.get();
     player_snapshot = impl_->player;
   }
-  const bool now_edited = RangesAreEdited(ranges);
+  bool now_edited = RangesAreEdited(ranges);
+  const bool converged = impl->converged.load();
+  if (converged && !now_edited) {
+    // W13: an uncut list (Dart's whole-recording seed, or every cut undone)
+    // stays on the stitched path as the one-clip timeline, built from the
+    // reader's duration so it compares equal to the one already playing.
+    ranges = {capture::export_::clip_planner::ClipKeptRange{
+        0, impl->converged_duration_ms.load()}};
+    now_edited = true;
+  }
 
   // Coordinate the render mode OUTSIDE mutex_. The compose path needs
   // render_mutex, and the lock order everywhere is render_mutex → mutex_
@@ -3717,6 +3754,14 @@ void PreviewEngine::SetClips(
   }
   std::lock_guard<std::mutex> render_lock(impl->render_mutex);
   if (shutting_down_.load()) {
+    return;
+  }
+  // W13: re-sending the timeline a converged session already plays (Dart
+  // pushes its whole-recording seed on load) must not stop playback, which
+  // the edit path below does by design.
+  if (converged && impl->edited_mode &&
+      capture::export_::clip_planner::Coalesce(ranges) ==
+          capture::export_::clip_planner::Coalesce(impl->clip_ranges)) {
     return;
   }
   // 4-6: preserve the playhead across a clip edit by anchoring it to the
@@ -3770,6 +3815,8 @@ void PreviewEngine::SetClips(
               (impl->audio_renderer != nullptr ? "on" : "off"));
     }
   } else if (impl->edited_mode) {
+    // (Never reached on a converged session: its passthrough list was turned
+    // into the one-clip timeline above.)
     // Passthrough (no real cut): leave stitched mode; the MediaPlayer path
     // resumes producing frames (audio included — its track was never touched).
     impl->edited_mode = false;
@@ -3778,6 +3825,94 @@ void PreviewEngine::SetClips(
     impl->audio_renderer.reset();
     clingfy::bridge::NativeLogPublisher::Instance().Debug(
         "Preview", "stitched preview OFF (passthrough — no real cut)");
+  }
+}
+
+bool PreviewEngine::ConvergedPreviewEnabled() {
+  char* value = nullptr;
+  size_t len = 0;
+  _dupenv_s(&value, &len, "CLINGFY_PREVIEW_MEDIAPLAYER");
+  const bool opt_out = value != nullptr && std::string(value) == "1";
+  free(value);
+  return !opt_out;
+}
+
+void PreviewEngine::StartConvergedPlayback(const std::string& session_id) {
+  if (!ConvergedPreviewEnabled()) {
+    return;
+  }
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_.load() || session_id != active_session_id_ ||
+        impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    player_snapshot = impl_->player;
+  }
+  // Open the reader up front: it proves the stitched path can read this
+  // recording and gives the one-clip timeline its length. On the platform
+  // thread, outside every lock (it decodes a probe frame).
+  auto reader =
+      PreviewSourceReader::Create(impl->video_path, impl->d3d_device.Get());
+  const std::int64_t duration_ms =
+      reader != nullptr ? reader->duration_ms() : 0;
+  if (reader == nullptr || duration_ms <= 0) {
+    // Fall back to the pre-W13 preview rather than show nothing: Open left
+    // the MediaPlayer paused for us, so start it.
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview",
+        "converged preview could not open the recording on the stitched "
+        "path; playing it through MediaPlayer (gain above 0 dB and voice "
+        "cleanup apply on export only for this session)");
+    if (player_snapshot != nullptr) {
+      try {
+        player_snapshot.Play();
+      } catch (winrt::hresult_error const&) {
+        // MediaFailed reports it.
+      }
+    }
+    return;
+  }
+  const bool gpu = reader->gpu();
+  const UINT width = reader->width();
+  const UINT height = reader->height();
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->edited_reader == nullptr) {
+      impl->edited_reader = std::move(reader);
+    }
+  }
+  impl->converged_duration_ms.store(duration_ms);
+  impl->converged.store(true);
+  clingfy::bridge::NativeLogPublisher::Instance().Debug(
+      "Preview", "converged preview: one-clip timeline of " +
+                     std::to_string(duration_ms) + "ms on the stitched path, "
+                     "decoding on the " + (gpu ? "GPU" : "CPU") + " (" +
+                     std::to_string(width) + "x" + std::to_string(height) +
+                     ")");
+  // The one-clip timeline, through the same entry as a clip edit (pauses the
+  // MediaPlayer, renders the first frame, opens the audio renderer), then
+  // play, as Open always has.
+  SetClips(session_id, {});
+  Play(session_id);
+}
+
+void PreviewEngine::EmitPlayerStateIfChanged(const std::string& state) {
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load() || state == last_emitted_state_) {
+      return;
+    }
+    last_emitted_state_ = state;
+    session_snapshot = active_session_id_;
+  }
+  if (!session_snapshot.empty()) {
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
+        session_snapshot, state);
   }
 }
 

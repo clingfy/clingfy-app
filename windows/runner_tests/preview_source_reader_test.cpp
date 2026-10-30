@@ -204,6 +204,26 @@ TEST(PreviewSourceReaderTest, SeekToRePrimesAtLaterWindow) {
   fs::remove_all(dir, ec);
 }
 
+TEST(PreviewSourceReaderTest, ReportsTheSourceDuration) {
+  // W13: a converged preview builds its one-clip timeline from this.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("duration");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip;
+  if (!SynthesizeHalves(&device, source, &skip)) {
+    GTEST_SKIP() << skip;
+  }
+  auto reader = PreviewSourceReader::Create(fs::u8path(source).wstring());
+  ASSERT_NE(reader, nullptr);
+  // 8 frames at 30 fps: 266.7 ms of media.
+  EXPECT_NEAR(static_cast<double>(reader->duration_ms()), 266.7, 40.0);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 // --- GPU path (#296): decode on the drawing device, copy surface to surface --
 
 struct VideoDevice {

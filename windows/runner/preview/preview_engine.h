@@ -561,13 +561,28 @@ class PreviewEngine {
       const std::string& session_id,
       std::vector<capture::export_::clip_planner::ClipKeptRange> ranges);
 
+  // W13 (design D6.1, "converge the clocks"): play an UNCUT recording
+  // through the stitched path too, as a one-clip timeline, so every preview
+  // has one audio master clock and runs the same effect chain (mic gain
+  // above 0 dB, voice cleanup, echo removal) the edited preview does. Called
+  // by the router right after a successful Open, which in converged mode
+  // leaves the MediaPlayer paused. Opens the GPU reader first: if the stream
+  // cannot be read that way, it falls back to playing the MediaPlayer, so a
+  // preview never ends up blank. Auto-plays, as Open always has.
+  void StartConvergedPlayback(const std::string& session_id);
+
+  // Converged unless CLINGFY_PREVIEW_MEDIAPLAYER=1 (the escape hatch for a
+  // machine where the stitched path misbehaves: the uncut preview then plays
+  // through MediaPlayer exactly as before W13).
+  static bool ConvergedPreviewEnabled();
+
   // Editing port (audio, step 4-7d — design D6): the live preview audio mix.
   // `gain_db` [0,24] amplifies (clamped, export/macOS parity), then
   // `volume_percent` [0,100] attenuates. Applies to the edited-session
-  // renderer's FUTURE samples immediately (no re-decode) and to the
-  // passthrough MediaPlayer's master volume (attenuation only there —
-  // MediaPlayer.Volume is 0..1, so gain on an UNCUT preview stays
-  // export-only: the documented D6 gap). Stored on the session so a
+  // renderer's FUTURE samples immediately (no re-decode). Since W13 every
+  // preview, uncut included, plays through that renderer; the MediaPlayer's
+  // master volume (attenuation only, 0..1) is still set for the fallback
+  // session that plays through it. Stored on the session so a
   // renderer opened later (first clip edit) starts with the current mix,
   // mirroring macOS's pending-open audioMix override. A stale session_id is
   // a silent no-op; an empty one applies to the active session (macOS
@@ -748,6 +763,12 @@ class PreviewEngine {
   // the sanctioned render_mutex → mutex_ order). Decode-FAILURE paths must
   // NOT call this — they are errors, not completion.
   void NotifyEditedPlaybackCompleteLocked(Impl* impl);
+
+  // playerState for the stitched path, which has no MediaPlayer state
+  // changes to report it. Shares last_emitted_state_ with the MediaPlayer
+  // handler so the two never double-report. Takes mutex_: call with no lock
+  // held, or under render_mutex only (render_mutex -> mutex_ is the order).
+  void EmitPlayerStateIfChanged(const std::string& state);
 
   // Editing port (clips, step 4-3): are the current clip ranges a real edit
   // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session

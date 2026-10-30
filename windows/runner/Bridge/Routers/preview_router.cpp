@@ -542,6 +542,11 @@ void HandlePreviewOpen(
       flutter::EncodableValue(video_h);
   out[flutter::EncodableValue("sharedHandleOk")] =
       flutter::EncodableValue(r.shared_handle_ok);
+  // W13: put the uncut recording on the stitched path (one audio clock for
+  // every preview) before Dart hears back, so the first clip push, Play or
+  // Pause it sends lands on the converged session. Falls back to the
+  // MediaPlayer on its own.
+  engine->StartConvergedPlayback(open_args.session_id);
   reply::Map(*result, std::move(out));
 }
 

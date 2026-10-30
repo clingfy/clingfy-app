@@ -2656,10 +2656,6 @@ class AppLocalizationsAr extends AppLocalizations {
       'يُطبَّق عند التصدير — المعاينة الداخلية لا تعرض هذا التأثير بعد.';
 
   @override
-  String get audioGainNoticeWindows =>
-      'يُسمع الكسب بالكامل في المعاينات المُعدَّلة وعند التصدير — المعاينة غير المقصوصة تعكس تغييرات مستوى الصوت فقط.';
-
-  @override
   String get errBadMode => 'وضع التسجيل هذا غير متاح على ويندوز بعد.';
 
   @override
