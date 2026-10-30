@@ -745,6 +745,11 @@ void HandleProcessVideo(
     clingfy::preview::PreviewEngine::Instance()->SetAudioMix(
         ReadString(*args, "sessionId"), ReadDouble(*args, "audioGainDb", 0.0),
         ReadDouble(*args, "audioVolumePercent", 100.0));
+    // W13c: speaker-echo removal, heard in the preview as the export will
+    // bake it. Same arg and default the export reads.
+    clingfy::preview::PreviewEngine::Instance()->SetMicEchoCancellation(
+        ReadString(*args, "sessionId"),
+        ReadBool(*args, "micEchoCancellationEnabled", false));
   }
   reply::Null(*result);
 }

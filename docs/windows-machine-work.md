@@ -512,7 +512,7 @@ a pick and from the button.
 
 ---
 
-## W13. One audio clock for every preview — in progress (owner's call 2026-10-30)
+## ~~W13. One audio clock for every preview~~ — DONE 2026-10-30 (owner's call)
 
 *The owner chose to converge: every preview, uncut ones included, plays
 through Clingfy's own audio renderer, so mic gain above 0 dB, voice cleanup
@@ -584,6 +584,32 @@ without a session; the audio notice's widget test now expects no notice.
 **Not checked:** listening to it (gain above 0 dB on an uncut recording,
 cleanup on/off) and scrubbing a long 4K recording. Owner.
 
+### W13c. Speaker-echo removal in the preview — DONE 2026-10-30
+
+macOS's preview plays the echo-cancelled mic; Windows ran the canceller only
+at export, so with speakers (not headphones) and echo removal on, the preview
+did not match the file.
+
+**Done:** `processVideo`'s `micEchoCancellationEnabled` (the export's own arg
+and default) now reaches `PreviewEngine::SetMicEchoCancellation`. The
+preview's background mic worker builds a processed mic with
+`ProducePreviewMic` (Capture/Export/mic_cleanup): echo removal first (needs
+the system sidecar), then voice cleanup, the export's order. The result is
+cached by exactly which effects it holds; when the canceller measures no
+bleed (headphones) the raw mic is kept and that answer is cached too, so it
+does not rerun. Any change of either effect reconciles: swap to the cache,
+back to the raw mic, or cancel and recompute. A pass that fails is logged
+and not retried until the next change.
+
+**Tests:** no bleed keeps the raw mic (nothing written), a 40 ms half-level
+speaker bleed is cut by more than half, cleanup alone and after echo removal
+both produce a quieter file, cancel leaves no files, echo removal without the
+system track is a no-op.
+
+**Not checked:** listening, with speakers, echo removal on and off. Owner.
+
+---
+
 ## Not briefed yet — triage, 2026-10-29
 
 `TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
@@ -603,7 +629,7 @@ screenshots a false oracle, so these cannot be verified unsupervised:
 
 **Blocked on a design decision:**
 - ~~Preview mic gain / voice cleanup before the first cut.~~ Done as W13b
-  (one audio clock for every preview). Preview speaker-echo removal is W13c.
+  (one audio clock for every preview); preview speaker-echo removal as W13c.
 - ~~GPU-end-to-end preview decode (#296).~~ Done as W13a.
 
 **Parked by an earlier decision:** area selection remembered across restarts,

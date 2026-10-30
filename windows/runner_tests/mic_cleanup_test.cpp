@@ -28,14 +28,19 @@ namespace fs = std::filesystem;
 using Microsoft::WRL::ComPtr;
 
 // Write `seconds` of int16 white noise to a stereo AAC .mp4 at `path`.
+// The same `seed` writes the same noise, which is how a test fakes a mic that
+// heard exactly what the speakers played.
+bool WriteNoise(const std::string& path, int seconds, std::uint32_t seed);
 bool WriteNoisyMic(const std::string& path, int seconds) {
+  return WriteNoise(path, seconds, 22'222u);
+}
+bool WriteNoise(const std::string& path, int seconds, std::uint32_t seed) {
   clingfy::encoding::AudioSidecarWriter writer;
   if (writer.Open(path).has_value()) {
     return false;
   }
   constexpr int kRate = 48'000;
   constexpr int kChunk = 4'800;  // 100 ms of frames per write
-  std::uint32_t seed = 22'222u;
   std::vector<std::int16_t> stereo(static_cast<std::size_t>(kChunk) * 2);
   std::int64_t frames = 0;
   for (int c = 0; c < seconds * 10; ++c) {
@@ -191,6 +196,129 @@ TEST_F(MicCleanupTest, CancelStopsAndReportsFailure) {
   const auto cleaned = (dir_ / "mic-cancel.mp4").string();
   EXPECT_FALSE(ProduceCleanedMic(fs::path(noisy).wstring(), cleaned,
                                  [] { return true; }, 1.0f));
+}
+
+// --- W13c: the preview's processed mic (echo removal, then cleanup) --------
+
+// Write `samples` (mono int16 at 48 kHz) as a stereo AAC .mp4.
+bool WriteMono(const std::string& path, const std::vector<std::int16_t>& mono) {
+  clingfy::encoding::AudioSidecarWriter writer;
+  if (writer.Open(path).has_value()) {
+    return false;
+  }
+  constexpr int kChunk = 4'800;
+  std::vector<std::int16_t> stereo(static_cast<std::size_t>(kChunk) * 2);
+  for (std::size_t at = 0; at + kChunk <= mono.size(); at += kChunk) {
+    for (int i = 0; i < kChunk; ++i) {
+      stereo[static_cast<std::size_t>(i) * 2] = mono[at + i];
+      stereo[static_cast<std::size_t>(i) * 2 + 1] = mono[at + i];
+    }
+    const auto ts = static_cast<std::int64_t>(at) * 10'000'000 / 48'000;
+    if (writer.WriteSamples(stereo.data(), kChunk, ts).has_value()) {
+      return false;
+    }
+  }
+  return !writer.Finalize().has_value();
+}
+
+// A speakers-not-headphones recording: the system track is noise, and the
+// mic heard it 40 ms later at half level (an acoustic round trip the
+// canceller accepts; it rejects lags under 10 ms by design).
+bool WriteBleedPair(const std::string& mic, const std::string& system,
+                    int seconds) {
+  const std::size_t n = static_cast<std::size_t>(seconds) * 48'000;
+  constexpr std::size_t kDelay = 1'920;  // 40 ms
+  std::vector<std::int16_t> sys(n);
+  std::vector<std::int16_t> heard(n, 0);
+  std::uint32_t seed = 4'242u;
+  for (std::size_t i = 0; i < n; ++i) {
+    seed = seed * 1103515245u + 12345u;
+    sys[i] = static_cast<std::int16_t>(
+        (static_cast<int>((seed >> 16) & 0x7fff)) - 16384);
+    if (i >= kDelay) {
+      heard[i] = static_cast<std::int16_t>(sys[i - kDelay] / 2);
+    }
+  }
+  return WriteMono(system, sys) && WriteMono(mic, heard);
+}
+
+TEST_F(MicCleanupTest, PreviewMicWithoutBleedKeepsTheRawMic) {
+  // Uncorrelated mic and system tracks: echo removal finds nothing, and with
+  // no cleanup asked for, the raw mic is the answer — nothing is written.
+  const auto mic = (dir_ / "mic.mp4").u8string();
+  const auto system = (dir_ / "system.mp4").u8string();
+  const auto out = (dir_ / "out.mp4").u8string();
+  ASSERT_TRUE(WriteNoise(mic, 2, 11u));
+  ASSERT_TRUE(WriteNoise(system, 2, 99u));
+  EXPECT_EQ(ProducePreviewMic(fs::u8path(mic).wstring(),
+                              fs::u8path(system).wstring(), /*echo=*/true,
+                              /*wet_mix=*/-1.0f, out, nullptr),
+            PreviewMicOutcome::kNothingToDo);
+  EXPECT_FALSE(fs::exists(out));
+  EXPECT_FALSE(fs::exists(dir_ / "out.echo.mp4"));
+}
+
+TEST_F(MicCleanupTest, PreviewMicRemovesAMicThatHeardTheSpeakers) {
+  // The mic heard nothing but the speakers: pure bleed. Echo removal must
+  // find it and leave far less of it.
+  const auto mic = (dir_ / "mic.mp4").u8string();
+  const auto system = (dir_ / "system.mp4").u8string();
+  const auto out = (dir_ / "out.mp4").u8string();
+  ASSERT_TRUE(WriteBleedPair(mic, system, 3));
+  ASSERT_EQ(ProducePreviewMic(fs::u8path(mic).wstring(),
+                              fs::u8path(system).wstring(), /*echo=*/true,
+                              /*wet_mix=*/-1.0f, out, nullptr),
+            PreviewMicOutcome::kProduced);
+  ASSERT_TRUE(fs::exists(out));
+  EXPECT_FALSE(fs::exists(dir_ / "out.echo.mp4")) << "intermediate left";
+  const double before = DecodeMonoEnergy(fs::u8path(mic).wstring());
+  const double after = DecodeMonoEnergy(fs::u8path(out).wstring());
+  ASSERT_GT(before, 0.0);
+  ASSERT_GE(after, 0.0);
+  EXPECT_LT(after, before * 0.5) << "the bleed was not reduced";
+}
+
+TEST_F(MicCleanupTest, PreviewMicRunsCleanupAloneOrAfterEchoRemoval) {
+  const auto mic = (dir_ / "mic.mp4").u8string();
+  const auto system = (dir_ / "system.mp4").u8string();
+  ASSERT_TRUE(WriteNoise(mic, 2, 7u));
+  ASSERT_TRUE(WriteNoise(system, 2, 7u));
+  const double raw = DecodeMonoEnergy(fs::u8path(mic).wstring());
+  for (const bool echo : {false, true}) {
+    const auto out = (dir_ / (echo ? "both.mp4" : "clean.mp4")).u8string();
+    ASSERT_EQ(ProducePreviewMic(fs::u8path(mic).wstring(),
+                                fs::u8path(system).wstring(), echo,
+                                /*wet_mix=*/1.0f, out, nullptr),
+              PreviewMicOutcome::kProduced)
+        << "echo=" << echo;
+    const double energy = DecodeMonoEnergy(fs::u8path(out).wstring());
+    EXPECT_GE(energy, 0.0);
+    EXPECT_LT(energy, raw) << "echo=" << echo;
+  }
+}
+
+TEST_F(MicCleanupTest, PreviewMicCancelLeavesNothingBehind) {
+  const auto mic = (dir_ / "mic.mp4").u8string();
+  const auto system = (dir_ / "system.mp4").u8string();
+  const auto out = (dir_ / "out.mp4").u8string();
+  ASSERT_TRUE(WriteNoise(mic, 2, 7u));
+  ASSERT_TRUE(WriteNoise(system, 2, 7u));
+  EXPECT_EQ(ProducePreviewMic(fs::u8path(mic).wstring(),
+                              fs::u8path(system).wstring(), /*echo=*/true,
+                              /*wet_mix=*/1.0f, out, [] { return true; }),
+            PreviewMicOutcome::kFailed);
+  EXPECT_FALSE(fs::exists(out));
+  EXPECT_FALSE(fs::exists(dir_ / "out.echo.mp4"));
+}
+
+TEST_F(MicCleanupTest, PreviewMicEchoNeedsTheSystemTrack) {
+  // No system sidecar: echo removal is skipped, so echo-only is a no-op.
+  const auto mic = (dir_ / "mic.mp4").u8string();
+  ASSERT_TRUE(WriteNoise(mic, 1, 7u));
+  EXPECT_EQ(ProducePreviewMic(fs::u8path(mic).wstring(), L"", /*echo=*/true,
+                              /*wet_mix=*/-1.0f,
+                              (dir_ / "out.mp4").u8string(), nullptr),
+            PreviewMicOutcome::kNothingToDo);
 }
 
 }  // namespace

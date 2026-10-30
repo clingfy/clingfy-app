@@ -73,6 +73,23 @@ bool ProduceEchoCancelledMic(const std::wstring& mic_path,
                              const std::function<bool()>& is_cancelled,
                              EchoCancelReport* report);
 
+// The preview's processed mic (W13c), built from the two passes above in the
+// export's order: echo removal (needs `system_path`) BEFORE voice cleanup.
+// `echo` asks for echo removal; `wet_mix` < 0 means no voice cleanup.
+//
+//   kProduced     the processed mic is at `output_path`
+//   kNothingToDo  echo removal alone measured no bleed (headphones): the raw
+//                 mic is the result, as on export, and nothing is written
+//   kFailed       a pass failed or `is_cancelled` fired; nothing is left
+//
+// Any intermediate file is removed before returning.
+enum class PreviewMicOutcome { kProduced, kNothingToDo, kFailed };
+PreviewMicOutcome ProducePreviewMic(const std::wstring& mic_path,
+                                    const std::wstring& system_path, bool echo,
+                                    float wet_mix,
+                                    const std::string& output_path,
+                                    const std::function<bool()>& is_cancelled);
+
 }  // namespace clingfy::capture::export_
 
 #endif  // RUNNER_CAPTURE_EXPORT_MIC_CLEANUP_H_

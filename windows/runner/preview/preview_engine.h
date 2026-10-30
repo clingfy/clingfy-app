@@ -38,6 +38,7 @@
 
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Core/canvas_composition.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Preview/preview_camera_renderer.h"
@@ -605,6 +606,14 @@ class PreviewEngine {
   void SetVoiceCleanup(const std::string& session_id, bool enabled,
                        float wet_mix);
 
+  // W13c: speaker-echo removal in the preview, the same pass the export runs
+  // (Capture/Export/mic_cleanup ProduceEchoCancelledMic) on the same background
+  // worker as voice cleanup, and BEFORE it (the export's order). Needs both
+  // separated sidecars; when it measures no bleed (headphones) the raw mic is
+  // kept, as on export. macOS's preview plays the echo-cancelled mic too. The
+  // setting is global in Dart and rides every processVideo.
+  void SetMicEchoCancellation(const std::string& session_id, bool enabled);
+
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
@@ -622,9 +631,19 @@ class PreviewEngine {
   // `generation` identifies the worker; only the CURRENT generation clears
   // `computing`, applies the result, or hands off to the next pass — a
   // superseded worker (mode changed) just drops its temp.
-  void OnPreviewCleanedMicReady(const std::string& session_id, bool ok,
-                                const std::wstring& cleaned_path, float wet_mix,
-                                std::uint64_t generation);
+  // What the preview's processed mic must contain. `wet` < 0 = no voice
+  // cleanup. Compared exactly against what the cached file was made with.
+  struct WantedMic {
+    bool echo = false;
+    float wet = -1.0f;
+    bool any() const { return echo || wet >= 0.0f; }
+  };
+  using MicPassOutcome = capture::export_::PreviewMicOutcome;
+
+  void OnPreviewCleanedMicReady(const std::string& session_id,
+                                MicPassOutcome outcome,
+                                const std::wstring& cleaned_path,
+                                WantedMic wanted, std::uint64_t generation);
 
   // Implementation lives in the .cpp where the winrt projection
   // headers are visible. The trampoline lambdas in Open() pass an
@@ -662,6 +681,12 @@ class PreviewEngine {
   struct Impl;
 
  private:
+  static WantedMic WantedMicLocked(const Impl* impl);
+  static bool ProcessedMicMatchesLocked(const Impl* impl, const WantedMic& w);
+  // Drive the processed mic toward WantedMicLocked: swap to the cached file,
+  // back to the raw mic, or (re)start the worker. render_mutex held.
+  void ReconcileProcessedMicLocked(Impl* impl, const std::string& session_id);
+
   // Phase 10.4: counts a per-frame render failure (EnsureResources /
   // frame-copy / EndDraw). After a run of consecutive failures it emits
   // PREVIEW_RENDER_ERROR as playerError + previewFailed exactly once per
@@ -677,7 +702,8 @@ class PreviewEngine {
   // in-flight one (joining that under the lock could deadlock the inline
   // dispatch path).
   void StartVoiceCleanupWorkerLocked(Impl* impl, const std::string& session_id,
-                                     float wet_mix, std::uint64_t generation);
+                                     WantedMic wanted,
+                                     std::uint64_t generation);
 
   // Editing port (clips, step 4-3): the shared compose + handoff tail, factored
   // out of HandleVideoFrame so BOTH the MediaPlayer frame path and the edited
