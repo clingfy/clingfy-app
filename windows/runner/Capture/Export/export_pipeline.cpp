@@ -46,6 +46,7 @@
 #include "Capture/Export/gif_export_policy.h"
 #include "Capture/Export/reorder_audio_pump.h"
 #include "Capture/captured_video_frame.h"
+#include "Encoding/aac_bitrate_probe.h"
 #include "Encoding/gif_encoder.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
@@ -496,6 +497,37 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
     PropVariantClear(&duration_var);
   }
 
+  // W2: the GIF length backstop. The export dialog refuses a GIF over the cap
+  // first; this catches any path that skips it (an older Flutter build, a
+  // direct call). Worked out from the clips and the file, never trusted from
+  // the UI, and decided before any encoder or output file exists. Same
+  // arithmetic as macOS (`GifExportPolicy.exportedDurationMs`). An unknown
+  // file duration with no clips is let through, as the dialog lets an unknown
+  // length through; with clips, their own lengths are summed unclamped.
+  if (gif) {
+    std::optional<std::int64_t> exported_ms;
+    if (duration_hns > 0) {
+      exported_ms = GifExportedDurationMs(request.clip_ranges,
+                                          duration_hns / 10000);
+    } else if (!request.clip_ranges.empty()) {
+      std::int64_t sum = 0;
+      for (const auto& range : request.clip_ranges) {
+        sum += range.DurationMs();
+      }
+      exported_ms = sum;
+    }
+    if (exported_ms.has_value() && GifExceedsDurationCap(*exported_ms)) {
+      RenderResult refused = Failure(
+          request.destination_path,
+          "export: GIF is " + std::to_string(*exported_ms) +
+              " ms long; GIFs can be at most " +
+              std::to_string(kGifMaxExportedDurationMs) + " ms");
+      refused.gif_too_long = true;
+      refused.gif_duration_ms = *exported_ms;
+      return refused;
+    }
+  }
+
   // Audio separation (D8): when export_passthrough probed a decodable
   // sidecar, the separated tracks REPLACE the embedded premix — the main
   // reader's audio stream is never selected and audio runs through the
@@ -751,11 +783,20 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
   // loop stays single-path.
   clingfy::encoding::MfSinkWriterEncoder encoder;
   clingfy::encoding::GifEncoder gif_encoder;
+  // A GIF is composited at the full canvas, so canvas-pixel arguments keep
+  // their proportions, then downscaled by the encoder to its size preset's
+  // long-edge cap. `ResolveExportPixelSize` reports the same size to Flutter.
+  const PixelSize encoded =
+      gif ? GifIntermediateRenderSize(
+                SizeF{static_cast<double>(canvas.width),
+                      static_cast<double>(canvas.height)},
+                GifMaxLongEdgeForSizePreset(request.gif_size))
+          : canvas;
   if (gif) {
     clingfy::encoding::EncoderConfig gif_config;
     gif_config.output_path = request.destination_path;
-    gif_config.width = canvas.width;
-    gif_config.height = canvas.height;
+    gif_config.width = encoded.width;
+    gif_config.height = encoded.height;
     if (auto err = gif_encoder.Open(gif_config, device)) {
       return Failure(request.destination_path,
                      "export: GIF encoder open failed — " + err->message,
@@ -787,8 +828,18 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
       // Was the struct default of 128 kbps, which quietly differed from the
       // 192 kbps macOS produces for the same project. Resolved rather than
       // assigned so the tier the user picked is honoured where it can be.
-      audio_config->avg_bitrate_bps =
+      // The tier is a ceiling: 256 / 320 only where this machine's AAC
+      // encoder takes them (Windows 11 does; Microsoft documents up to 192).
+      const std::uint32_t requested_bps =
           ResolveAudioBitrateBps(request.audio_quality);
+      audio_config->avg_bitrate_bps = ClampAudioBitrateToEncoder(
+          requested_bps, clingfy::encoding::AacEncoderAcceptsBitrate);
+      if (audio_config->avg_bitrate_bps != requested_bps) {
+        clingfy::bridge::NativeLogPublisher::Instance().Info(
+            "Export", "AAC encoder refused " + std::to_string(requested_bps) +
+                          " bps; exporting audio at " +
+                          std::to_string(audio_config->avg_bitrate_bps));
+      }
     }
     if (auto err = encoder.Open(enc_config, device, audio_config)) {
       // The sink writer binds MF_SINK_WRITER_D3D_MANAGER to this device, so
@@ -1399,18 +1450,13 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
             D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
             D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
       }
-      if (grading) {
-        // The intermediate is canvas-sized, so the graded output lands at the
-        // origin 1:1 — no scaling, no interpolation surprises.
-        d2d_ctx->DrawImage(grade_chain.Output());
-      } else {
-        draw_content();
-      }
-      // Phase 9.4: the camera bubble draws LAST, in canvas space with an
-      // identity transform (the zoom transform was reset above and the content
-      // clip/layer popped), so it sits on top of the screen + cursor + clicks
-      // and is NOT magnified by smart zoom. Its own mask clips the bubble.
-      if (camera_renderer != nullptr) {
+      // Phase 9.4: the camera draws in canvas space with an identity transform
+      // (the zoom transform was reset and the content clip/layer popped), so it
+      // is NOT magnified by smart zoom. Its own mask clips the bubble. It draws
+      // LAST, on top of the screen + cursor + clicks, except backgroundBehind,
+      // which draws here — over the canvas background, under the screen — as
+      // macOS's `.behindScreen` z-order does.
+      const auto draw_camera = [&]() {
         // The animation clock must share the same time base as the clip it
         // animates over. Under clips (D4, §5.5) the intro/outro run in EDITED
         // time (the trimmed length = edited_total_ms) at the frame's edited
@@ -1436,6 +1482,21 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
         // edited: deliberate, and matched exactly on the preview leg.
         camera_renderer->Draw(d2d_ctx.Get(), camera_clock_ms, camera_total_ms,
                               zf.zoom, zf.in_segment, zf.segment_local_ms);
+      };
+      const bool camera_behind =
+          camera_renderer != nullptr && camera_renderer->behind_screen();
+      if (camera_behind) {
+        draw_camera();
+      }
+      if (grading) {
+        // The intermediate is canvas-sized, so the graded output lands at the
+        // origin 1:1 — no scaling, no interpolation surprises.
+        d2d_ctx->DrawImage(grade_chain.Output());
+      } else {
+        draw_content();
+      }
+      if (camera_renderer != nullptr && !camera_behind) {
+        draw_camera();
       }
       const HRESULT end_hr = d2d_ctx->EndDraw();
       d2d_ctx->SetTarget(nullptr);
@@ -1692,8 +1753,8 @@ RenderResult RenderComposedExport(const RenderRequest& request) {
 
   RenderResult out;
   out.ok = true;
-  out.output_width = canvas.width;
-  out.output_height = canvas.height;
+  out.output_width = encoded.width;
+  out.output_height = encoded.height;
   out.video_frames_written = video_frames;
   out.audio_packets_written = audio_packets;
   out.had_audio = has_audio || sep_merge.has_value();

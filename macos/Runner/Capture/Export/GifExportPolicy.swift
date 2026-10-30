@@ -9,19 +9,20 @@ import Foundation
 /// This is the macOS port of Windows'
 /// `windows/runner/Capture/Export/gif_export_policy.{h,cpp}`. The decimation /
 /// timing rules are ported **value-for-value** for cross-platform parity (see
-/// `docs/decisions/macos-gif-export.md`). Two behaviors are additive on top of
-/// the Windows contract and intentionally diverge from the line-for-line port
-/// (a Windows follow-up will adopt them):
+/// `docs/decisions/macos-gif-export.md`). Two behaviors were added here first
+/// and have since been ported back to Windows value for value (W1 in
+/// `docs/windows-machine-work.md`), so the two platforms match again:
 ///
 /// - `renderSize(canvasSize:maxLongEdge:)` — caps the GIF's long edge. A GIF
 ///   carries a full color table per frame and LZW-packs raw indices, so a 4K
 ///   canvas is a guaranteed multi-GB failure; the canvas is downscaled before
-///   encode. Windows currently has no cap.
+///   encode. Windows: `GifRenderSize` / `GifIntermediateRenderSize`.
 /// - `DelayAccumulator` — a drift-free per-frame delay generator. The stateless
 ///   `delayCentiseconds(prevTsHns:curTsHns:)` (the parity port) rounds each gap
 ///   independently, which stamps a uniform 15 fps stream +5% slow (every
 ///   ~0.0667 s gap rounds up to 7 cs). The accumulator carries the fractional
 ///   centisecond residual so cumulative playback time tracks wall-clock.
+///   Windows: `GifDelayAccumulator`.
 ///
 /// Why decimate: the pipeline walks decoded frames down toward `targetFps`
 /// (a 30 fps source keeps every other frame → 15 fps; 60 fps keeps every
@@ -49,7 +50,8 @@ enum GifExportPolicy {
   /// real decoder timestamps jitter around the slot boundary.
   static let emitTargetStart: Int64 = .min
 
-  /// Default long-edge cap (px) for the encoded GIF. Additive vs. Windows.
+  /// Default long-edge cap (px) for the encoded GIF. Windows:
+  /// `kGifDefaultMaxLongEdge`.
   /// Equals `large`'s cap — an omitted/unknown size preset renders exactly as
   /// before this control existed.
   static let defaultMaxLongEdge: CGFloat = 1080
@@ -58,7 +60,8 @@ enum GifExportPolicy {
   /// (`"small"`/`"medium"`/`"large"`) mirror the Flutter `GifSizePreset` enum
   /// and its `longEdgePx`; keep the two in sync. fps stays `targetFps` (15)
   /// across every preset — dimension is the file-size lever, and a per-preset
-  /// fps would diverge from the Windows parity contract. Additive vs. Windows.
+  /// fps would diverge from the Windows parity contract. Windows:
+  /// `kGif{Small,Medium,Large}MaxLongEdge`.
   static let smallMaxLongEdge: CGFloat = 480
   static let mediumMaxLongEdge: CGFloat = 720
   static let largeMaxLongEdge: CGFloat = 1080
@@ -203,7 +206,7 @@ enum GifExportPolicy {
     }
   }
 
-  // MARK: - Sizing (additive vs. Windows)
+  // MARK: - Sizing
 
   /// The GIF's encoded pixel size: the canvas downscaled so its long edge is at
   /// most `maxLongEdge`, aspect preserved, rounded to whole pixels (min 1).

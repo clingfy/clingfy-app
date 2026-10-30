@@ -151,6 +151,13 @@ standby-resume resync without waiting for a slider touch.
 **D6.1 — Status update 2026-07-27: the DSP is built; the remaining blocker is
 the clock, not the maths. `MediaPlayer.AddAudioEffect` is a CLOSED option.**
 
+*Resolved 2026-10-30 (W13, `docs/windows-machine-work.md`): the clocks
+converged. Every preview, uncut included, plays the stitched path as a
+one-clip timeline (`PreviewEngine::StartConvergedPlayback`), on the GPU
+decode that made it affordable (W13a, #296). The MediaPlayer is only the
+fallback when the stitched reader cannot open a recording, or with
+`CLINGFY_PREVIEW_MEDIAPLAYER=1`.*
+
 D6 is no longer "documented gap". The gain node exists, is tested, and is
 portable: `windows/runner/Audio/gain_processor.{h,cpp}` (#358) —
 `Process(float*, frames, channels)` plus a lock-free parameter block, no

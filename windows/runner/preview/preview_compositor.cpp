@@ -182,7 +182,8 @@ void PreviewCompositor::ComposeFrame(
     ID2D1DeviceContext* d2d_context, const D2D1_RECT_F& dest_rect,
     const capture::CursorSidecarData& cursor,
     const std::vector<capture::ZoomSegment>& zoom_segments,
-    std::int64_t playback_us, double now_seconds, ZoomState& zoom) {
+    std::int64_t playback_us, double now_seconds, ZoomState& zoom,
+    const std::function<void(ID2D1DeviceContext*)>& after_background) {
   // Canvas background. This Clear runs BEFORE the colour-grade effect chain
   // below, which is precisely what keeps the canvas ungraded — same rule the
   // cursor halo and camera bubble already follow. Defaults to opaque black, so
@@ -218,6 +219,10 @@ void PreviewCompositor::ComposeFrame(
     d2d_context->DrawBitmap(
         bg_image, D2D1::RectF(0.0f, 0.0f, surface.width, surface.height), 1.0f,
         D2D1_BITMAP_INTERPOLATION_MODE_LINEAR, &src_rect);
+  }
+
+  if (after_background) {
+    after_background(d2d_context);
   }
 
   if (!video_bitmap_) return;
@@ -260,6 +265,8 @@ void PreviewCompositor::ComposeFrame(
   float zoom_for_draw = 1.0f;
   float cursor_back_x = 0.0f;
   float cursor_back_y = 0.0f;
+  float halo_x = 0.0f;
+  float halo_y = 0.0f;
   float highlight_alpha = 0.0f;
 
   if (has_cursor) {
@@ -275,6 +282,11 @@ void PreviewCompositor::ComposeFrame(
       zoom.target_x = at.x;
       zoom.target_y = at.y;
     }
+    D2D1_POINT_2F cursor_raw{};
+    if (at.has) {
+      cursor_raw =
+          VideoToBackBuffer(at.x, at.y, video_width_, video_height_, dest_rect);
+    }
     // Segment membership — the export's own definition, via the one shared
     // resolver. Replaces a symmetric ±500 ms click window plus a 0.3 s hold,
     // which switched the zoom on half a second BEFORE the click the export
@@ -285,6 +297,14 @@ void PreviewCompositor::ComposeFrame(
         capture::ZoomSegmentStateAt(zoom_segments, playback_ms);
     zoom.segment_active = seg.in_segment;
     zoom.segment_local_ms = seg.local_ms;
+    // A segment the user pinned in the editor zooms on their point, not the
+    // cursor — the same rule ZoomExportController applies, so what the drag
+    // shows is what the file gets. The point is normalized; the zoom target
+    // lives in the same video-pixel space as the cursor above.
+    if (seg.in_segment && seg.fixed_target) {
+      zoom.target_x = seg.target_x * static_cast<double>(video_width_);
+      zoom.target_y = seg.target_y * static_cast<double>(video_height_);
+    }
     const bool zoom_wanted = seg.in_segment;
     // The user's zoom magnitude, not the hardcoded default — and no zoom at
     // all when the effect is off, which is what the export has always done.
@@ -300,6 +320,17 @@ void PreviewCompositor::ComposeFrame(
         dest_rect);
     cursor_back_x = cursor_bb.x;
     cursor_back_y = cursor_bb.y;
+    // The halo marks the CURSOR, wherever the zoom has put it. Zooming by z
+    // about the focus moves a point p to focus + (p - focus) * z. While the
+    // zoom follows the cursor the focus sits on it and this is the focus; on
+    // a pinned segment the focus is the user's point and the cursor is
+    // elsewhere, which is the case this exists for.
+    halo_x = cursor_back_x;
+    halo_y = cursor_back_y;
+    if (at.has) {
+      halo_x = cursor_back_x + (cursor_raw.x - cursor_back_x) * zoom_for_draw;
+      halo_y = cursor_back_y + (cursor_raw.y - cursor_back_y) * zoom_for_draw;
+    }
     // Halo alpha ramps with how far into the CONFIGURED zoom we are, so a
     // gentle 1.2x zoom still reaches full highlight at its own peak instead of
     // topping out at 40% of it. A factor of exactly 1.0 leaves span 0 and the
@@ -353,11 +384,10 @@ void PreviewCompositor::ComposeFrame(
   }
 
   if (has_cursor && highlight_brush_ && highlight_alpha > 0.0f) {
-    highlight_brush_->SetCenter(
-        D2D1::Point2F(cursor_back_x, cursor_back_y));
+    highlight_brush_->SetCenter(D2D1::Point2F(halo_x, halo_y));
     highlight_brush_->SetOpacity(highlight_alpha);
     const D2D1_ELLIPSE halo = {
-        D2D1::Point2F(cursor_back_x, cursor_back_y),
+        D2D1::Point2F(halo_x, halo_y),
         kHighlightRadiusPx, kHighlightRadiusPx};
     d2d_context->FillEllipse(halo, highlight_brush_.Get());
   }

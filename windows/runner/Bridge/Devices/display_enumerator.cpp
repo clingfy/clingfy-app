@@ -267,6 +267,18 @@ std::vector<DisplayRecord> EnumerateDisplays() {
   return out;
 }
 
+std::optional<HMONITOR> MonitorUnderCursor() {
+  POINT cursor{};
+  if (::GetCursorPos(&cursor) == FALSE) {
+    return std::nullopt;
+  }
+  HMONITOR monitor = ::MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+  if (monitor == nullptr) {
+    return std::nullopt;
+  }
+  return monitor;
+}
+
 std::optional<HMONITOR> ResolveHMonitor(std::optional<std::int64_t> id) {
   if (!id) {
     // No explicit selection — use the primary monitor as the friendly

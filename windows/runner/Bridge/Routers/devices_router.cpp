@@ -20,6 +20,7 @@
 #include "Capture/recording_engine.h"
 #include "Capture/windows_selection_state.h"
 #include "Overlay/area_picker_overlay.h"
+#include "Overlay/area_reveal_overlay.h"
 #include "Overlay/display_identify_overlay.h"
 
 namespace clingfy::bridge::routers::devices {
@@ -336,6 +337,8 @@ void HandlePickAreaRecordingRegion(
   region.width = picked->width;
   region.height = picked->height;
   clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(region);
+  // macOS: a short-lived outline right after the pick confirms what was chosen.
+  clingfy::overlay::ShowAreaReveal();
 
   flutter::EncodableMap out;
   // Always present (>= 0) so the Dart client's result['displayId'] force-unwrap
@@ -358,6 +361,16 @@ void HandleClearAreaRecordingSelection(
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
   clingfy::capture::WindowsSelectionState::Instance().SetAreaRegion(
       std::nullopt);
+  clingfy::overlay::HideAreaReveal();
+  reply::Null(*result);
+}
+
+// "Reveal area": outline the selected area for a second (macOS
+// AreaPreviewOverlay). A no-op without a selection. Always replies null.
+void HandleRevealAreaRecordingRegion(
+    const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  clingfy::overlay::ShowAreaReveal();
   reply::Null(*result);
 }
 
@@ -390,11 +403,9 @@ void RegisterHandlers(HandlerTable& table) {
   table["setAudioMix"] = &HandleNoopSetter;
   table["setAudioGainDb"] = &HandleNoopSetter;
 
-  // Area selection lifecycle. Phase 7.2 makes pick/clear real (engine consumes
-  // the region); reveal (the post-select preview border) is overlay work, so it
-  // stays a no-op until Phase 7.3 brings the native overlay.
+  // Area selection lifecycle: pick / reveal / clear are all real.
   table["pickAreaRecordingRegion"] = &HandlePickAreaRecordingRegion;
-  table["revealAreaRecordingRegion"] = &HandleNoopSetter;
+  table["revealAreaRecordingRegion"] = &HandleRevealAreaRecordingRegion;
   table["clearAreaRecordingSelection"] = &HandleClearAreaRecordingSelection;
 }
 

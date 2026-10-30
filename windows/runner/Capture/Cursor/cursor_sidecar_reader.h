@@ -81,6 +81,19 @@ struct CursorAtResult {
 CursorAtResult SampleCursorAt(const std::vector<CursorSidecarSample>& samples,
                               std::int64_t t_ms);
 
+// What `previewGetCursorSamples` answers: the samples inside [start_ms,
+// end_ms] (inclusive, as macOS selects them) and the one nearest `playhead_ms`
+// in time, the earlier on a tie. The editor feeds these to its focus
+// heuristic to decide whether a new zoom should pin on a point. Pure.
+struct CursorSampleWindow {
+  std::vector<CursorSidecarSample> in_range;
+  bool has_nearest = false;  // false only when there are no samples at all
+  CursorSidecarSample nearest;
+};
+CursorSampleWindow SelectCursorSamples(
+    const std::vector<CursorSidecarSample>& samples, std::int64_t start_ms,
+    std::int64_t end_ms, std::int64_t playhead_ms);
+
 // Where + how big to draw the cursor glyph on the export canvas. Pure so the
 // mapping (shared by display/window/area — the sidecar x,y are already
 // capture-local) and the cursorSize scaling are unit-tested without D2D.

@@ -398,6 +398,9 @@ class RecordingEngine {
   // mode repeatedly during one recording cannot re-toast. Reset per session in
   // StartRecording. Guarded by mutex_.
   bool camera_preview_hidden_warned_ = false;
+  // The request's disableCursorHighlight, kept for pause / resume (the
+  // highlight's suppression lasts the whole session).
+  bool session_disable_cursor_highlight_ = false;
 
   // Held for the whole session (Starting → terminal): keeps the machine out
   // of Modern Standby and the recorded display on — sleep mid-recording

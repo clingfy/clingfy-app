@@ -169,23 +169,6 @@ finished or cancelled, or a buffer being tagged while it returns to the pool.
 
 ## Export — GIF
 
-### Windows GIF has no size presets, cap or drift-free timing — code (Windows machine)
-
-*Checked 2026-10-20.* macOS shipped all three in 1.0.7 (#319, #326):
-480 / 720 / 1080 long-edge caps, a drift-free `DelayAccumulator`, and the size
-picker. Windows encodes the full canvas whatever the preset, and its GIFs play
-about 5% slow. Its comments also still say macOS has no real GIF encoder.
-**Do this on a Windows machine.** The full brief, with files, tests and the
-done-when list, is **W1 in `docs/windows-machine-work.md`**.
-
-### GIF length cap has no Windows backstop — code (Windows machine)
-
-Since 2026-10-20 a GIF export is capped at 60 s of exported duration
-(`kGifMaxExportDurationMs`, `GifExportPolicy.maxExportedDurationMs`). The
-shared dialog refuses past it on both platforms. On macOS the exporter also
-refuses, with `EXPORT_GIF_TOO_LONG`. Windows has no native backstop yet.
-**Do this on a Windows machine:** **W2 in `docs/windows-machine-work.md`**.
-
 ### ~~GIF output checked by eye only at Small and Large~~ — DONE 2026-10-26
 
 `ExportEngineTests.testExportsGifProofsForVisualInspection` exports every
@@ -1004,6 +987,8 @@ Tags:
 
 - **One undo history across editing domains** — parked, macOS + Windows, parked. There are four separate EditSessions, so undoing a colour change cannot undo a clip split. Deliberately parked until a user complains. *Source:* docs/editing-platform-plan.md:31-36, :873-876, :912-914
 
+- **macOS: save and export the fixed zoom target** — code, macOS (MacBook). The draggable focus point works only in the live preview: `ZoomManualStore.swift` drops `focusMode` / `fixedTarget` on save, and the exporter rebuilds segments without them, so a pinned zoom comes back as follow-cursor and exports that way. Windows stores both as optional keys in `zoom.manual.json` (W10, 2026-10-29); mirror that shape so a project behaves the same on both. *Source:* macos/Runner/Capture/Zoom/ZoomManualStore.swift; macos/Runner/Capture/Export/LetterboxExporter.swift:3025-3062; windows/runner/Capture/Zoom/zoom_manual_store.h
+
 - **Editable zoom lane lines up with the ruler under cuts and reorders** — code, macOS, partial. Only the display-only lane maps segments onto the edited timeline. The editable lane shows raw source-time segments, so on a cut or reordered project the pills do not line up with the ruler. *Source:* lib/app/home/preview/widgets/timeline/timeline_editor_viewport.dart:436-447; lib/core/zoom/zoom_editor_controller.dart:313-335
 
 
@@ -1037,19 +1022,14 @@ Tags:
 
 ### Windows parity (Windows machine)
 
-- **Windows 'Screen under mouse' target (offered but refused)** — code, not started. The shared picker offers 'Screen under mouse' on Windows, but RecordingEngine::Start refuses mouseAtStart with kBadMode ('mouse-follow modes land in a later slice'). Either build it or hide the option on Windows. *Source:* windows/runner/Capture/recording_engine.cpp:277-291; lib/app/home/recording/widgets/recording_source_section.dart:129-132
-
-- **Windows capture quality and frame-rate control** — code, not started. setRecordingQuality and setCaptureFrameRate are no-ops, so the Quality and frame-rate group is hidden on Windows. Windows always records at the display's resolution and frame rate. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:425, :430; lib/app/home/recording/widgets/recording_output_section.dart:46-49
-
 - **Windows 'Exclude Clingfy from capture'** — code, not started. setExcludeRecorderApp is a no-op and the toggle is hidden. The obvious WDA approach risks the hybrid-GPU blank-window failure. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:219-223, :427; lib/app/home/recording/widgets/recording_options_sidebar.dart:531-534
 
-- **Windows live cursor highlight while recording** — code, not started. setCursorHighlightEnabled and setCursorHighlightLinkedToRecording are no-ops, so there is no live cursor halo on Windows and the Pointer control is hidden. *Source:* windows/runner/Bridge/Routers/camera_overlay_router.cpp:304-305; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
+- **Windows live cursor highlight while recording** — verify, then unhide (Windows machine). Built 2026-10-30 (W11 in docs/windows-machine-work.md): the overlay, the setters and the engine hooks are real. The Pointer control stays hidden until the owner checks the halo on screen (all monitors, mixed DPI, click pulse, present in the recording); then drop the `!isWindows()` gate. *Source:* windows/runner/Overlay/cursor_highlight_overlay.cpp; lib/app/home/recording/widgets/recording_options_sidebar.dart:430-433
 
-- **Windows fixed-target zoom (draggable focus point)** — code, partial. Manual zoom segments shipped (#471), but previewGetZoomCapabilities reports fixedTargetPreview, fixedTargetExport and cursorSamples as false, so the macOS draggable focus UI is not offered. *Source:* windows/runner/Bridge/Routers/preview_router.cpp:38-54; docs/features.md:75
 
 - **Windows area selection remembered across restarts** — parked, deferred. The crop region lives only in process memory, so Dart clears the saved area at launch and the user has to pick it again. macOS saves it natively. *Source:* lib/app/home/overlay/overlay_controller.dart:260-266; windows/runner/Capture/windows_selection_state.cpp:40; docs/windows-port.md:728-732
 
-- **Windows 'Reveal area' overlay** — code, not started. revealAreaRecordingRegion is a no-op, so the Reveal Area button is hidden on Windows. *Source:* windows/runner/Bridge/Routers/devices_router.cpp:395-397; lib/app/home/recording/widgets/recording_source_section.dart:285-287
+- **Windows 'Reveal area' overlay** — verify, then unhide (Windows machine). Built 2026-10-30 (W12 in docs/windows-machine-work.md): revealAreaRecordingRegion is real, a pick shows the outline, clear and startRecording hide it. The button stays hidden until the owner checks it on each monitor at mixed DPI; then drop the `!isWindows()` gate. *Source:* windows/runner/Overlay/area_reveal_overlay.cpp; lib/app/home/recording/widgets/recording_source_section.dart:285-287
 
 - **Windows window capture follows resizes and covers whole apps** — parked, deferred. The encoder stays at the window's starting size, so a window that grows is cropped. 'App (all windows)' captures a single HWND. *Source:* windows/runner/Capture/wgc_display_capture_backend.cpp:234-236, :523; docs/windows-port.md:719-722
 
@@ -1057,19 +1037,7 @@ Tags:
 
 - **Windows crash salvage of the video (fragmented MP4)** — parked, deferred. The MF sink writer writes non-fragmented MP4, so a hard crash leaves an unplayable file and Windows only cleans up and shows a notice. Salvage would need MFTranscodeContainerType_FMPEG4, which is untested with hardware encoders and the preview. Decide using crash telemetry. *Source:* windows/runner/Services/recovery_sweep.h:23-25; docs/windows-port.md:174-191
 
-- **Windows export destination pre-flight** — code, not started. macOS probe-writes the destination before rendering. Windows renders the whole export and fails only at the Sink Writer when a drive or share is gone. The check belongs before D3DDevice::Create. *Source:* windows/runner/Capture/Export/export_pipeline.cpp:363-384; docs/windows-port.md:202-232
 
-- **Windows export audio tiers above 192 kbps** — code, partial. macOS offers 192/256/320 kbps AAC. Windows clamps every tier to 192 because no one has measured which bitrates the MF AAC encoder accepts; after that, raising the cap in ResolveAudioBitrateBps is one line. *Source:* windows/runner/Capture/Export/export_format.cpp:51-62; docs/editing-platform-plan.md:417-424
-
-- **Windows colour-grade parity with Core Image** — code, not started. At strong grades the D2D colour matrix chain differs from Core Image by up to 2.77 (tolerance 0.002). ColorGradeGoldenTest is excluded from CI until it is fixed. The fixtures are committed; the fix needs a Windows machine. *Source:* .github/workflows/ci.yml:703-714; windows/runner/Graphics/color_grade_effect.cpp; docs/editing-platform-plan.md:864-869
-
-- **Windows hover frame-peek on the ruler (previewPeekTo)** — code, not started. Dart calls previewPeekTo when the ruler is hovered, but Windows registers it as a no-op, so hovering never shows the frame. The native comment saying Dart never calls it is stale. *Source:* windows/runner/Bridge/Routers/preview_router.cpp:990-998; lib/app/home/preview/widgets/video_timeline.dart:47
-
-- **Windows uncut preview: mic gain and voice cleanup audible before the first cut** — code, partial. An uncut project plays through MediaPlayer, which can only attenuate, so gain and cleanup are heard only once a cut or trim switches to the edited audio path. gain_processor exists but has no host on the passthrough path. *Source:* lib/app/home/post_processing/widgets/post_audio_section.dart:145-156; docs/decisions/windows-editing-step4-7-preview-audio.md:135-160
-
-- **Windows preview speaker-echo removal** — code, not started. Windows applies the mic echo canceller only at export, while the macOS preview plays the echo-cancelled mic. With echo removal on, the Windows preview does not match its export. *Source:* windows/runner/preview/preview_engine.h; windows/runner/Bridge/Routers/export_router.cpp:563; macos/Runner/Preview/InlinePreviewView.swift:1117
-
-- **Windows camera layouts: side-by-side, stacked, background** — code, not started. Only the four corner layouts work. Side-by-side, stacked and full-canvas background fall back to a bottom-right bubble, while the shared UI still offers them. *Source:* windows/runner/Capture/Camera/camera_export_layout.cpp:14-35; docs/decisions/windows-phase-9-camera-overlay-architecture.md:279-280
 
 - **Windows true squircle (superellipse) camera mask** — parked, deferred. 'Squircle' is drawn as a rounded rect with a minimum 0.3 corner fraction (the code says 'true superellipse deferred'). macOS draws a real squircle path. *Source:* windows/runner/Capture/Camera/camera_bubble_painter.cpp:78-79, :101-115
 
@@ -1079,7 +1047,6 @@ Tags:
 
 - **Windows mic-out-of-loopback cancellation ('Listen to this device')** — idea, not started. With 'Listen to this device' on, the mic plays to the render endpoint and leaks into the system-audio loopback. Removing it would need the reverse of the export-time speaker-bleed canceller. *Source:* windows/runner/Bridge/Routers/recording_router.cpp:225-237
 
-- **Windows hardware-accelerated preview decode (GPU end to end)** — code, not started. The preview reader uses CPU advanced video processing. Pairing it with the D3D manager measured about 1 fps because of GPU-to-CPU readback, so keeping frames on the GPU needs the compositor's upload seam redesigned. *Source:* GitHub issue #296; windows/runner/preview/preview_source_reader.cpp:95-106
 
 - **Windows automatic updates (WinSparkle, in-app download, release notes)** — parked, deferred. Only a manual 'Check for Updates' exists; it opens the installer URL in the browser. There are no background checks, no in-app download or SHA check, and no release notes, and WinSparkle is not integrated (planned for the public beta). *Source:* windows/runner/Updater/; lib/app/settings/sections/about_settings_section.dart:72; docs/windows-port.md:357-362
 
@@ -1089,6 +1056,87 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows preview speaker-echo removal** (2026-10-30, W13c in
+  `docs/windows-machine-work.md`). The preview plays the echo-cancelled mic
+  (then cleanup) from the same passes the export runs, cached per effect set.
+
+- **Windows uncut preview: mic gain and voice cleanup audible before the
+  first cut** (2026-10-30, W13b in `docs/windows-machine-work.md`). Every
+  preview plays through the stitched path's audio renderer (one master
+  clock, design D6.1); `CLINGFY_PREVIEW_MEDIAPLAYER=1` is the escape hatch.
+
+- **Windows hardware-accelerated preview decode** (2026-10-30, W13a in
+  `docs/windows-machine-work.md`, issue #296). The stitched preview decodes
+  on its own device and copies surface to surface: 4K60 152 fps against 24
+  on the CPU path.
+
+- **Windows fixed-target zoom** (2026-10-29, W10 in
+  `docs/windows-machine-work.md`). The draggable focus point works in the
+  Windows preview and is saved in `zoom.manual.json` (`focusMode` +
+  `fixedTarget`, both optional) and honoured by the export. macOS still drops
+  it on save and export: see *macOS: save and export the fixed zoom target*.
+
+- **Windows capture frame-rate control** (2026-10-29, W9 in
+  `docs/windows-machine-work.md`). The 30 / 60 fps dropdown shows on Windows,
+  and `CaptureFramePacer` caps WGC's display-cadence frames to it in the drain
+  loop. `setRecordingQuality` has no UI caller on either platform.
+
+- **Windows colour-grade parity with Core Image** (2026-10-29, W8 in
+  `docs/windows-machine-work.md`). Already fixed by #275 (golden worst 0.0017
+  vs 0.002) but still excluded from CI. The exclusion is lifted, and a GPU test
+  now pins the real D2D chain to the same matrix within one 8-bit step.
+
+- **Windows camera layouts: side-by-side, stacked, background** (2026-10-29,
+  W7 in `docs/windows-machine-work.md`). They fell back to a bottom-right
+  bubble. Now macOS's frames (value for value with `CameraLayoutResolver`), a
+  painter that takes any w x h, and backgroundBehind drawn under the screen in
+  both the export and the preview.
+
+- **Windows export audio tiers above 192 kbps** (2026-10-29, W6 in
+  `docs/windows-machine-work.md`). Measured: the Windows 11 AAC encoder MFT
+  accepts and produces 256 and 320 kbps. Windows now offers macOS's 192 / 256 /
+  320 ladder, asks the encoder first and steps down where an older one refuses.
+
+- **Windows hover frame-peek on the ruler** (2026-10-29, W5 in
+  `docs/windows-machine-work.md`). `previewPeekTo` was a no-op on Windows, so
+  hovering the ruler never showed the frame. It now seeks the preview, as
+  macOS does; Dart keeps the playhead and seeks back on hover end.
+
+- **Windows 'Screen under mouse' target** (2026-10-29, W4 in
+  `docs/windows-machine-work.md`). The picker offered it and the engine refused
+  it with `BAD_MODE`. `RecordingEngine::Start` now records the display under the
+  cursor at start (`devices::MonitorUnderCursor`), as macOS does. Follow-mouse
+  is not offered and stays refused.
+
+- **Windows export destination pre-flight** (2026-10-29, W3 in
+  `docs/windows-machine-work.md`). `ExportDestinationProblem` checks the
+  folder before any work: drive or share not connected (said apart from a
+  missing folder), folder gone, not a folder, or a failed probe write. It runs
+  in `ExportPassthroughCopy`, so the byte-copy path is covered too, and the
+  reply matches macOS (`EXPORT_ERROR`, reason as message, folder as details).
+
+- **The GIF length cap has a Windows native backstop** (2026-10-29, W2 in
+  `docs/windows-machine-work.md`). `RenderComposedExport` works out the
+  exported length from the clips and the file (`GifExportedDurationMs`, value
+  for value with Swift) and refuses over 60 s + 100 ms slack before any encoder
+  or output file exists. The reply is `EXPORT_GIF_TOO_LONG` with
+  `{durationMs, maxDurationMs}`, the macOS shape, and it is never retried as a
+  device loss. A long recording trimmed under 60 s still exports, and MP4 / MOV
+  are untouched. Pinned by `gif_export_policy_test.cpp`, `ExportPipelineTest`
+  (the refusal leaves no file, trim, MP4/MOV, passthrough mapping) and
+  `ReplyForExportOutcomeGifTooLongEmitsMacShapedDetails`.
+
+- **Windows GIF size presets, long-edge cap and drift-free timing** (2026-10-29,
+  W1 in `docs/windows-machine-work.md`). Small / Medium / Large cap the encoded
+  long edge at 480 / 720 / 1080 (unknown or empty: 1080), value for value with
+  `GifExportPolicy.swift`. The frame is composited at the full canvas and the
+  WIC encoder downscales it (Fant), so padding and camera keep their
+  proportions; `resolveExportSize` reports the encoded size. Delays come from
+  `GifDelayAccumulator`, so a 15 fps GIF stamps 7, 6, 7… and a 10 s export is
+  1000 cs, not 1050. Pinned by `gif_export_policy_test.cpp`,
+  `ResolveExportPixelSizeTest` and `ExportPipelineTest.GifSizePresetsCapTheEncodedLongEdge`
+  (decoded size per preset and the cumulative delay).
 
 - **The dead pre-styled camera pass is deleted** (2026-10-29). `runStyledPass`, the
   styled intermediate renderer and its validation, and the `cameraAssetIsPreStyled`

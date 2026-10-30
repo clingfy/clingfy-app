@@ -138,29 +138,23 @@ bool IsIdentityTransform(const std::string& layout,
 //
 // It MUST stay identical to what `export_pipeline` computes for the same
 // inputs, which is why both funnel through `ResolveTargetSize` +
-// `ToEvenPixelSize` rather than each doing their own arithmetic. Flutter
-// cannot compute this itself: the "auto" resolution preset derives from the
-// recording's own source track size, which only this side has read.
+// `ToEvenPixelSize` (and, for a GIF, `GifIntermediateRenderSize`) rather than
+// each doing their own arithmetic. Flutter cannot compute this itself: the
+// "auto" resolution preset derives from the recording's own source track
+// size, which only this side has read.
 //
-// `format` and `gif_size` are accepted for parity with the macOS payload but
-// deliberately do NOT change the answer on Windows, and that divergence is the
-// point rather than an oversight:
+// A GIF (`format` resolving to .gif, the same test the pipeline keys its GIF
+// fork off) answers the CAPPED size for its `gif_size` preset: small / medium
+// / large cap the long edge at 480 / 720 / 1080, anything else at 1080. That
+// is the size the GIF is encoded at, matching macOS's
+// `GifExportPolicy.intermediateRenderSize`. Every other format ignores
+// `gif_size`.
 //
-//   macOS has no real GIF encoder — its "gif" format downgrades to a video
-//   container and renders its intermediate at a capped long edge
-//   (`GifExportPolicy.intermediateRenderSize`), so it must report the CAPPED
-//   size or a cue laid out for 1920 is drawn 1:1 on a 1080-wide frame, ~1.8x
-//   the width it was laid out for.
-//
-//   Windows encodes GIF natively through WIC at the FULL canvas —
-//   `export_pipeline.cpp` hands the encoder `gif_config.width/height =
-//   canvas.width/height`, the same canvas every other format gets — and
-//   `gif_export_policy.h` is purely temporal (frame decimation and delay
-//   stamping, no size cap at all).
-//
-// So mirroring the macOS cap here would rasterize captions for a canvas
-// Windows never renders. Answering uncapped is what keeps the bitmap and the
-// frame the same size.
+// Windows composites a GIF at the full canvas and the encoder downscales the
+// finished frame, so canvas-pixel arguments (padding, corner radius, camera
+// geometry) keep the same proportions as a video export. Anything burned in
+// against this answer at composite time must therefore be scaled by
+// canvas / answer, or it lands at the wrong size.
 PixelSize ResolveExportPixelSize(SizeF source, const std::string& layout,
                                  const std::string& resolution,
                                  const std::string& format,

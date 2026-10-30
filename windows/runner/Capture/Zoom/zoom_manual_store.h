@@ -33,6 +33,13 @@
 //   * a segment with `endMs <= startMs` is a TOMBSTONE, not a zero-length
 //     zoom. It exists solely to carry a `baseId` and say "the user deleted
 //     that auto segment". It must never reach a renderer.
+//
+// Windows ADDS two optional keys, the ones Dart already sends on save:
+// `"focusMode":"fixedTarget"` and `"fixedTarget":{"dx":0.3,"dy":0.6}`. macOS
+// drops them today (ZoomManualStore.swift), which is why its pinned point is
+// lost on reopen and never exported; that fix is queued for macOS. Both keys
+// are optional, so a file without them loads exactly as before, and a reader
+// that ignores unknown keys still loads a file with them.
 namespace clingfy::capture {
 
 struct ZoomManualSegment {
@@ -41,7 +48,21 @@ struct ZoomManualSegment {
   std::int64_t end_ms = 0;
   std::string source;   // "manual" when absent
   std::string base_id;  // empty when this is not an override
+  // "followCursor" / "fixedTarget" as Dart writes them; empty when the file
+  // predates fixed-target zoom. Kept verbatim so a save round-trips it.
+  std::string focus_mode;
+  // The pinned point, normalized [0,1]. Present only alongside "fixedTarget".
+  bool has_fixed_target = false;
+  double fixed_x = 0.5;
+  double fixed_y = 0.5;
 };
+
+// Whether this segment pins its zoom on a point: "fixedTarget" WITH a point.
+// The mode alone is not enough — Dart only writes the point when it has one,
+// and a pinned zoom with nowhere to pin falls back to the cursor.
+inline bool IsZoomFixedTarget(const ZoomManualSegment& s) {
+  return s.focus_mode == "fixedTarget" && s.has_fixed_target;
+}
 
 // True for a segment that only records a deletion. See the note above: this
 // is a deliberate encoding, not malformed data, and both the preview and the

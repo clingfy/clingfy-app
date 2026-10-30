@@ -298,14 +298,12 @@ void main() {
 
   // ---- Audio quality ----------------------------------------------------
   //
-  // The picker is macOS-only on purpose. Windows resolves every tier to the
-  // same 192 kbps today, because the Media Foundation AAC encoder's accepted
-  // (rate, channels, bitrate) matrix has not been measured on Windows hardware
-  // and it refuses out-of-matrix values late, as an opaque HRESULT from
-  // AddStream. Three labels for one outcome is not a choice, so the control is
-  // hidden there — the same call Voice Cleanup made about its own unbuilt
-  // tier. The platform is pinned rather than inherited from the host so both
-  // branches are asserted deliberately.
+  // Both shipped platforms offer the three tiers. Windows used to hide the
+  // picker because every tier resolved to 192 kbps; the Media Foundation AAC
+  // encoder has since been measured producing 256 and 320 kbps
+  // (windows/runner_tests/aac_encoder_bitrate_test.cpp), and the export steps
+  // down where an older encoder refuses. The platform is pinned rather than
+  // inherited from the host so each branch is asserted deliberately.
 
   tearDown(() => debugPlatformKindOverride = null);
 
@@ -332,20 +330,29 @@ void main() {
     expect(dropdown.value, AudioQuality.standard);
   });
 
-  testWidgets('Windows hides it rather than offering three identical tiers', (
-    tester,
-  ) async {
+  testWidgets('Windows offers the same three tiers', (tester) async {
     debugPlatformKindOverride = PlatformKind.windows;
     await tester.pumpWidget(buildDialog());
     await tester.pumpAndSettle();
 
-    expect(find.text('Audio quality'), findsNothing);
-    expect(
+    expect(find.text('Audio quality'), findsOneWidget);
+    final dropdown = tester.widget<PlatformDropdown<AudioQuality>>(
       find.byWidgetPredicate((w) => w is PlatformDropdown<AudioQuality>),
-      findsNothing,
     );
-    // The video controls are still there — only the audio tier is gated.
+    expect(dropdown.items.map((i) => i.label).toList(), [
+      'Standard (192 kbps)',
+      'High (256 kbps)',
+      'Best (320 kbps)',
+    ]);
     expect(find.text('Bitrate'), findsOneWidget);
+  });
+
+  testWidgets('GIF hides it on Windows too', (tester) async {
+    debugPlatformKindOverride = PlatformKind.windows;
+    await tester.pumpWidget(buildDialog(initialExportFormat: ExportFormat.gif));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Audio quality'), findsNothing);
   });
 
   testWidgets('GIF hides it on macOS too, because GIF has no audio track', (

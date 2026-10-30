@@ -10,11 +10,15 @@
 #include <gtest/gtest.h>
 
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <wrl/client.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <iostream>
 #include <optional>
 #include <string>
 #include <system_error>
@@ -198,6 +202,253 @@ TEST(PreviewSourceReaderTest, SeekToRePrimesAtLaterWindow) {
 
   std::error_code ec;
   fs::remove_all(dir, ec);
+}
+
+TEST(PreviewSourceReaderTest, ReportsTheSourceDuration) {
+  // W13: a converged preview builds its one-clip timeline from this.
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("duration");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip;
+  if (!SynthesizeHalves(&device, source, &skip)) {
+    GTEST_SKIP() << skip;
+  }
+  auto reader = PreviewSourceReader::Create(fs::u8path(source).wstring());
+  ASSERT_NE(reader, nullptr);
+  // 8 frames at 30 fps: 266.7 ms of media.
+  EXPECT_NEAR(static_cast<double>(reader->duration_ms()), 266.7, 40.0);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// --- GPU path (#296): decode on the drawing device, copy surface to surface --
+
+struct VideoDevice {
+  ComPtr<ID3D11Device> device;
+  ComPtr<ID3D11DeviceContext> ctx;
+  // Created like the preview engine's: BGRA, VIDEO_SUPPORT when available,
+  // multithread-protected (MF decodes on its own threads).
+  bool Create(bool video_support) {
+    const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT |
+                       (video_support ? D3D11_CREATE_DEVICE_VIDEO_SUPPORT : 0);
+    if (FAILED(::D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+                                   flags, nullptr, 0, D3D11_SDK_VERSION,
+                                   device.GetAddressOf(), nullptr,
+                                   ctx.GetAddressOf()))) {
+      return false;
+    }
+    ComPtr<ID3D11Multithread> mt;
+    if (SUCCEEDED(ctx.As(&mt))) {
+      mt->SetMultithreadProtected(TRUE);
+    }
+    return true;
+  }
+  ComPtr<ID3D11Texture2D> Target(UINT w, UINT h) {
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = w;
+    td.Height = h;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    ComPtr<ID3D11Texture2D> tex;
+    device->CreateTexture2D(&td, nullptr, tex.GetAddressOf());
+    return tex;
+  }
+  // The texture's pixels, top-down tightly packed (via a staging copy).
+  std::vector<BYTE> ReadBack(ID3D11Texture2D* tex, UINT w, UINT h) {
+    D3D11_TEXTURE2D_DESC td{};
+    tex->GetDesc(&td);
+    td.Usage = D3D11_USAGE_STAGING;
+    td.BindFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ComPtr<ID3D11Texture2D> staging;
+    std::vector<BYTE> out;
+    if (FAILED(device->CreateTexture2D(&td, nullptr, staging.GetAddressOf()))) {
+      return out;
+    }
+    ctx->CopyResource(staging.Get(), tex);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(ctx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+      return out;
+    }
+    out.resize(static_cast<size_t>(w) * h * 4u);
+    for (UINT row = 0; row < h; ++row) {
+      std::memcpy(out.data() + row * w * 4u,
+                  static_cast<const BYTE*>(mapped.pData) + row * mapped.RowPitch,
+                  w * 4u);
+    }
+    ctx->Unmap(staging.Get(), 0);
+    return out;
+  }
+};
+
+// Decode every frame through ReadNextSample + UploadFrame and return the
+// centre colour each one put in the target texture.
+std::vector<Center> DecodeAllThroughUpload(PreviewSourceReader* reader,
+                                           VideoDevice* gpu) {
+  std::vector<Center> centers;
+  auto target = gpu->Target(reader->width(), reader->height());
+  if (target == nullptr) {
+    return centers;
+  }
+  PreviewDecodedFrame frame;
+  while (reader->ReadNextSample(&frame)) {
+    if (!reader->UploadFrame(frame, gpu->ctx.Get(), target.Get())) {
+      break;
+    }
+    centers.push_back(CenterOf(
+        gpu->ReadBack(target.Get(), reader->width(), reader->height()),
+        reader->width(), reader->height()));
+  }
+  return centers;
+}
+
+TEST(PreviewSourceReaderGpuTest, DecodesOnTheDrawingDeviceWithTheSameFrames) {
+  clingfy::graphics::D3DDevice encode_device;
+  VideoDevice gpu;
+  if (encode_device.Create() || !gpu.Create(/*video_support=*/true)) {
+    GTEST_SKIP() << "no usable D3D11 video device in this environment";
+  }
+  const auto dir = UniqueDir("gpu");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip;
+  if (!SynthesizeHalves(&encode_device, source, &skip)) {
+    GTEST_SKIP() << skip;
+  }
+  auto reader = PreviewSourceReader::Create(fs::u8path(source).wstring(),
+                                            gpu.device.Get());
+  ASSERT_NE(reader, nullptr);
+  if (!reader->gpu()) {
+    GTEST_SKIP() << "this device cannot decode the stream; CPU path covered "
+                    "by the fallback test";
+  }
+  EXPECT_EQ(reader->width(), kW);
+  EXPECT_EQ(reader->height(), kH);
+  const auto centers = DecodeAllThroughUpload(reader.get(), &gpu);
+  ASSERT_GE(centers.size(), 6u) << "the probe read must be undone (seek to 0)";
+  EXPECT_GT(centers.front().r, centers.front().b + 40) << "first frame red";
+  EXPECT_GT(centers.back().b, centers.back().r + 40) << "last frame blue";
+
+  // And the reorder capability still holds on this path.
+  reader->SeekTo(133);
+  PreviewDecodedFrame frame;
+  bool found = false;
+  auto target = gpu.Target(kW, kH);
+  for (int guard = 0; guard < 16 && reader->ReadNextSample(&frame); ++guard) {
+    if (frame.ts_ms >= 133) {
+      ASSERT_TRUE(reader->UploadFrame(frame, gpu.ctx.Get(), target.Get()));
+      const Center c = CenterOf(gpu.ReadBack(target.Get(), kW, kH), kW, kH);
+      EXPECT_GT(c.b, c.r + 40) << "seek into the blue window decodes blue";
+      found = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(PreviewSourceReaderGpuTest, WithoutADeviceItDecodesOnTheCpuAndStillUploads) {
+  // The fallback the engine relies on when the GPU path is refused: a CPU
+  // reader whose UploadFrame fills the same texture from system memory.
+  // (A device without VIDEO_SUPPORT is not a way to force this: Media
+  // Foundation still decodes onto it, measured on Intel Xe.)
+  clingfy::graphics::D3DDevice encode_device;
+  VideoDevice plain;
+  if (encode_device.Create() || !plain.Create(/*video_support=*/false)) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gpu_fallback");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip;
+  if (!SynthesizeHalves(&encode_device, source, &skip)) {
+    GTEST_SKIP() << skip;
+  }
+  auto reader = PreviewSourceReader::Create(fs::u8path(source).wstring());
+  ASSERT_NE(reader, nullptr);
+  EXPECT_FALSE(reader->gpu());
+  const auto centers = DecodeAllThroughUpload(reader.get(), &plain);
+  ASSERT_GE(centers.size(), 6u);
+  EXPECT_GT(centers.front().r, centers.front().b + 40);
+  EXPECT_GT(centers.back().b, centers.back().r + 40);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Opt-in throughput probe for the stitched preview's decode front-end, the
+// path every preview plays through once passthrough converges onto it.
+// CLINGFY_DECODE_BENCH_SOURCE=<file> decodes for up to 5 s of wall time on
+// each path (CPU system memory, GPU surface-to-surface) and prints the
+// sustained frame rate, upload included; skipped without it. It asserts
+// nothing: it is a measurement, recorded in docs, not a gate.
+double BenchDecodeFps(PreviewSourceReader* reader, ID3D11DeviceContext* ctx,
+                      ID3D11Texture2D* dst, int* frames_out) {
+  PreviewDecodedFrame frame;
+  int frames = 0;
+  const auto start = std::chrono::steady_clock::now();
+  while (std::chrono::steady_clock::now() - start < std::chrono::seconds(5)) {
+    if (!reader->ReadNextSample(&frame) ||
+        !reader->UploadFrame(frame, ctx, dst)) {
+      break;
+    }
+    ++frames;
+  }
+  ctx->Flush();
+  const double wall =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start)
+          .count();
+  *frames_out = frames;
+  return frames / wall;
+}
+
+TEST(PreviewSourceReaderBench, SustainedDecodeRate) {
+  char* source = nullptr;
+  size_t len = 0;
+  _dupenv_s(&source, &len, "CLINGFY_DECODE_BENCH_SOURCE");
+  const std::string path = source != nullptr ? source : "";
+  free(source);
+  if (path.empty()) {
+    GTEST_SKIP() << "set CLINGFY_DECODE_BENCH_SOURCE to measure";
+  }
+  ComPtr<ID3D11Device> device;
+  ComPtr<ID3D11DeviceContext> ctx;
+  ASSERT_TRUE(SUCCEEDED(::D3D11CreateDevice(
+      nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+      D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+      nullptr, 0, D3D11_SDK_VERSION, device.GetAddressOf(), nullptr,
+      ctx.GetAddressOf())));
+  ComPtr<ID3D11Multithread> mt;
+  if (SUCCEEDED(ctx.As(&mt))) {
+    mt->SetMultithreadProtected(TRUE);
+  }
+  for (const bool gpu : {false, true}) {
+    auto reader = PreviewSourceReader::Create(fs::path(path).wstring(),
+                                              gpu ? device.Get() : nullptr);
+    ASSERT_NE(reader, nullptr) << path;
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = reader->width();
+    td.Height = reader->height();
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    ComPtr<ID3D11Texture2D> dst;
+    ASSERT_TRUE(SUCCEEDED(device->CreateTexture2D(&td, nullptr, &dst)));
+    int frames = 0;
+    const double fps = BenchDecodeFps(reader.get(), ctx.Get(), dst.Get(),
+                                      &frames);
+    std::cout << "[bench] " << (reader->gpu() ? "gpu" : "cpu") << " "
+              << reader->width() << "x" << reader->height() << ": " << frames
+              << " frames, " << fps << " fps decoded + uploaded\n";
+  }
 }
 
 }  // namespace

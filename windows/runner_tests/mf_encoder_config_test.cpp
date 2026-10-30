@@ -44,11 +44,20 @@ TEST(AudioEncoderConfigTest, RejectsAZeroBitrate) {
   EXPECT_TRUE(c.Validate().has_value());
 }
 
-TEST(AudioEncoderConfigTest, RejectsABitrateAboveTheMftMatrix) {
-  // 320 kbps is legal on macOS and measured there; it is NOT known-good for
-  // the MF AAC encoder, so it must be refused here rather than at AddStream.
+TEST(AudioEncoderConfigTest, AcceptsTheTopOfTheExportLadder) {
+  // 256 / 320 kbps are the export's High / Best tiers. The export only asks
+  // for them after the encoder accepted them (ClampAudioBitrateToEncoder).
   AudioEncoderConfig c = ValidAudioConfig();
+  c.avg_bitrate_bps = 256'000;
+  EXPECT_FALSE(c.Validate().has_value());
   c.avg_bitrate_bps = 320'000;
+  EXPECT_FALSE(c.Validate().has_value());
+}
+
+TEST(AudioEncoderConfigTest, RejectsABitrateAboveTheLadder) {
+  // macOS measured 384 kbps refused at 48 kHz stereo; nothing asks for it.
+  AudioEncoderConfig c = ValidAudioConfig();
+  c.avg_bitrate_bps = 384'000;
   EXPECT_TRUE(c.Validate().has_value());
 }
 
