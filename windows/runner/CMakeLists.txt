@@ -104,6 +104,7 @@ add_library(runner_bridge STATIC
   "Bridge/Routers/camera_composition_args.cpp"
   "Bridge/Routers/clip_args.cpp"
   "Bridge/Routers/color_grade_args.cpp"
+  "Bridge/Routers/zoom_focus_args.cpp"
   "Bridge/Routers/preview_router.cpp"
   "Bridge/Routers/recording_router.cpp"
   "Bridge/Routers/storage_router.cpp"
@@ -161,6 +162,7 @@ add_library(runner_bridge STATIC
   "Capture/PreRecordingBar/pre_recording_bar_popover.cpp"
   "Capture/PreRecordingBar/pre_recording_bar_popover_model.cpp"
   "Capture/recording_clock.cpp"
+  "Capture/capture_frame_pacer.cpp"
   "Capture/recording_engine.cpp"
   "Capture/recording_project_reader.cpp"
   "Capture/recording_project_writer.cpp"
@@ -168,6 +170,7 @@ add_library(runner_bridge STATIC
   "Capture/video_frame_queue.cpp"
   "Capture/wgc_display_capture_backend.cpp"
   "Capture/windows_selection_state.cpp"
+  "Encoding/aac_bitrate_probe.cpp"
   "Encoding/audio_sidecar_writer.cpp"
   "Encoding/encoder_output_path.cpp"
   "Encoding/gif_encoder.cpp"
@@ -178,6 +181,9 @@ add_library(runner_bridge STATIC
   "Graphics/d3d_device.cpp"
   "Overlay/area_picker_geometry.cpp"
   "Overlay/area_picker_overlay.cpp"
+  "Overlay/area_reveal_overlay.cpp"
+  "Overlay/cursor_highlight_model.cpp"
+  "Overlay/cursor_highlight_overlay.cpp"
   "Overlay/display_identify_overlay.cpp"
   "Permissions/camera_readiness.cpp"
   "Permissions/permission_probe.cpp"
@@ -249,6 +255,12 @@ target_link_libraries(runner_bridge PUBLIC
 #   * avrt — AvSetMmThreadCharacteristics (Pro Audio MMCSS task)
 target_link_libraries(runner_bridge PUBLIC
   "avrt.lib"
+)
+
+# AAC tiers: CLSID_AACMFTEncoder, which aac_bitrate_probe.cpp asks whether it
+# takes 256 / 320 kbps before the export requests them.
+target_link_libraries(runner_bridge PUBLIC
+  "wmcodecdspuuid.lib"
 )
 
 # Phase 5: Direct2D 1.1 + WinRT C++/WinRT runtime are needed by

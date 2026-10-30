@@ -2670,10 +2670,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Applied on export — the inline preview doesn\'t show this effect yet.';
 
   @override
-  String get audioGainNoticeWindows =>
-      'Gain is fully audible in edited previews and exports — an uncut preview plays volume changes only.';
-
-  @override
   String get errBadMode =>
       'This recording mode isn\'t available on Windows yet.';
 

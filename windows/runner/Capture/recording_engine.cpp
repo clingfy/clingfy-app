@@ -38,6 +38,7 @@
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/Camera/camera_recorder.h"
+#include "Capture/capture_frame_pacer.h"
 #include "Capture/captured_video_frame.h"
 #include "Capture/Cursor/cursor_sampler.h"
 #include "Capture/Indicator/recording_indicator_controller.h"
@@ -51,6 +52,7 @@
 #include "Encoding/mf_sink_writer_encoder.h"
 #include "Graphics/d3d_device.h"
 #include "Permissions/camera_readiness.h"
+#include "Overlay/cursor_highlight_overlay.h"
 #include "Permissions/permission_probe.h"
 #include <string>
 
@@ -277,18 +279,22 @@ std::optional<RecordingError> RecordingEngine::Start(
       WindowsSelectionState::Instance().TargetMode();
   // Phase 7.1 lifts the gate for window modes. macOS distinguishes "app (all
   // windows)" from "single window"; WGC captures one HWND, so both map to
-  // single-HWND capture of the selected window for the MVP. Area / mouse modes
-  // remain unsupported until their slices.
+  // single-HWND capture of the selected window for the MVP. "Screen under
+  // mouse" (mouseAtStart) records whichever display the cursor is on when the
+  // recording starts, as macOS's CaptureTargetResolver does. followMouse
+  // (switching displays mid-recording) is not offered by the picker and stays
+  // unsupported.
   const bool is_window_mode = (mode == DisplayTargetMode::kAppWindow ||
                                mode == DisplayTargetMode::kSingleAppWindow);
   const bool is_area_mode = (mode == DisplayTargetMode::kAreaRecording);
+  const bool is_mouse_at_start = (mode == DisplayTargetMode::kMouseAtStart);
   if (mode != DisplayTargetMode::kExplicitId && !is_window_mode &&
-      !is_area_mode) {
+      !is_area_mode && !is_mouse_at_start) {
     return fail_start(
         clingfy::bridge::error::kBadMode,
         std::string("Target mode '") + TargetModeName(mode) +
-            "' is not supported on Windows yet. Window and area recording are "
-            "live; mouse-follow modes land in a later slice.");
+            "' is not supported on Windows yet. Display, window, area and "
+            "screen-under-mouse recording are live.");
   }
 
   // Resolve the target BEFORE any pipeline setup so a missing / stale target
@@ -359,6 +365,19 @@ std::optional<RecordingError> RecordingEngine::Start(
         static_cast<std::int32_t>(crop.x), static_cast<std::int32_t>(crop.y),
         static_cast<std::int32_t>(crop.width),
         static_cast<std::int32_t>(crop.height)};
+  } else if (is_mouse_at_start) {
+    // Resolved once, now: the recording stays on this display even if the
+    // cursor later moves to another one.
+    monitor = clingfy::bridge::devices::MonitorUnderCursor();
+    if (!monitor) {
+      return fail_start(
+          clingfy::bridge::error::kTargetError,
+          "Could not find the display under the mouse pointer. Pick a screen "
+          "in the display selector instead.");
+    }
+    current_target_type_ = "display";
+    current_window_id_.reset();
+    current_source_bounds_.reset();
   } else {
     const auto display_id = WindowsSelectionState::Instance().DisplayId();
     monitor = clingfy::bridge::devices::ResolveHMonitor(display_id);
@@ -759,15 +778,23 @@ std::optional<RecordingError> RecordingEngine::Start(
   // to the encoder.
   encoder_stopped_.store(false);
   video_write_logged_first_error_.store(false);
-  encoder_thread_ = std::thread([this, warn_sid] {
+  // The user's 30 / 60 fps setting. WGC delivers at the display's cadence
+  // (up to 144+ Hz on a busy screen), so frames arriving before the next slot
+  // are dropped here, before the encoder sees them.
+  const int paced_fps = request.frame_rate;
+  encoder_thread_ = std::thread([this, warn_sid, paced_fps] {
     auto* queue = frame_queue_.get();
     auto* encoder = encoder_.get();
     if (queue == nullptr || encoder == nullptr) {
       return;
     }
+    CaptureFramePacer pacer(paced_fps);
     while (auto frame = queue->Pop()) {
       if (encoder_stopped_.load()) {
         break;
+      }
+      if (!pacer.Keep(frame->timestamp_hns)) {
+        continue;
       }
       // Phase 10.1: an encoder write failure mid-record used to be
       // discarded — a dead encoder kept "recording" with no signal until
@@ -1311,6 +1338,11 @@ std::optional<RecordingError> RecordingEngine::Start(
   // lock here, and Hide() never joins that thread, so teardown can't deadlock.
   RecordingIndicatorController::Instance().Show(
       []() -> std::uint64_t { return RecordingEngine::Instance().ElapsedSeconds(); });
+  // The live cursor highlight follows the recording when linked to it (and
+  // the request can suppress it for this session). Non-blocking.
+  session_disable_cursor_highlight_ = request.disable_cursor_highlight;
+  clingfy::overlay::CursorHighlightOverlay::Instance().SetRecordingState(
+      /*actively_recording=*/true, session_disable_cursor_highlight_);
 
   // Lifecycle event: the recording is officially live. Phase 3E onward
   // the Flutter UI transitions to its `recording` phase on this event
@@ -1386,6 +1418,10 @@ std::optional<RecordingError> RecordingEngine::Pause(
   // turns amber, the primary control becomes resume). Non-blocking.
   RecordingIndicatorController::Instance().SetState(
       IndicatorVisualState::kPaused);
+  // macOS hides a linked highlight while paused (isActivelyRecording is
+  // state == .recording). The session's suppression flag is kept.
+  clingfy::overlay::CursorHighlightOverlay::Instance().SetRecordingState(
+      /*actively_recording=*/false, session_disable_cursor_highlight_);
 
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingPaused(
       std::string(session_.session_id()));
@@ -1450,6 +1486,8 @@ std::optional<RecordingError> RecordingEngine::Resume(
   // pause control). Non-blocking.
   RecordingIndicatorController::Instance().SetState(
       IndicatorVisualState::kRecording);
+  clingfy::overlay::CursorHighlightOverlay::Instance().SetRecordingState(
+      /*actively_recording=*/true, session_disable_cursor_highlight_);
 
   clingfy::bridge::WorkflowEventPublisher::Instance().EmitRecordingResumed(
       std::string(session_.session_id()));
@@ -2016,6 +2054,7 @@ void RecordingEngine::TeardownPipeline(bool finalize_encoder) {
   // joins it, so calling it under `mutex_` cannot deadlock against the
   // indicator's elapsed-seconds provider (which takes `mutex_`).
   RecordingIndicatorController::Instance().Hide();
+  clingfy::overlay::CursorHighlightOverlay::Instance().ClearRecordingState();
 
   // Strict ordering: stop the capture producers first, then signal the
   // drain / mixer consumer threads via queue Close, join them, then

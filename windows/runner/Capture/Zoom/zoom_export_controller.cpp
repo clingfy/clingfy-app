@@ -97,10 +97,18 @@ std::unique_ptr<ZoomExportController> ZoomExportController::CreateFromSegments(
     ResolvedSegment resolved;
     resolved.start_ms = seg.start_ms;
     resolved.end_ms = seg.end_ms;
-    // Focus is resolved from the cursor samples the same way for every
-    // segment, so a hand-authored one behaves exactly like a detected one.
-    resolved.focus = ResolveZoomFocus(data.samples, seg.start_ms, seg.end_ms,
-                                      data.width, data.height);
+    if (seg.fixed_target) {
+      // The user pinned this one in the editor: honour their point, not the
+      // cursor. This is what makes the dragged target survive into the file.
+      resolved.focus.mode = ZoomFocusMode::kFixedTarget;
+      resolved.focus.fixed_x = Clamp01(seg.target_x);
+      resolved.focus.fixed_y = Clamp01(seg.target_y);
+    } else {
+      // Otherwise focus is resolved from the cursor samples the same way for
+      // every segment, so a hand-authored one behaves like a detected one.
+      resolved.focus = ResolveZoomFocus(data.samples, seg.start_ms, seg.end_ms,
+                                        data.width, data.height);
+    }
     controller->segments_.push_back(resolved);
   }
   controller->data_ = std::move(data);

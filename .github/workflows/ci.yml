@@ -700,18 +700,13 @@ jobs:
           # GTEST_SKIP; the D3D/DComp headless tests fall back to WARP on a
           # runner with no discrete GPU.
           #
-          # ColorGradeGoldenTest is excluded pending a real parity fix. The
-          # golden fixture (windows/runner_tests/fixtures/color_grade_golden.json,
-          # dumped by macOS ColorGradeGoldenDumpTests) is committed, and running
-          # the class against it revealed a genuine Windows↔macOS divergence:
-          # MatrixPipelineMatchesMacosRenderer fails with worst |diff| 2.77 vs
-          # the 0.002 tolerance at the extreme grade (e=c=s=t=n=1); first
-          # failure 0.068 (2026-07-17). The D2D 5x4 matrix chain does not match
-          # Core Image at strong grades. To re-enable enforcement after fixing
-          # the math, delete the -E filter below.
-          echo "::notice::ColorGradeGoldenTest excluded — known Windows↔macOS color-grade divergence (worst |diff| 2.77 vs 0.002 tolerance); fix the D2D matrix chain, then remove the -E filter"
+          # ColorGradeGoldenTest runs again. It was excluded on 2026-07-17 when
+          # the macOS golden fixture showed a worst |diff| of 2.77; #275
+          # recalibrated the temperature/tint model and it has passed since
+          # (worst 0.0017 vs 0.002). ColorGradeEffectGpuTest pins the real D2D
+          # chain to that same matrix within one 8-bit step.
           ctest --test-dir build/windows-tests --output-on-failure -C Debug \
-            -E 'ColorGradeGoldenTest' 2>&1 | tee build/ci/ctest-windows.log
+            2>&1 | tee build/ci/ctest-windows.log
 
       - name: Upload Windows CI artifacts
         if: always()

@@ -14,6 +14,7 @@
 #include "Bridge/result_helpers.h"
 #include "Capture/recording_engine.h"
 #include "Services/recovery_sweep.h"
+#include "Overlay/area_reveal_overlay.h"
 
 namespace clingfy::bridge::routers::recording {
 
@@ -101,6 +102,9 @@ void HandleStartRecording(
   request.allow_low_storage_bypass =
       ReadBool(*args, "allowLowStorageBypass", false);
 
+  // macOS hides the area outline before a recording starts, so it is never
+  // captured.
+  clingfy::overlay::HideAreaReveal();
   auto error = clingfy::capture::RecordingEngine::Instance().Start(
       std::move(request));
   if (error) {

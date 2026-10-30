@@ -29,7 +29,7 @@ that points to this file. When a task ships, strike it here, and move its
   ```powershell
   cmake -S windows -B build/windows-tests -DBUILD_RUNNER_TESTS=ON
   cmake --build build/windows-tests --config Debug --target runner_tests
-  ctest --test-dir build/windows-tests --output-on-failure -C Debug -E ColorGradeGoldenTest
+  ctest --test-dir build/windows-tests --output-on-failure -C Debug
   ```
 
   To run one suite: `-R GifExportPolicy` (or `-R ExportGeometry`).
@@ -47,7 +47,11 @@ that points to this file. When a task ships, strike it here, and move its
 
 ---
 
-## W1. GIF export parity with macOS
+## ~~W1. GIF export parity with macOS~~ — DONE 2026-10-29
+
+Shipped on `feat/windows-gif-export-parity`. Kept below as the record of
+what was asked.
+
 
 *Written 2026-10-20 from origin/develop. Line numbers drift; search for the
 symbols.*
@@ -150,7 +154,11 @@ at about 14.3 fps, about 5% slow. `gif_export_policy.h` admits "~14.3 fps".
 
 ---
 
-## W2. GIF length cap: the Windows native backstop
+## ~~W2. GIF length cap: the Windows native backstop~~ — DONE 2026-10-29
+
+Shipped on `feat/windows-gif-length-backstop`. Kept below as the record of
+what was asked.
+
 
 *Written 2026-10-20, when the cap shipped on macOS.*
 
@@ -210,13 +218,426 @@ and reordering), with no silent trimming.
 
 ---
 
-## Not briefed yet
+## ~~W3. Export destination pre-flight~~ — DONE 2026-10-29
 
-`TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists
-every other Windows gap found on 2026-10-20, each with its source. Some
-examples: capture quality and frame rate, exclude-from-capture, cursor
-highlight, the side-by-side / stacked / background camera layouts, the export
-destination pre-flight, colour-grade parity, automatic updates and signing.
-When one is picked up, write its brief here as W3, W4, and so on, in the
+*Written 2026-10-29 from the TODOS entry and `docs/windows-port.md`
+("Open parity gap — export destination is not pre-flighted").*
+
+macOS checks the export folder before it renders anything
+(`ExportEngine.destinationProblem(folder:)`, 1.0.x). Windows rendered the whole
+export and failed only at the Sink Writer when the drive or share was gone,
+with an error naming neither. The save folder is a remembered plain path, so
+an ejected USB drive, a disconnected mapped drive or a reassigned drive letter
+all look valid in the dialog.
+
+**Do:**
+- `ExportDestinationProblem(folder)` in `export_passthrough.{h,cpp}`: the
+  drive or share is not connected (said separately from a missing folder),
+  the folder is gone, it is not a folder, or a real probe write fails.
+- Call it in `ExportPassthroughCopy` right after the folder is resolved, so it
+  covers the byte-copy path as well as the render.
+- New `PassthroughError::kDestinationUnavailable`; the router replies
+  `EXPORT_ERROR`, the reason as the message, and the folder as details, the
+  same as macOS.
+
+**Tests:** each reason in `ExportDestinationProblemTest`, a passthrough case
+for an unplugged drive that refuses before any progress, and the router
+reply shape.
+
+**Done when:** an export to a disconnected drive fails at once with "not
+connected", not after the render; tests pass.
+
+---
+
+## ~~W4. 'Screen under mouse' recording target~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The shared picker offers "Screen under mouse" (`DisplayTargetMode.mouseAtStart`)
+on every platform, but `RecordingEngine::Start` refused it on Windows with
+`BAD_MODE` ("mouse-follow modes land in a later slice"). macOS resolves it at
+start to the display under the cursor (`CaptureTargetResolver`).
+
+**Do:** resolve `kMouseAtStart` in `RecordingEngine::Start` to
+`MonitorFromPoint(GetCursorPos(), MONITOR_DEFAULTTONEAREST)` through a new
+`devices::MonitorUnderCursor()`, and record it as a display target. The
+recording stays on that display if the cursor later moves. `followMouse` is not
+in the picker and stays refused.
+
+**Tests:** `RecordingEngineTest.StartAcceptsScreenUnderMouseMode` (the real
+pipeline starts and stops), `MonitorUnderCursorTest`, and the follow-mouse
+refusal kept.
+
+---
+
+## ~~W5. Hover frame-peek on the timeline ruler~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.* (W5 is the number; the camera
+layouts, picked up later, take the next free one.)
+
+Hovering the ruler calls `previewPeekTo` (`video_timeline.dart`), which Windows
+registered as a no-op, so hovering never showed the frame. macOS seeks the
+inline view. Dart keeps its own playhead while peeking and seeks back on
+`previewPeekEnd`, so natively a peek is a seek.
+
+**Do:** `HandlePreviewPeekTo` drives `PreviewEngine::SeekTo`, and never
+errors: a malformed hover call is dropped and replied null, as macOS replies
+nil.
+
+**Tests:** stale session replies null; missing args, missing `ms` and a
+double `ms` never reply `BAD_ARGS`; the registration is no longer the shared
+no-op handler.
+
+---
+
+## ~~W6. Export audio tiers above 192 kbps~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+macOS offers 192 / 256 / 320 kbps AAC; Windows clamped every tier to 192 and
+hid the picker, because nobody had measured the Media Foundation AAC encoder.
+
+**Measured** (`aac_encoder_bitrate_test.cpp`, Windows 11): the in-box encoder
+MFT accepts 256 and 320 at 48 kHz stereo and produces them (256103 / 320091
+bps on 10 s of white noise). Microsoft documents only 96-192, so older builds
+may refuse.
+
+**Done:** `ResolveAudioBitrateBps` returns macOS's ladder; the pipeline asks
+`AacEncoderAcceptsBitrate` (cached MFT probe, ~5 ms) and
+`ClampAudioBitrateToEncoder` steps down to 192 where the encoder refuses;
+`AudioEncoderConfig::Validate` allows up to 320; the export dialog shows the
+picker on Windows.
+
+**Tests:** the probe, measured-equals-asked within 3%, every tier lands on an
+accepted rate, the pure clamp, the validate range, an export per tier whose
+output AAC track declares the expected bitrate, and the dialog on Windows.
+
+---
+
+## ~~W7. Camera panel layouts: side-by-side, stacked, background~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The shared UI offers seven camera layouts. Windows rendered only the four
+corner bubbles; side-by-side (left / right), stacked (top / bottom) and
+background-behind all fell back to a bottom-right bubble.
+
+**Done**, value for value with macOS `CameraLayoutResolver.resolve`:
+- `ComputeCameraBubbleRect` returns macOS's panel frames (y-UP converted to
+  Direct2D y-DOWN): a 32%-wide full-height column, a 28%-tall full-width band,
+  or the whole canvas, inset by max(16, 3% of the short side). Panels ignore
+  the size factor and the bubble floor; a dragged panel becomes a square
+  bubble at the drag point (macOS `manualFrame`).
+- `CameraBubblePainter` takes any w x h (cover / fit, centre and shadow were
+  square-only).
+- `CameraRenderPlan.behind_screen`: backgroundBehind draws over the canvas
+  background and UNDER the screen, in the export (`draw_camera` before the
+  content) and the preview (`ComposeFrame`'s new `after_background` hook).
+
+**Tests:** each frame and the margin floor, tiny canvases, the drag override,
+the plan flag, an export whose pixels show the camera in the letterbox and the
+screen on top for backgroundBehind and the camera on top for side-by-side, and
+the preview hook drawing under the screen.
+
+**Not checked by eye:** a real recording with a camera in each layout.
+
+---
+
+## ~~W8. Colour-grade parity with Core Image~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The TODO said the D2D colour chain diverged from Core Image by up to 2.77 at
+strong grades and that `ColorGradeGoldenTest` was excluded from CI until fixed.
+Measured on this machine, it already passes: #275 recalibrated the
+temperature/tint model, and the worst `|diff|` against the macOS goldens is
+0.0017 against a 0.002 tolerance. The CI exclusion was simply never lifted.
+
+The golden test only proves the CPU matrix, though. **Done:**
+- `ColorGradeEffectGpuTest`: the real `ColorGradeEffectChain` (sRGB → scRGB,
+  5x4 matrix in FP16, re-encode) over 216 8-bit colours and 25 grades
+  (each axis at ±0.5 and ±1, all-axes composites) matches the golden-pinned
+  matrix within one 8-bit step (worst 0.0032).
+- `ci.yml` no longer excludes `ColorGradeGoldenTest`.
+
+---
+
+## ~~W9. Capture frame-rate control (30 / 60 fps)~~ — DONE 2026-10-29
+
+*Written 2026-10-29 from the TODOS entry.*
+
+The Frame rate dropdown was hidden on Windows because `setCaptureFrameRate`
+is a no-op. Dart already sends the setting as `startRecording`'s `frameRate`,
+but Windows only used it as the encoder's rate attribute: WGC delivers a frame
+whenever the display composes one, so a busy 144 Hz screen recorded at up to
+144 fps whatever was picked.
+
+**Done:** `CaptureFramePacer` drops frames that arrive before the next slot,
+in the recording drain loop, on a grid anchored at the first kept frame
+(jitter-tolerant, snaps forward after a gap, quarter-interval slack). The
+dropdown shows on Windows. `setCaptureFrameRate` stays a no-op natively: the
+value travels with `startRecording`.
+
+`setRecordingQuality` (the other half of the TODO) has no caller in the Dart
+UI on either platform, so there is nothing to show.
+
+**Tests:** the pacer (60 Hz -> 30 keeps every other frame; 60-240 Hz sources
+capped at 30 / 60 within a frame over 10 s; slower sources untouched; +/-1.5 ms
+jitter neither drops nor adds; no burst after a 2 s gap), the engine suite, and
+the Windows dropdown visible in `windows_control_hides_test.dart`.
+
+**Not checked:** a recording of a busy 144 Hz screen measured with ffprobe.
+
+---
+
+## ~~W10. Fixed-target zoom (draggable focus point)~~ — DONE 2026-10-29
+
+*Unblocked 2026-10-29 by the owner's call: save the point and export it.*
+
+macOS honours the dragged point only in the live preview: `zoom.manual.json`
+never stores it, so it is lost on reopen and never exported. Windows does not
+copy that gap. The store format gains two optional keys, the ones Dart's
+`ZoomSegment.toMap` already sends on save:
+
+    "focusMode": "fixedTarget", "fixedTarget": {"dx": 0.3, "dy": 0.6}
+
+Both are optional, so old files load as before and a reader that ignores
+unknown keys (macOS today) still loads new ones.
+
+**Done:**
+- `zoom_manual_store` reads and writes both keys (the point only with
+  `fixedTarget`, clamped to [0,1]). Its scanner now skips nested unknown
+  values whole instead of stopping at the first comma inside them.
+- `MergeZoomSegments` carries the point into `ZoomSegment`; the export
+  (`ZoomExportController`) zooms on it instead of running the cursor
+  heuristic. Unpinned segments keep the heuristic.
+- One wire parser, `Bridge/Routers/zoom_focus_args`, for both
+  `saveManualZoomSegments` and `previewSetZoomSegments`.
+- The preview (`PreviewCompositor`) aims a pinned segment at its point. The
+  preview halo now marks the cursor where the zoom puts it, not the zoom
+  centre, which only differed once the centre could be somewhere else.
+- `previewGetCursorSamples` answers from the open session's cursor sidecar
+  (Dart's "cursor is still here" hint and its default focus for a new
+  segment); `previewGetSourceDimensions` answers the video size (the sidecar
+  header's before the first frame).
+- `previewGetZoomCapabilities` reports all three capabilities true, so Dart
+  offers the draggable target and the follow / fixed toggle. No Dart change:
+  the UI was capability-gated all along.
+
+**Tests:** store round-trip, Dart's exact shape, clamping and bad points,
+nested unknown values, mode-without-point; merge carries the point; the
+export zooms on a pin while the cursor moves and clamps a corner pin;
+`ZoomSegmentStateAt` reports it; sample selection (inclusive range, nearest
+with ties to the earlier); the parser; a router save → reopen round trip; the
+compositor aims at the pin; capability and no-session shapes.
+
+**Not checked:** dragging the target in the running app and exporting the
+result (owner, with the other visual checks). **macOS** still drops the point:
+queued on the macOS follow-up list.
+
+---
+
+## W11. Live cursor highlight while recording — BUILT 2026-10-30, control hidden until checked
+
+*Owner's call 2026-10-30: build the overlays now, check them on screen
+later, keep the controls hidden until then.*
+
+macOS draws a 60 pt, 25% systemYellow disc that follows the pointer, with an
+outline that pulses (scale 1 -> 1.35, fade, 0.35 s ease-out) on each left
+click. It is a plain on-screen panel, so it is recorded into the video.
+Linked to recording, it shows only while recording (not while paused);
+unlinked, whenever it is on. The request's `disableCursorHighlight` turns it
+off for the session.
+
+**Done:**
+- `Overlay/cursor_highlight_model`: the show rule, the pulse curve (the real
+  ease-out bezier), and the pixels (premultiplied, anti-aliased, 120 dip
+  window scaled per monitor DPI).
+- `Overlay/cursor_highlight_overlay`: a topmost, click-through, per-pixel
+  alpha layered window on its own thread. A 60 Hz timer follows
+  `GetCursorPos` and watches the primary button (honouring swapped
+  buttons); polling because the recording's `CursorClickHook` already owns
+  the process's low-level mouse hook. No display affinity: it is meant to be
+  recorded, as on macOS.
+- `setCursorHighlightEnabled` / `setCursorHighlightLinkedToRecording` are
+  real; the engine reports start / pause / resume / every end path.
+
+**Still hidden:** the Pointer control in `recording_options_sidebar.dart`.
+Dart pushes the saved setting, which defaults to off, and Windows has never
+shown the control, so nothing appears until it is unhidden.
+
+**Tests:** the show rule (linked, unlinked, suppression through pause), the
+pulse (endpoints, monotonic, ease-out not linear), the raster (60 dip disc
+at 25%, premultiplied, DPI scaling, the outline's position and fade, the
+largest pulse inside the window), and the overlay's window coming up and
+going with the recording state.
+
+**Owner check, then unhide:** the halo follows the pointer on every
+monitor, at mixed DPI, pulses on click, and shows in the recorded video.
+
+---
+
+## W12. Reveal Area overlay — BUILT 2026-10-30, button hidden until checked
+
+*Same owner's call as W11.*
+
+macOS `AreaPreviewOverlay` strokes a 2 pt white line around the selected area
+for one second: on Reveal Area and right after a pick. Clearing the area or
+starting a recording hides it.
+
+**Done:**
+- `Overlay/area_reveal_overlay`: the geometry (the area clamped to its
+  monitor as the recording clamps it, grown by the line's outer half and
+  kept on that monitor, line scaled per DPI), the pixels (opaque white band,
+  clear inside), and a click-through layered window on the platform thread
+  with a 1 s auto-hide that restarts on each reveal.
+- `revealAreaRecordingRegion` is real; a pick shows the outline; clearing
+  hides it; `startRecording` hides it before the engine starts, so it is
+  never recorded.
+
+**Checked:** with the test window made PerMonitorV2 like the app, a
+screenshot at 125% put the 3 px line exactly on the area's edge (1 px out,
+2 px in). This window is not capture-excluded, so the screenshot is a real
+oracle here.
+
+**Still hidden:** the Reveal Area button in `recording_source_section.dart`.
+
+**Tests:** geometry (centred line, DPI scaling, monitor edges, an area
+larger than or off its monitor), the raster, and the lifecycle (no selection
+is a no-op; shows on the primary monitor and hides itself after 1 s; hide is
+immediate).
+
+**Owner check, then unhide:** reveal on each monitor, at mixed DPI, after
+a pick and from the button.
+
+---
+
+## ~~W13. One audio clock for every preview~~ — DONE 2026-10-30 (owner's call)
+
+*The owner chose to converge: every preview, uncut ones included, plays
+through Clingfy's own audio renderer, so mic gain above 0 dB, voice cleanup
+and echo removal are heard before the first cut. Design:
+`docs/decisions/windows-editing-step4-7-preview-audio.md` D6.1.*
+
+### W13a. GPU decode for the stitched preview (#296) — DONE 2026-10-30
+
+Convergence moves every preview onto the stitched path's own decoder, which
+decoded on the CPU. Measured first (opt-in
+`PreviewSourceReaderBench.SustainedDecodeRate`, H.264 60 fps clips, i5-1135G7
+/ Iris Xe, decode + copy into the compositor texture):
+
+| Source | CPU path | GPU path |
+|---|---|---|
+| 1920x1080 | 85 fps | 584 fps |
+| 2560x1440 | 62 fps | 338 fps |
+| 3840x2160 | 24 fps | 152 fps |
+
+So converging on the CPU path would have halved the frame rate of every
+uncut 4K preview, which MediaPlayer plays smoothly today.
+
+**Done:** `PreviewSourceReader::Create(path, device)` decodes and converts to
+BGRA on the preview's own device (DXGI device manager + advanced video
+processing, ARGB32 out) after probing one frame; any failure falls back to
+the CPU reader. `ReadNextSample` + `UploadFrame` split decoding from the copy,
+so frames the pacer discards are never copied, and the shown one is a
+`CopySubresourceRegion` (padding cropped) instead of a system-memory upload.
+The preview device asks for `VIDEO_SUPPORT`, retrying without it. The log
+says which path a session decodes on.
+
+**Tests:** the GPU path decodes the same frames in order, honours a seek into
+a later window, and undoes its probe read; the CPU fallback still fills the
+texture through `UploadFrame`; the existing CPU tests are unchanged.
+
+---
+
+### W13b. Uncut previews on the stitched path — DONE 2026-10-30
+
+**Done:** after a successful `previewOpen` the router calls
+`PreviewEngine::StartConvergedPlayback`, which opens the GPU reader (proving
+the path and reading the source's duration), turns the session into a
+one-clip timeline through the same entry a clip edit uses, and plays it. The
+MediaPlayer is never started in converged mode. So an uncut preview has the
+edited preview's audio master clock and effect chain: gain above 0 dB and
+voice cleanup are heard before the first cut.
+
+- A passthrough clip list (Dart's whole-recording seed, or every cut undone)
+  keeps a converged session stitched as the one-clip timeline; re-sending the
+  timeline it already plays is a no-op instead of stopping playback.
+- The stitched path now reports `playerState` playing / paused / completed
+  itself (Dart's play button follows it), through the same debounce as the
+  MediaPlayer's handler, which ignores a converged session's player.
+- If the reader cannot open the recording, the session falls back to playing
+  the MediaPlayer as before, with a warning in the log.
+  `CLINGFY_PREVIEW_MEDIAPLAYER=1` turns convergence off entirely.
+- The Windows-only "gain is heard in edited previews and exports only"
+  notice under the audio sliders is gone, with its string.
+
+**Checked live:** a real 28 s recording (screen + mic + system sidecars)
+opened from the command line: "converged preview: one-clip timeline of
+28265ms", "stitched preview ON ... audio=on", "Play (stitched ...) pacer
+armed=true, audio=on", and pacer telemetry with the video within ~30 ms of
+the audio clock for the whole run; `previewReady` reached Dart.
+
+**Tests:** the reader's duration, the escape hatch, a converged start
+without a session; the audio notice's widget test now expects no notice.
+
+**Not checked:** listening to it (gain above 0 dB on an uncut recording,
+cleanup on/off) and scrubbing a long 4K recording. Owner.
+
+### W13c. Speaker-echo removal in the preview — DONE 2026-10-30
+
+macOS's preview plays the echo-cancelled mic; Windows ran the canceller only
+at export, so with speakers (not headphones) and echo removal on, the preview
+did not match the file.
+
+**Done:** `processVideo`'s `micEchoCancellationEnabled` (the export's own arg
+and default) now reaches `PreviewEngine::SetMicEchoCancellation`. The
+preview's background mic worker builds a processed mic with
+`ProducePreviewMic` (Capture/Export/mic_cleanup): echo removal first (needs
+the system sidecar), then voice cleanup, the export's order. The result is
+cached by exactly which effects it holds; when the canceller measures no
+bleed (headphones) the raw mic is kept and that answer is cached too, so it
+does not rerun. Any change of either effect reconciles: swap to the cache,
+back to the raw mic, or cancel and recompute. A pass that fails is logged
+and not retried until the next change.
+
+**Tests:** no bleed keeps the raw mic (nothing written), a 40 ms half-level
+speaker bleed is cut by more than half, cleanup alone and after echo removal
+both produce a quieter file, cancel leaves no files, echo removal without the
+system track is a no-op.
+
+**Not checked:** listening, with speakers, echo removal on and off. Owner.
+
+---
+
+## Not briefed yet — triage, 2026-10-29
+
+`TODOS.md` → *Feature backlog* → *Windows parity (Windows machine)* lists the
+remaining gaps, each with its source. After W1-W10, none of them is a
+self-contained task a session can finish and verify alone. Each one is
+waiting on something:
+
+**Needs the owner watching a real capture.** `WDA_EXCLUDEFROMCAPTURE` makes
+screenshots a false oracle, so these cannot be verified unsupervised:
+- Exclude Clingfy from capture (`setExcludeRecorderApp`). The obvious WDA
+  approach risks the hybrid-GPU blank-window failure, and there is an open
+  hide-vs-show product call for the four capture-excluded windows.
+- ~~Live cursor highlight while recording.~~ Built as W11, control hidden
+  until checked on screen.
+- ~~The Reveal Area overlay.~~ Built as W12, button hidden until checked on
+  screen.
+
+**Blocked on a design decision:**
+- ~~Preview mic gain / voice cleanup before the first cut.~~ Done as W13b
+  (one audio clock for every preview); preview speaker-echo removal as W13c.
+- ~~GPU-end-to-end preview decode (#296).~~ Done as W13a.
+
+**Parked by an earlier decision:** area selection remembered across restarts,
+window capture following resizes, crash salvage via fragmented MP4, the true
+squircle mask, automatic updates (WinSparkle), and code signing (not planned).
+
+**Ideas, not started:** the burned-in desktop bubble mode and mic-out-of-
+loopback cancellation.
+
+When one is unblocked, write its brief here as W10, W11, and so on, in the
 shape of W1.
-

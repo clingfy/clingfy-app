@@ -328,12 +328,12 @@ class _ExportFileDialogState extends State<ExportFileDialog> {
                       if (v != null) setState(() => _exportBitrate = v);
                     },
                   ),
-                  // macOS only, and inside the video branch so GIF (which has
-                  // no audio track) never shows it. On Windows every tier
-                  // resolves to 192 kbps today, so offering three would be
-                  // three labels for one outcome -- the same call Voice Cleanup
-                  // made about its own unbuilt tier.
-                  if (isMac()) ...[
+                  // Inside the video branch so GIF (which has no audio track)
+                  // never shows it. Both shipped platforms honour the tiers as
+                  // a ceiling: macOS measured its AAC encoder, and Windows asks
+                  // its encoder before using 256 / 320 and steps down where an
+                  // older one refuses (export_format.h).
+                  if (isMac() || isWindows()) ...[
                     SizedBox(height: spacing.md),
                     _SectionLabel(label: l10n.audioQuality),
                     SizedBox(height: spacing.sm),

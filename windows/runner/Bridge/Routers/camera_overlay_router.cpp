@@ -6,6 +6,7 @@
 #include "Capture/Camera/camera_overlay_geometry_store.h"
 #include "Capture/Camera/camera_overlay_style_store.h"
 #include "Capture/recording_engine.h"
+#include "Overlay/cursor_highlight_overlay.h"
 
 namespace clingfy::bridge::routers::camera_overlay {
 
@@ -53,6 +54,31 @@ bool ReadBool(const flutter::EncodableMap& map, const char* key, bool fallback) 
 void HandleNoopSetter(
     const flutter::MethodCall<flutter::EncodableValue>& /*call*/,
     std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  reply::Null(*result);
+}
+
+// The live cursor highlight (macOS setCursorHighlightEnabled /
+// setCursorHighlightLinkedToRecording). Dart pushes both at startup and on
+// every toggle; the overlay works out whether to show from them and the
+// recording state. macOS can refuse `enabled` for a missing Accessibility
+// grant; Windows needs no permission to follow the pointer, so it never does.
+void HandleSetCursorHighlightEnabled(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    clingfy::overlay::CursorHighlightOverlay::Instance().SetEnabled(
+        ReadBool(*a, "enabled", false));
+  }
+  reply::Null(*result);
+}
+
+void HandleSetCursorHighlightLinked(
+    const flutter::MethodCall<flutter::EncodableValue>& call,
+    std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+  if (const auto* a = ArgsMap(call)) {
+    clingfy::overlay::CursorHighlightOverlay::Instance().SetLinkedToRecording(
+        ReadBool(*a, "linked", true));
+  }
   reply::Null(*result);
 }
 
@@ -301,8 +327,9 @@ void RegisterHandlers(HandlerTable& table) {
 
   // Cursor highlight (overlay-managed, hence routed here next to the other
   // overlay setters rather than under recording).
-  table["setCursorHighlightEnabled"] = &HandleNoopSetter;
-  table["setCursorHighlightLinkedToRecording"] = &HandleNoopSetter;
+  table["setCursorHighlightEnabled"] = &HandleSetCursorHighlightEnabled;
+  table["setCursorHighlightLinkedToRecording"] =
+      &HandleSetCursorHighlightLinked;
 
   // Chroma key — live camera bubble style (same store).
   table["setChromaKeyEnabled"] = &HandleSetChromaEnabled;

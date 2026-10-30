@@ -9,10 +9,14 @@ smaller, and are capped at 60 seconds. You can pick the export audio quality and
 the speech model, and an Arabic subtitle file plays in the same order as the
 video.
 
+The Windows beta catches up with macOS on most of the editor and export: every
+camera layout, GIF sizes, the 30 / 60 fps setting, the zoom focus point, and a
+preview that plays the audio the export will produce.
+
 ### Export
 - **Colour-graded camera exports are checked again.** The export's colour check skipped every graded export with a camera bubble, because it could not tell the grade from a fault. It now applies the grade the way the export does, so a faulty camera export is caught again, and a correct one is never deleted.
 - **A colour grade touches the screen only, as in the preview.** The canvas padding and background were graded in every export without a camera, and a plain square camera bubble (no border, shadow or mirror) was graded along with the frame. Now only the screen is graded, in every export.
-- **Choose the export audio quality.** Standard, High or Best (192, 256 or 320 kbps AAC) in the export dialog. macOS had always exported 192 kbps and Windows 128, without saying so; both now default to 192. Windows exports every tier at 192 kbps for now. (#592)
+- **Choose the export audio quality.** Standard, High or Best (192, 256 or 320 kbps AAC) in the export dialog. macOS had always exported 192 kbps and Windows 128, without saying so; both now default to 192. On Windows, a system whose AAC encoder refuses 256 or 320 kbps exports at 192 instead of failing. (#592, #641)
 - **GIFs render in one pass.** On macOS there is no temp video any more: a GIF is about 30% faster to export and about a third the size, because the video codec's noise no longer reaches the GIF. (#615)
 - **GIFs are capped at 60 seconds** of exported length (after cuts). The export dialog says so and disables Export, rather than producing a huge, slow GIF. (#614)
 
@@ -38,6 +42,16 @@ video.
 - **Pausing on macOS 13–14 no longer leaves a take that cannot be stopped.** (#609)
 - **A screen macOS will not supply fails with a reason** instead of "The operation could not be completed". (#611)
 - The wait for a recording segment to finish writing is bounded. (#584)
+
+### Windows (beta)
+- **The preview plays the audio the export will produce.** Gain above 0 dB and voice cleanup were heard only after the first cut, and echo removal only in the exported file. Every preview now plays through one audio clock with the same processing as the export, decoded on the graphics card (a 4K preview decodes about six times faster). (#649, #650, #651)
+- **Every camera layout renders.** Side by side, stacked and camera behind the screen fell back to a bottom-right bubble; they now match macOS in the preview and the export. (#642)
+- **GIF size presets.** Small, Medium and Large cap the GIF at 480, 720 or 1080 px on the long edge, and the frame delays no longer drift (a 10 s GIF was about 5% slow). A GIF over 60 seconds is refused before any work starts. (#635, #636)
+- **The 30 / 60 fps setting is honoured.** A busy high-refresh screen recorded at up to its refresh rate whatever you picked. The Frame rate setting now shows on Windows. (#644)
+- **The zoom focus point is saved and exported.** Drag the point a zoom segment aims at; it survives a reopen and the export zooms on it. (#646)
+- **Record the screen under the mouse.** The picker offered it, and Windows refused it. (#639)
+- **Hovering the timeline ruler shows the frame**, as on macOS. (#640)
+- **An export to a missing drive fails at once, and says why.** An unplugged USB drive or a disconnected network share used to fail at the end of the render, with an error naming neither. (#637)
 
 ### Fixed
 - **An export with cuts is no longer deleted by its own colour check.** With no subtitles, the check compared the recording's midpoint with the same moment in the export. After a cut that moment was elsewhere in the file, or past its end, and a correct export was rejected and removed.

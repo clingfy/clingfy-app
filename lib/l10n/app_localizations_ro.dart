@@ -2701,10 +2701,6 @@ class AppLocalizationsRo extends AppLocalizations {
       'Se aplică la export — previzualizarea din aplicație nu arată încă acest efect.';
 
   @override
-  String get audioGainNoticeWindows =>
-      'Amplificarea se aude complet în previzualizările editate și la export — o previzualizare netăiată redă doar modificările volumului.';
-
-  @override
   String get errBadMode =>
       'Acest mod de înregistrare nu este încă disponibil pe Windows.';
 

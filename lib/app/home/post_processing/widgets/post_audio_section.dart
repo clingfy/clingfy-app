@@ -8,7 +8,6 @@ import 'package:clingfy/ui/platform/widgets/app_slider.dart';
 import 'package:clingfy/ui/platform/widgets/app_slider_row.dart';
 import 'package:clingfy/ui/platform/widgets/app_toggle_row.dart';
 import 'package:flutter/material.dart';
-import 'package:clingfy/ui/platform/platform_kind.dart';
 
 class PostAudioSection extends StatelessWidget {
   const PostAudioSection({
@@ -140,19 +139,6 @@ class PostAudioSection extends StatelessWidget {
             if (!gainEnabled) ...[
               const SizedBox(height: AppSidebarTokens.compactGap),
               AppInlineNotice(message: l10n.noMicAudioFound),
-            ],
-            // Editing 4-7d (Windows): the mix is LIVE in the preview now —
-            // gain+volume on edited (cut/reordered) sessions, volume-only on
-            // an uncut one (MediaPlayer.Volume can't amplify; gain there
-            // applies on export). The notice narrates that remaining gap.
-            // Suppressed when gain is inert — it must not promise audible
-            // gain a mic-less separated recording can't deliver.
-            if (hasAudio && gainEnabled && isWindows()) ...[
-              const SizedBox(height: AppSidebarTokens.compactGap),
-              AppInlineNotice(
-                key: const ValueKey('post_audio_export_notice'),
-                message: l10n.audioGainNoticeWindows,
-              ),
             ],
           ],
         ),

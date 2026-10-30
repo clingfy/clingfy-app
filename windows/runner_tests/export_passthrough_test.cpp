@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -64,7 +65,9 @@ TEST(ShouldRetryExportAfterDeviceRemovedTest, OtherOutcomesNeverRetry) {
   for (const auto error :
        {PassthroughError::kNone, PassthroughError::kInputMissing,
         PassthroughError::kNoDestination, PassthroughError::kCopyFailed,
-        PassthroughError::kDiskFull, PassthroughError::kCancelled}) {
+        PassthroughError::kDiskFull, PassthroughError::kCancelled,
+        PassthroughError::kGifTooLong,
+        PassthroughError::kDestinationUnavailable}) {
     // device_removed=true is inconsistent with these outcomes, but the gate
     // must be strict on kRenderFailed regardless.
     EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(
@@ -221,6 +224,129 @@ fs::path StageProject(const std::string& session_id,
   return project;
 }
 }  // namespace
+
+// ---- W3: export destination pre-flight --------------------------------------
+//
+// Mirrors macOS ExportDestinationPreflightTests.swift. Pure filesystem; the
+// probe write is injectable so "cannot be written" is testable without
+// staging an ACL.
+
+// A drive letter with no volume behind it on this machine, or '\0' if every
+// letter is taken.
+wchar_t UnusedDriveLetter() {
+  const DWORD used = ::GetLogicalDrives();
+  for (wchar_t letter = L'Z'; letter >= L'D'; --letter) {
+    if ((used & (1u << (letter - L'A'))) == 0) {
+      return letter;
+    }
+  }
+  return L'\0';
+}
+
+TEST(ExportDestinationProblemTest, AWritableFolderPassesAndLeavesNoProbeBehind) {
+  const auto dir = fs::temp_directory_path() / "clingfy_dest_ok";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir);
+  EXPECT_EQ(ExportDestinationProblem(dir), std::nullopt);
+  EXPECT_TRUE(fs::is_empty(dir)) << "the probe file must not be left behind";
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportDestinationProblemTest, AMissingDriveSaysNotConnected) {
+  const wchar_t letter = UnusedDriveLetter();
+  if (letter == L'\0') {
+    GTEST_SKIP() << "every drive letter D-Z is in use";
+  }
+  const fs::path folder =
+      std::wstring(1, letter) + L":\\Exports\\Clingfy";
+  const auto problem = ExportDestinationProblem(folder);
+  ASSERT_TRUE(problem.has_value());
+  EXPECT_NE(problem->find("not connected"), std::string::npos) << *problem;
+  EXPECT_EQ(problem->find("no longer exists"), std::string::npos) << *problem;
+}
+
+TEST(ExportDestinationProblemTest, AMissingShareSaysNotConnected) {
+  const fs::path folder =
+      L"\\\\localhost\\clingfy-no-such-share-7f3a\\Exports";
+  const auto problem = ExportDestinationProblem(folder);
+  ASSERT_TRUE(problem.has_value());
+  EXPECT_NE(problem->find("not connected"), std::string::npos) << *problem;
+}
+
+TEST(ExportDestinationProblemTest, AMissingFolderOnAPresentDriveSaysItIsGone) {
+  // The drive is there; the folder is not (and, here, cannot be created,
+  // because a file sits where its parent should be).
+  const auto dir = fs::temp_directory_path() / "clingfy_dest_gone";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir);
+  std::ofstream(dir / "blocker") << "x";
+  const auto problem = ExportDestinationProblem(dir / "blocker" / "Exports");
+  ASSERT_TRUE(problem.has_value());
+  EXPECT_NE(problem->find("no longer exists"), std::string::npos) << *problem;
+  EXPECT_EQ(problem->find("not connected"), std::string::npos) << *problem;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportDestinationProblemTest, AFileIsNotAFolder) {
+  const auto dir = fs::temp_directory_path() / "clingfy_dest_file";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir);
+  std::ofstream(dir / "not-a-folder") << "x";
+  const auto problem = ExportDestinationProblem(dir / "not-a-folder");
+  ASSERT_TRUE(problem.has_value());
+  EXPECT_NE(problem->find("not a folder"), std::string::npos) << *problem;
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportDestinationProblemTest, AFolderThatRefusesTheProbeCannotBeWritten) {
+  const auto dir = fs::temp_directory_path() / "clingfy_dest_ro";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  fs::create_directories(dir);
+  fs::path probed;
+  const auto problem = ExportDestinationProblem(
+      dir, [&probed](const fs::path& folder) {
+        probed = folder;
+        return false;
+      });
+  ASSERT_TRUE(problem.has_value());
+  EXPECT_NE(problem->find("cannot be written"), std::string::npos) << *problem;
+  EXPECT_EQ(probed, dir) << "the probe runs against the folder itself";
+  fs::remove_all(dir, ec);
+}
+
+TEST(ExportPassthroughCopyTest, UnreachableDestinationFailsBeforeAnyWork) {
+  const wchar_t letter = UnusedDriveLetter();
+  if (letter == L'\0') {
+    GTEST_SKIP() << "every drive letter D-Z is in use";
+  }
+  // A styled export (padding forces composition): without the pre-flight it
+  // would decode and render the whole recording before failing.
+  const auto project = StageProject("export-test-dest", "NOT_A_REAL_VIDEO");
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override =
+      fs::path(std::wstring(1, letter) + L":\\Exports").u8string();
+  input.filename = "Unplugged";
+  input.format = "mp4";
+  input.padding = 10.0;
+  bool progressed = false;
+  const auto outcome =
+      ExportPassthroughCopy(input, [&](double) { progressed = true; });
+  EXPECT_EQ(outcome.error, PassthroughError::kDestinationUnavailable)
+      << outcome.message;
+  EXPECT_NE(outcome.message.find("not connected"), std::string::npos)
+      << outcome.message;
+  EXPECT_EQ(outcome.destination_folder, input.directory_override);
+  EXPECT_TRUE(outcome.output_path.empty());
+  EXPECT_FALSE(progressed) << "refused before any render progress";
+
+  std::error_code rm_ec;
+  fs::remove_all(project.parent_path(), rm_ec);
+}
 
 TEST(ExportPassthroughCopyTest, CopiesScreenMovToDestination) {
   const auto project = StageProject("export-test-1", "MOCK_VIDEO_BYTES");

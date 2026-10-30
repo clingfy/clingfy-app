@@ -1,5 +1,7 @@
 #include "Capture/Export/mic_cleanup.h"
 
+#include <filesystem>
+
 // mfidl.h must precede mfreadwrite.h (see reorder_audio_pump.h).
 #include <mfidl.h>
 #include <mfapi.h>
@@ -337,6 +339,54 @@ bool ProduceEchoCancelledMic(const std::wstring& mic_path,
   }
 
   return !writer.Finalize().has_value();
+}
+
+PreviewMicOutcome ProducePreviewMic(const std::wstring& mic_path,
+                                    const std::wstring& system_path, bool echo,
+                                    float wet_mix,
+                                    const std::string& output_path,
+                                    const std::function<bool()>& is_cancelled) {
+  namespace fs = std::filesystem;
+  const fs::path out = fs::u8path(output_path);
+  fs::path echo_out = out;
+  echo_out.replace_extension(".echo.mp4");
+  const auto cancelled = [&is_cancelled] {
+    return is_cancelled && is_cancelled();
+  };
+
+  std::wstring source = mic_path;
+  bool echo_applied = false;
+  if (echo && !system_path.empty()) {
+    EchoCancelReport report;
+    echo_applied = ProduceEchoCancelledMic(mic_path, system_path,
+                                           echo_out.u8string(), is_cancelled,
+                                           &report);
+    if (echo_applied) {
+      source = echo_out.wstring();
+    }
+  }
+
+  PreviewMicOutcome outcome = PreviewMicOutcome::kFailed;
+  if (cancelled()) {
+    outcome = PreviewMicOutcome::kFailed;
+  } else if (wet_mix >= 0.0f) {
+    outcome = ProduceCleanedMic(source, output_path, is_cancelled, wet_mix)
+                  ? PreviewMicOutcome::kProduced
+                  : PreviewMicOutcome::kFailed;
+  } else if (echo_applied) {
+    std::error_code ec;
+    fs::remove(out, ec);
+    fs::rename(echo_out, out, ec);
+    outcome = ec ? PreviewMicOutcome::kFailed : PreviewMicOutcome::kProduced;
+  } else {
+    outcome = PreviewMicOutcome::kNothingToDo;
+  }
+  std::error_code ec;
+  fs::remove(echo_out, ec);
+  if (outcome != PreviewMicOutcome::kProduced) {
+    fs::remove(out, ec);
+  }
+  return outcome;
 }
 
 }  // namespace clingfy::capture::export_

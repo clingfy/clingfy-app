@@ -196,17 +196,19 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
                              static_cast<float>(bubble.x + bubble.width),
                              static_cast<float>(bubble.y + bubble.height));
 
-  // Cover (fill) / contain (fit): scale the camera into the square bubble and
-  // center it; the mask clips the overflow for cover.
-  const double side = bubble.width;  // square bubble
+  // Cover (fill) / contain (fit): scale the camera into the bubble and center
+  // it; the mask clips the overflow for cover. The bubble is square for the
+  // corner layouts and a w x h panel for side-by-side / stacked / background.
+  const double bw = bubble.width;
+  const double bh = bubble.height;
   const double cw = static_cast<double>(cam_w);
   const double ch = static_cast<double>(cam_h);
-  const double scale = (content_mode == "fit") ? std::min(side / cw, side / ch)
-                                               : std::max(side / cw, side / ch);
+  const double scale = (content_mode == "fit") ? std::min(bw / cw, bh / ch)
+                                               : std::max(bw / cw, bh / ch);
   const double draw_w = cw * scale;
   const double draw_h = ch * scale;
-  const double bubble_cx = bubble.x + side / 2.0;
-  const double bubble_cy = bubble.y + side / 2.0;
+  const double bubble_cx = bubble.x + bw / 2.0;
+  const double bubble_cy = bubble.y + bh / 2.0;
   bubble_cx_ = static_cast<float>(bubble_cx);
   bubble_cy_ = static_cast<float>(bubble_cy);
   dest_rect_ = D2D1::RectF(static_cast<float>(bubble_cx - draw_w / 2.0),
@@ -249,7 +251,8 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
   // Shadow. Bake a blurred silhouette of the bubble shape ONCE. Soft-fail leaves
   // no shadow.
   shadow_bitmap_.Reset();
-  PrepareShadow(factory, ctx, shape, corner_radius, side, bubble.x, bubble.y);
+  PrepareShadow(factory, ctx, shape, corner_radius, bw, bh, bubble.x,
+                bubble.y);
 
   // Chroma key (Phase 9.7). Build the effect once; the enhanced draw path sets
   // its input per frame. Soft-fail (no effect) → the camera draws unkeyed.
@@ -288,8 +291,9 @@ bool CameraBubblePainter::Prepare(ID2D1Factory1* factory,
 void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
                                         ID2D1DeviceContext* ctx,
                                         const std::string& shape,
-                                        double corner_radius, double side,
-                                        double bubble_x, double bubble_y) {
+                                        double corner_radius, double width,
+                                        double height, double bubble_x,
+                                        double bubble_y) {
   // Blur radius and offsets are export-canvas lengths, same as border_width.
   const CameraShadowStyle sh =
       ResolveCameraShadowStyle(style_.shadow_preset, style_.effect_scale);
@@ -298,8 +302,9 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
   }
   const double stddev = sh.blur_radius * 0.5;
   const double margin = std::ceil(stddev * 3.0) + border_width_px_ / 2.0 + 2.0;
-  const UINT dim = static_cast<UINT>(std::ceil(side + 2.0 * margin));
-  if (dim == 0) {
+  const UINT dim_w = static_cast<UINT>(std::ceil(width + 2.0 * margin));
+  const UINT dim_h = static_cast<UINT>(std::ceil(height + 2.0 * margin));
+  if (dim_w == 0 || dim_h == 0) {
     return;
   }
 
@@ -309,14 +314,14 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
                         D2D1_ALPHA_MODE_PREMULTIPLIED));
 
   ComPtr<ID2D1Bitmap1> silhouette;
-  if (FAILED(ctx->CreateBitmap(D2D1::SizeU(dim, dim), nullptr, 0, tprops,
+  if (FAILED(ctx->CreateBitmap(D2D1::SizeU(dim_w, dim_h), nullptr, 0, tprops,
                                silhouette.GetAddressOf()))) {
     return;
   }
   const D2D1_RECT_F local =
       D2D1::RectF(static_cast<float>(margin), static_cast<float>(margin),
-                  static_cast<float>(margin + side),
-                  static_cast<float>(margin + side));
+                  static_cast<float>(margin + width),
+                  static_cast<float>(margin + height));
   ComPtr<ID2D1Geometry> local_geo =
       CreateCameraShapeGeometry(factory, shape, corner_radius, local);
   ComPtr<ID2D1SolidColorBrush> black;
@@ -351,7 +356,7 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
   blur->GetOutput(blur_out.GetAddressOf());
 
   ComPtr<ID2D1Bitmap1> baked;
-  if (FAILED(ctx->CreateBitmap(D2D1::SizeU(dim, dim), nullptr, 0, tprops,
+  if (FAILED(ctx->CreateBitmap(D2D1::SizeU(dim_w, dim_h), nullptr, 0, tprops,
                                baked.GetAddressOf()))) {
     return;
   }
@@ -370,8 +375,8 @@ void CameraBubblePainter::PrepareShadow(ID2D1Factory1* factory,
   shadow_bitmap_ = baked;
   const float ox = static_cast<float>(bubble_x - margin + sh.offset_x);
   const float oy = static_cast<float>(bubble_y - margin + sh.offset_y);
-  shadow_dest_ = D2D1::RectF(ox, oy, ox + static_cast<float>(dim),
-                             oy + static_cast<float>(dim));
+  shadow_dest_ = D2D1::RectF(ox, oy, ox + static_cast<float>(dim_w),
+                             oy + static_cast<float>(dim_h));
 }
 
 void CameraBubblePainter::Draw(ID2D1DeviceContext* ctx, ID2D1Bitmap1* source) {

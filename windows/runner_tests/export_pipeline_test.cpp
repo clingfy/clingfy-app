@@ -26,15 +26,22 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "Audio/audio_mixer.h"
 #include "Capture/Camera/camera_export_layout.h"
+#include "Capture/Export/export_format.h"
+#include "Capture/Export/export_geometry.h"
+#include "Capture/Export/export_passthrough.h"
 #include "Capture/captured_video_frame.h"
+#include "Encoding/aac_bitrate_probe.h"
 #include "Encoding/mf_encoder_config.h"
 #include "Encoding/mf_sink_writer_encoder.h"
 #include "Graphics/d3d_device.h"
@@ -169,6 +176,45 @@ bool SynthesizeSource(clingfy::graphics::D3DDevice* device,
     }
   }
 
+  if (auto err = encoder.Finalize()) {
+    *skip_reason = "source finalize failed: " + err->message;
+    return false;
+  }
+  return true;
+}
+
+// Write a sparse source that LASTS `seconds`: three frames at 0, half way and
+// the end. Cheap to encode however long it is, which is what the GIF length
+// cap tests need (a real 61 s source at 30 fps would be 1830 frames).
+bool SynthesizeLongSource(clingfy::graphics::D3DDevice* device,
+                          const std::string& path, int seconds,
+                          std::string* skip_reason) {
+  clingfy::encoding::EncoderConfig cfg;
+  cfg.output_path = path;
+  cfg.width = kSourceWidth;
+  cfg.height = kSourceHeight;
+  cfg.fps = kFps;
+  clingfy::encoding::MfSinkWriterEncoder encoder;
+  if (auto err = encoder.Open(cfg, *device, std::nullopt)) {
+    *skip_reason = "source encoder open failed: " + err->message;
+    return false;
+  }
+  const std::int64_t end_hns = static_cast<std::int64_t>(seconds) * 10'000'000;
+  for (const std::int64_t ts : {std::int64_t{0}, end_hns / 2, end_hns}) {
+    clingfy::capture::CapturedVideoFrame frame;
+    frame.texture = MakeSolidTexture(device->device(), 0xFF3366CCu);
+    if (frame.texture == nullptr) {
+      *skip_reason = "could not allocate a source frame texture";
+      return false;
+    }
+    frame.width = kSourceWidth;
+    frame.height = kSourceHeight;
+    frame.timestamp_hns = ts;
+    if (auto err = encoder.WriteVideoFrame(frame)) {
+      *skip_reason = "source WriteVideoFrame failed: " + err->message;
+      return false;
+    }
+  }
   if (auto err = encoder.Finalize()) {
     *skip_reason = "source finalize failed: " + err->message;
     return false;
@@ -967,6 +1013,9 @@ struct GifProbeResult {
   UINT width = 0;
   UINT height = 0;
   UINT frame_count = 0;
+  // Per-frame Graphic Control Extension delay (centiseconds), one entry per
+  // frame; a frame whose delay could not be read records 0.
+  std::vector<UINT> delays_cs;
 };
 
 GifProbeResult ProbeGif(const std::wstring& path) {
@@ -998,6 +1047,22 @@ GifProbeResult ProbeGif(const std::wstring& path) {
               out.height = h;
               out.ok = true;
             }
+          }
+          for (UINT i = 0; i < count; ++i) {
+            UINT delay = 0;
+            ComPtr<IWICBitmapFrameDecode> f;
+            ComPtr<IWICMetadataQueryReader> meta;
+            if (SUCCEEDED(decoder->GetFrame(i, f.GetAddressOf())) &&
+                SUCCEEDED(f->GetMetadataQueryReader(meta.GetAddressOf()))) {
+              PROPVARIANT pv;
+              ::PropVariantInit(&pv);
+              if (SUCCEEDED(meta->GetMetadataByName(L"/grctlext/Delay", &pv)) &&
+                  pv.vt == VT_UI2) {
+                delay = pv.uiVal;
+              }
+              ::PropVariantClear(&pv);
+            }
+            out.delays_cs.push_back(delay);
           }
         }
       }
@@ -1080,6 +1145,63 @@ TEST(ExportPipelineTest, CarriesSourceAudioThroughTheReEncode) {
   ASSERT_TRUE(probe.ok);
   EXPECT_TRUE(probe.has_audio)
       << "audio track was dropped during the re-encode";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// The AAC bitrate the output file's audio track declares, in bits per second,
+// or 0 when there is none.
+std::uint32_t OutputAacBitrate(const std::wstring& path) {
+  ComPtr<IMFSourceReader> reader;
+  if (FAILED(::MFCreateSourceReaderFromURL(path.c_str(), nullptr,
+                                           reader.GetAddressOf()))) {
+    return 0;
+  }
+  ComPtr<IMFMediaType> type;
+  if (FAILED(reader->GetNativeMediaType(
+          static_cast<DWORD>(MF_SOURCE_READER_FIRST_AUDIO_STREAM), 0,
+          type.GetAddressOf()))) {
+    return 0;
+  }
+  UINT32 bytes_per_second = 0;
+  type->GetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, &bytes_per_second);
+  return bytes_per_second * 8;
+}
+
+// The audio-quality tier reaches the encoder: standard 192 kbps, and High /
+// Best 256 / 320 wherever this machine's AAC encoder takes them (stepping
+// down to what it does take otherwise).
+TEST(ExportPipelineTest, AudioQualityTierSetsTheAacBitrate) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("audio_tiers");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/true, &skip_reason,
+                        /*audio_amplitude=*/4000)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  for (const char* quality : {"standard", "high", "best"}) {
+    const auto dest = (dir / (std::string(quality) + ".mp4")).u8string();
+    RenderRequest request;
+    request.source_video_path = fs::u8path(source).wstring();
+    request.destination_path = dest;
+    request.layout = "youtube169";
+    request.resolution = "auto";
+    request.fit = "fit";
+    request.fps_hint = kFps;
+    request.audio_quality = quality;
+    const RenderResult result = RenderComposedExport(request);
+    ASSERT_TRUE(result.ok) << quality << ": " << result.message;
+    const std::uint32_t expected = ClampAudioBitrateToEncoder(
+        ResolveAudioBitrateBps(quality),
+        clingfy::encoding::AacEncoderAcceptsBitrate);
+    EXPECT_EQ(OutputAacBitrate(fs::u8path(dest).wstring()), expected)
+        << "quality=" << quality;
+  }
 
   std::error_code ec;
   fs::remove_all(dir, ec);
@@ -1456,6 +1578,334 @@ TEST(ExportPipelineTest, GifDestinationProducesReadableAnimatedGif) {
 
   std::error_code ec;
   fs::remove_all(dir, ec);
+}
+
+// W1 (docs/windows-machine-work.md): each GIF size preset caps the encoded
+// long edge — Small 480, Medium 720, Large 1080, unknown/empty 1080 — while
+// the composite stays at the full canvas. The decoded GIF must be exactly
+// what `ResolveExportPixelSize` reported, or burned-in captions laid out for
+// that answer land at the wrong scale. Also pins the drift-free delays: every
+// frame but the last is stamped 6 or 7 cs (per-gap rounding stamped all 7s).
+TEST(ExportPipelineTest, GifSizePresetsCapTheEncodedLongEdge) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_sizes");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  struct Case {
+    const char* gif_size;
+    UINT width;
+    UINT height;
+  };
+  // youtube169 at p1080 composites a 1920x1080 canvas from the 64x48 source.
+  const Case cases[] = {{"small", 480, 270},
+                        {"medium", 720, 406},
+                        {"large", 1080, 608},
+                        {"", 1080, 608},
+                        {"nonsense", 1080, 608}};
+  int index = 0;
+  for (const Case& c : cases) {
+    const auto dest =
+        (dir / ("out_" + std::to_string(index++) + ".gif")).u8string();
+    RenderRequest request;
+    request.source_video_path = fs::u8path(source).wstring();
+    request.destination_path = dest;
+    request.gif_size = c.gif_size;
+    request.layout = "youtube169";
+    request.resolution = "p1080";
+    request.fit = "fit";
+    request.fps_hint = kFps;
+
+    const RenderResult result = RenderComposedExport(request);
+    ASSERT_TRUE(result.ok) << c.gif_size << ": " << result.message;
+    EXPECT_EQ(result.output_width, c.width) << "gifSize=" << c.gif_size;
+    EXPECT_EQ(result.output_height, c.height) << "gifSize=" << c.gif_size;
+
+    const PixelSize reported = ResolveExportPixelSize(
+        SizeF{static_cast<double>(kSourceWidth),
+              static_cast<double>(kSourceHeight)},
+        "youtube169", "p1080", "gif", c.gif_size);
+    EXPECT_EQ(reported.width, c.width) << "gifSize=" << c.gif_size;
+    EXPECT_EQ(reported.height, c.height) << "gifSize=" << c.gif_size;
+
+    const GifProbeResult probe = ProbeGif(fs::u8path(dest).wstring());
+    ASSERT_TRUE(probe.ok) << "gifSize=" << c.gif_size << " is not a readable GIF";
+    EXPECT_EQ(probe.width, c.width) << "gifSize=" << c.gif_size;
+    EXPECT_EQ(probe.height, c.height) << "gifSize=" << c.gif_size;
+    ASSERT_GE(probe.delays_cs.size(), 3u);
+    // Every frame but the last opens a ~1/15 s gap. Their stamped total must
+    // be the true elapsed time to the nearest centisecond: 3 gaps = 20 cs,
+    // where per-gap rounding stamped 21 (and 2 gaps 14 instead of 13).
+    UINT stamped = 0;
+    for (std::size_t i = 0; i + 1 < probe.delays_cs.size(); ++i) {
+      EXPECT_TRUE(probe.delays_cs[i] == 6 || probe.delays_cs[i] == 7)
+          << "gifSize=" << c.gif_size << " frame " << i << " delay "
+          << probe.delays_cs[i];
+      stamped += probe.delays_cs[i];
+    }
+    const double gaps = static_cast<double>(probe.delays_cs.size() - 1);
+    EXPECT_LE(std::fabs(stamped - gaps * 100.0 / 15.0), 0.5)
+        << "gifSize=" << c.gif_size << " stamped " << stamped << " cs over "
+        << gaps << " gaps";
+  }
+
+  // An MP4 of the same request ignores gif_size and keeps the canvas.
+  RenderRequest video;
+  video.source_video_path = fs::u8path(source).wstring();
+  video.destination_path = (dir / "out.mp4").u8string();
+  video.gif_size = "small";
+  video.layout = "youtube169";
+  video.resolution = "p1080";
+  video.fit = "fit";
+  video.fps_hint = kFps;
+  const RenderResult video_result = RenderComposedExport(video);
+  ASSERT_TRUE(video_result.ok) << video_result.message;
+  EXPECT_EQ(video_result.output_width, 1920u);
+  EXPECT_EQ(video_result.output_height, 1080u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// The `gifSize` arg reaches the encoder through the passthrough layer, not
+// just through a hand-built RenderRequest: `PassthroughInput.gif_size` (what
+// `exportVideo` reads from "gifSize") must come out the other end as a GIF of
+// the preset's size.
+TEST(ExportPipelineTest, PassthroughCarriesGifSizeToTheEncoder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_passthrough");
+  const auto project = dir / "gif-size.clingfyproj";
+  fs::create_directories(project / "capture");
+  const auto source = (project / "capture" / "screen.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeSource(&device, source, /*with_audio=*/false, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  std::ofstream(project / "project.json") << R"({
+  "schemaVersion": 2,
+  "projectId": "gif-size",
+  "createdAt": "2026-10-29T00:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json"
+  }
+})";
+  std::ofstream(project / "capture" / "screen.meta.json")
+      << R"({"width":64,"height":48,"fps":30})";
+  const auto out_dir = dir / "out";
+  fs::create_directories(out_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = out_dir.u8string();
+  input.filename = "Clip";
+  input.format = "gif";
+  input.gif_size = "small";
+  input.layout = "youtube169";
+  input.resolution = "p1080";
+  const PassthroughResult outcome = ExportPassthroughCopy(input);
+  ASSERT_EQ(outcome.error, PassthroughError::kNone) << outcome.message;
+  const GifProbeResult probe =
+      ProbeGif(fs::u8path(outcome.output_path).wstring());
+  ASSERT_TRUE(probe.ok) << outcome.output_path;
+  EXPECT_EQ(probe.width, 480u);
+  EXPECT_EQ(probe.height, 270u);
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// ---- W2: the GIF length backstop ---------------------------------------------
+
+// A GIF over the cap is refused BEFORE any encoder or output file exists, with
+// the measured length on the result. An MP4 of the same source is untouched.
+TEST(ExportPipelineTest, GifOverTheLengthCapIsRefusedBeforeAnyOutput) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_too_long");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeLongSource(&device, source, 61, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+
+  const auto dest = (dir / "out.gif").u8string();
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  bool progressed = false;
+  request.on_progress = [&](double) { progressed = true; };
+  const RenderResult result = RenderComposedExport(request);
+  EXPECT_FALSE(result.ok);
+  EXPECT_TRUE(result.gif_too_long) << result.message;
+  EXPECT_FALSE(result.device_removed);
+  EXPECT_GT(result.gif_duration_ms, 60'100);
+  EXPECT_LT(result.gif_duration_ms, 62'000);
+  EXPECT_FALSE(fs::exists(fs::u8path(dest)))
+      << "a refused GIF must not leave any output file";
+  EXPECT_FALSE(progressed) << "refused before any frame was rendered";
+
+  // MP4 and MOV are unaffected by the GIF cap.
+  for (const char* ext : {"out.mp4", "out.mov"}) {
+    RenderRequest video = request;
+    video.on_progress = {};
+    video.destination_path = (dir / ext).u8string();
+    const RenderResult video_result = RenderComposedExport(video);
+    EXPECT_TRUE(video_result.ok) << ext << ": " << video_result.message;
+    EXPECT_FALSE(video_result.gif_too_long) << ext;
+  }
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// A long recording trimmed under the cap exports: the cap is on EXPORTED time.
+TEST(ExportPipelineTest, LongRecordingTrimmedUnderTheGifCapExports) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_trimmed");
+  const auto source = (dir / "source.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeLongSource(&device, source, 61, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  const auto dest = (dir / "out.gif").u8string();
+  RenderRequest request;
+  request.source_video_path = fs::u8path(source).wstring();
+  request.destination_path = dest;
+  request.layout = "auto";
+  request.resolution = "auto";
+  request.fit = "fit";
+  request.fps_hint = kFps;
+  clip_planner::ClipKeptRange kept;
+  kept.source_in_ms = 0;
+  kept.source_out_ms = 40'000;
+  request.clip_ranges = {kept};
+  const RenderResult result = RenderComposedExport(request);
+  ASSERT_TRUE(result.ok) << result.message;
+  EXPECT_FALSE(result.gif_too_long);
+  EXPECT_TRUE(FileStartsWithGifMagic(dest));
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Through the passthrough: a too-long GIF maps to kGifTooLong with both
+// lengths, leaves nothing at the destination, and the device-loss retry gate
+// says no.
+TEST(ExportPipelineTest, PassthroughMapsATooLongGifToGifTooLong) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("gif_too_long_passthrough");
+  const auto project = dir / "long.clingfyproj";
+  fs::create_directories(project / "capture");
+  const auto source = (project / "capture" / "screen.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeLongSource(&device, source, 61, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  std::ofstream(project / "project.json") << R"({
+  "schemaVersion": 2,
+  "projectId": "long",
+  "createdAt": "2026-10-29T00:00:00.000Z",
+  "capture": {
+    "screenVideo": "capture/screen.mov",
+    "screenMetadata": "capture/screen.meta.json"
+  }
+})";
+  std::ofstream(project / "capture" / "screen.meta.json")
+      << R"({"width":64,"height":48,"fps":30})";
+  const auto out_dir = dir / "out";
+  fs::create_directories(out_dir);
+
+  PassthroughInput input;
+  input.project_path = project.u8string();
+  input.directory_override = out_dir.u8string();
+  input.filename = "Long";
+  input.format = "gif";
+  const PassthroughResult outcome = ExportPassthroughCopy(input);
+  EXPECT_EQ(outcome.error, PassthroughError::kGifTooLong) << outcome.message;
+  EXPECT_GT(outcome.gif_duration_ms, 60'100);
+  EXPECT_EQ(outcome.gif_max_duration_ms, 60'000);
+  EXPECT_EQ(outcome.message, "GIFs can be at most 60 seconds long.");
+  EXPECT_TRUE(outcome.output_path.empty());
+  EXPECT_TRUE(fs::is_empty(out_dir)) << "nothing may be left at the destination";
+  EXPECT_FALSE(ShouldRetryExportAfterDeviceRemoved(outcome, 1, false));
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Opt-in visual proof, the Windows counterpart of macOS's
+// `ExportEngineTests.testExportsGifProofsForVisualInspection`. Skipped unless
+// CLINGFY_GIF_PROOF_SOURCE names a real recording (screen .mov / .mp4); writes
+// small.gif / medium.gif / large.gif to CLINGFY_GIF_PROOF_DIR (default: a temp
+// dir, printed) and leaves them there to be opened in a browser and compared
+// against the source for size, duration and sharpness.
+TEST(ExportPipelineTest, GifProofsForVisualInspection) {
+  char* source_env = nullptr;
+  std::size_t source_len = 0;
+  if (_dupenv_s(&source_env, &source_len, "CLINGFY_GIF_PROOF_SOURCE") != 0 ||
+      source_env == nullptr) {
+    GTEST_SKIP() << "set CLINGFY_GIF_PROOF_SOURCE to a real recording";
+  }
+  const std::string source(source_env);
+  std::free(source_env);
+  char* dir_env = nullptr;
+  std::size_t dir_len = 0;
+  fs::path out_dir;
+  if (_dupenv_s(&dir_env, &dir_len, "CLINGFY_GIF_PROOF_DIR") == 0 &&
+      dir_env != nullptr) {
+    out_dir = fs::u8path(dir_env);
+    std::free(dir_env);
+  } else {
+    out_dir = UniqueDir("gif_proof");
+  }
+  fs::create_directories(out_dir);
+
+  for (const char* gif_size : {"small", "medium", "large"}) {
+    const fs::path dest = out_dir / (std::string(gif_size) + ".gif");
+    std::error_code ec;
+    fs::remove(dest, ec);
+    RenderRequest request;
+    request.source_video_path = fs::u8path(source).wstring();
+    request.destination_path = dest.u8string();
+    request.gif_size = gif_size;
+    request.layout = "auto";
+    request.resolution = "auto";
+    request.fit = "fit";
+    request.fps_hint = 60;
+    const RenderResult result = RenderComposedExport(request);
+    ASSERT_TRUE(result.ok) << gif_size << ": " << result.message;
+    const GifProbeResult probe = ProbeGif(dest.wstring());
+    ASSERT_TRUE(probe.ok) << gif_size;
+    UINT total_cs = 0;
+    for (UINT d : probe.delays_cs) {
+      total_cs += d;
+    }
+    std::printf("GIF proof %-6s %ux%u frames=%u stamped=%.2fs -> %s\n",
+                gif_size, probe.width, probe.height, probe.frame_count,
+                total_cs / 100.0, dest.u8string().c_str());
+  }
 }
 
 // Slice 5B: GIF reuses the shared progress emission, so it is monotonic and
@@ -2456,6 +2906,79 @@ TEST(CameraPlanForExportRequestTest, CarriesTheZoomTrioOntoTheExportPlan) {
       /*zoom_in_segment=*/false, /*zoom_segment_local_ms=*/0);
   EXPECT_DOUBLE_EQ(at_zoom.scale, 1.35);
 }
+// W7: the panel layouts. A red screen (320x240) letterboxed onto a 320x320
+// canvas (40 px bars top and bottom) with a green camera. backgroundBehind puts
+// the camera UNDER the screen, so the bars show camera and the middle shows
+// screen; sideBySideLeft draws a full-height column ON TOP of the screen.
+TEST(ExportPipelineTest, CameraPanelLayoutsDrawInMacOSOrder) {
+  clingfy::graphics::D3DDevice device;
+  if (device.Create()) {
+    GTEST_SKIP() << "no usable D3D11 device in this environment";
+  }
+  const auto dir = UniqueDir("camera_panels");
+  const auto screen = (dir / "screen.mov").u8string();
+  const auto camera = (dir / "camera.mov").u8string();
+  std::string skip_reason;
+  if (!SynthesizeColorHalvesSource(&device, screen, 320, 240, 0xFFFF0000u,
+                                   0xFFFF0000u, &skip_reason) ||
+      !SynthesizeColorHalvesSource(&device, camera, 160, 120, 0xFF00FF00u,
+                                   0xFF00FF00u, &skip_reason)) {
+    GTEST_SKIP() << skip_reason;
+  }
+  const auto red_of = [](std::uint32_t c) {
+    return static_cast<int>((c >> 16) & 0xFF);
+  };
+  const auto green_of = [](std::uint32_t c) {
+    return static_cast<int>((c >> 8) & 0xFF);
+  };
+  const auto render = [&](const char* layout, const char* name) {
+    RenderRequest r;
+    r.source_video_path = fs::u8path(screen).wstring();
+    r.destination_path = (dir / name).u8string();
+    r.layout = "square11";  // 320x240 -> 320x320, 40 px bars
+    r.resolution = "auto";
+    r.fit = "fit";
+    r.fps_hint = kFps;
+    r.draw_camera = true;
+    r.camera_video_path = fs::u8path(camera).wstring();
+    r.camera.layout_preset = layout;
+    r.camera.shape = "square";
+    r.camera.content_mode = "fill";
+    r.camera.opacity = 1.0;
+    const RenderResult result = RenderComposedExport(r);
+    EXPECT_TRUE(result.ok) << layout << ": " << result.message;
+    return r.destination_path;
+  };
+  const auto pixel = [&](const std::string& path, int x, int y) {
+    std::vector<std::uint32_t> colors;
+    if (!ReadFramePixelColors(fs::u8path(path).wstring(), x, y, &colors) ||
+        colors.empty()) {
+      return std::uint32_t{0};
+    }
+    return colors[colors.size() / 2];
+  };
+
+  const std::string behind = render("backgroundBehind", "behind.mov");
+  const std::uint32_t bar = pixel(behind, 160, 15);        // top letterbox bar
+  const std::uint32_t middle = pixel(behind, 160, 160);    // the screen
+  EXPECT_GT(green_of(bar), 180) << std::hex << bar << ": camera behind the bar";
+  EXPECT_LT(red_of(bar), 80) << std::hex << bar;
+  EXPECT_GT(red_of(middle), 180) << std::hex << middle << ": screen on top";
+  EXPECT_LT(green_of(middle), 80) << std::hex << middle;
+
+  // sideBySideLeft: x in [16, 16 + 320*0.32 = 118.4) on a 320 canvas, full
+  // height minus the 16 px margin. Its middle is camera, drawn over the screen.
+  const std::string side = render("sideBySideLeft", "side.mov");
+  const std::uint32_t column = pixel(side, 60, 160);
+  const std::uint32_t right = pixel(side, 260, 160);
+  EXPECT_GT(green_of(column), 180) << std::hex << column << ": camera on top";
+  EXPECT_LT(red_of(column), 80) << std::hex << column;
+  EXPECT_GT(red_of(right), 180) << std::hex << right << ": screen beside it";
+
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
 // jumps BACKWARD and the forward-only camera reader must be re-primed
 // (CameraExportRenderer::SeekTo, added in 3b-2a) or the bubble would freeze on a
 // stale later frame. Proof: a camera colored by source time (green first source

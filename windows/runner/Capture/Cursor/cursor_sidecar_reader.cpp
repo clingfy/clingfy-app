@@ -262,4 +262,25 @@ CursorPlacement ResolveCursorPlacement(double capture_x, double capture_y,
   return out;
 }
 
+CursorSampleWindow SelectCursorSamples(
+    const std::vector<CursorSidecarSample>& samples, std::int64_t start_ms,
+    std::int64_t end_ms, std::int64_t playhead_ms) {
+  CursorSampleWindow out;
+  std::int64_t best = 0;
+  for (const auto& s : samples) {
+    if (s.t_ms >= start_ms && s.t_ms <= end_ms) {
+      out.in_range.push_back(s);
+    }
+    const std::int64_t delta =
+        s.t_ms >= playhead_ms ? s.t_ms - playhead_ms : playhead_ms - s.t_ms;
+    // Strict `<`: the first (earliest) sample wins a tie, as on macOS.
+    if (!out.has_nearest || delta < best) {
+      out.nearest = s;
+      out.has_nearest = true;
+      best = delta;
+    }
+  }
+  return out;
+}
+
 }  // namespace clingfy::capture

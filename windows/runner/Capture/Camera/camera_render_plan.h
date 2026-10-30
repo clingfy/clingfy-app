@@ -130,6 +130,9 @@ struct CameraRenderPlan {
   std::string zoom_behavior;
   double zoom_scale_multiplier = 0.0;
   std::string layout_preset;
+  // backgroundBehind: both legs draw the camera after the canvas background
+  // and BEFORE the screen recording instead of on top of it.
+  bool behind_screen = false;
 };
 
 // The export paints ON the export canvas, so every `CameraBubbleStyle` length

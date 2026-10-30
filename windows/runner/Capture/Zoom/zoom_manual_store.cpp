@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <set>
@@ -102,6 +103,54 @@ class Scanner {
     return true;
   }
 
+  bool ReadDouble(double* out) {
+    SkipWs();
+    const size_t start = i_;
+    while (!Eof() && (std::isdigit(static_cast<unsigned char>(Peek())) ||
+                      Peek() == '-' || Peek() == '+' || Peek() == '.' ||
+                      Peek() == 'e' || Peek() == 'E')) {
+      Advance();
+    }
+    if (i_ == start) return false;
+    try {
+      *out = std::stod(s_.substr(start, i_ - start));
+    } catch (...) {
+      return false;
+    }
+    return std::isfinite(*out);
+  }
+
+  // Skip one value of any shape, nested objects and arrays included, so an
+  // unknown key never derails the keys after it.
+  bool SkipValue() {
+    SkipWs();
+    if (Peek() == '"') {
+      std::string ignored;
+      return ReadString(&ignored);
+    }
+    if (Peek() == '{' || Peek() == '[') {
+      int depth = 0;
+      while (!Eof()) {
+        const char c = Peek();
+        if (c == '"') {
+          std::string ignored;
+          if (!ReadString(&ignored)) return false;
+          continue;
+        }
+        Advance();
+        if (c == '{' || c == '[') ++depth;
+        if (c == '}' || c == ']') {
+          if (--depth == 0) return true;
+        }
+      }
+      return false;
+    }
+    while (!Eof() && Peek() != ',' && Peek() != '}' && Peek() != ']') {
+      Advance();
+    }
+    return true;
+  }
+
   size_t pos() const { return i_; }
   void set_pos(size_t p) { i_ = p; }
 
@@ -109,6 +158,47 @@ class Scanner {
   const std::string& s_;
   size_t i_ = 0;
 };
+
+// Consume a `{"dx":..,"dy":..}` point. True only when both coordinates read;
+// they are clamped to [0,1], the space the renderers expect.
+bool ReadPointObject(Scanner& sc, double* x, double* y) {
+  sc.SkipWs();
+  if (sc.Peek() != '{') return false;
+  sc.Advance();
+  bool has_x = false;
+  bool has_y = false;
+  while (!sc.Eof()) {
+    sc.SkipWs();
+    if (sc.Peek() == '}') {
+      sc.Advance();
+      return has_x && has_y;
+    }
+    if (sc.Peek() == ',') {
+      sc.Advance();
+      continue;
+    }
+    std::string key;
+    if (!sc.ReadString(&key)) return false;
+    sc.SkipWs();
+    if (sc.Peek() != ':') return false;
+    sc.Advance();
+    if (key == "dx" || key == "dy") {
+      double value = 0.0;
+      if (!sc.ReadDouble(&value)) return false;
+      value = std::clamp(value, 0.0, 1.0);
+      if (key == "dx") {
+        *x = value;
+        has_x = true;
+      } else {
+        *y = value;
+        has_y = true;
+      }
+      continue;
+    }
+    if (!sc.SkipValue()) return false;
+  }
+  return false;
+}
 
 // Consume one `{...}` object, filling whichever known keys appear.
 bool ReadSegmentObject(Scanner& sc, ZoomManualSegment* out) {
@@ -149,7 +239,8 @@ bool ReadSegmentObject(Scanner& sc, ZoomManualSegment* out) {
       }
       continue;
     }
-    if (key == "id" || key == "source" || key == "baseId") {
+    if (key == "id" || key == "source" || key == "baseId" ||
+        key == "focusMode") {
       // `null` is legal for the optional strings.
       if (sc.Peek() == 'n') {
         for (int k = 0; k < 4 && !sc.Eof(); ++k) sc.Advance();
@@ -159,17 +250,31 @@ bool ReadSegmentObject(Scanner& sc, ZoomManualSegment* out) {
       if (!sc.ReadString(&value)) return false;
       if (key == "id") out->id = value;
       else if (key == "source") out->source = value;
-      else out->base_id = value;
+      else if (key == "baseId") out->base_id = value;
+      else out->focus_mode = value;
       continue;
     }
-    // Unknown key: skip its value. Only scalars appear in this schema, so a
-    // bounded scan to the next delimiter is enough.
-    if (sc.Peek() == '"') {
-      std::string ignored;
-      if (!sc.ReadString(&ignored)) return false;
-    } else {
-      while (!sc.Eof() && sc.Peek() != ',' && sc.Peek() != '}') sc.Advance();
+    if (key == "fixedTarget") {
+      if (sc.Peek() == 'n') {
+        for (int k = 0; k < 4 && !sc.Eof(); ++k) sc.Advance();
+        continue;
+      }
+      // A malformed point loses the pin, not the segment.
+      const size_t at = sc.pos();
+      double x = 0.5;
+      double y = 0.5;
+      if (ReadPointObject(sc, &x, &y)) {
+        out->has_fixed_target = true;
+        out->fixed_x = x;
+        out->fixed_y = y;
+      } else {
+        sc.set_pos(at);
+        if (!sc.SkipValue()) return false;
+      }
+      continue;
     }
+    // Unknown key: skip its value, whatever its shape.
+    if (!sc.SkipValue()) return false;
   }
   // A segment without both bounds is not a segment. Dropping it is safer than
   // inventing a zero-length one, which would read as a tombstone.
@@ -244,6 +349,20 @@ std::string SerializeZoomManualJson(
       AppendEscaped(&out, s.base_id);
       out += "\"";
     }
+    if (!s.focus_mode.empty()) {
+      out += ",\"focusMode\":\"";
+      AppendEscaped(&out, s.focus_mode);
+      out += "\"";
+    }
+    // Same rule as Dart's ZoomSegment.toMap: the point travels only with the
+    // mode that uses it.
+    if (IsZoomFixedTarget(s)) {
+      char point[96];
+      std::snprintf(point, sizeof(point),
+                    ",\"fixedTarget\":{\"dx\":%.9g,\"dy\":%.9g}", s.fixed_x,
+                    s.fixed_y);
+      out += point;
+    }
     out += "}";
   }
   out += "]}";
@@ -267,7 +386,13 @@ std::vector<ZoomSegment> MergeZoomSegments(
     if (IsZoomTombstone(s)) {
       continue;  // carries a baseId and nothing else; never rendered
     }
-    out.push_back(ZoomSegment{s.start_ms, s.end_ms});
+    ZoomSegment segment{s.start_ms, s.end_ms};
+    if (IsZoomFixedTarget(s)) {
+      segment.fixed_target = true;
+      segment.target_x = s.fixed_x;
+      segment.target_y = s.fixed_y;
+    }
+    out.push_back(segment);
   }
   // Auto ids are POSITIONAL and must match what getZoomSegments handed Dart,
   // or the user's "delete auto_3" would remove a different segment.

@@ -17,6 +17,7 @@
 #include "Bridge/Routers/camera_composition_args.h"
 #include "Bridge/Routers/clip_args.h"
 #include "Bridge/Routers/color_grade_args.h"
+#include "Bridge/Routers/zoom_focus_args.h"
 #include "Bridge/export_progress_publisher.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/native_log_publisher.h"
@@ -278,6 +279,11 @@ void HandleSaveManualZoomSegments(
         s.end_ms = static_cast<std::int64_t>(ReadDouble(*map, "endMs", 0.0));
         s.source = ReadString(*map, "source");
         s.base_id = ReadString(*map, "baseId");
+        const auto focus = clingfy::bridge::ReadZoomFocusArgs(*map);
+        s.focus_mode = focus.focus_mode;
+        s.has_fixed_target = focus.has_point;
+        s.fixed_x = focus.x;
+        s.fixed_y = focus.y;
         if (s.source.empty()) {
           s.source = "manual";
         }
@@ -329,6 +335,19 @@ void HandleGetManualZoomSegments(
     if (!s.base_id.empty()) {
       map[flutter::EncodableValue("baseId")] =
           flutter::EncodableValue(s.base_id);
+    }
+    // The pinned point, in the shape ZoomSegment.fromMap reads. Without it a
+    // reopened project would show the segment as follow-cursor again.
+    if (!s.focus_mode.empty()) {
+      map[flutter::EncodableValue("focusMode")] =
+          flutter::EncodableValue(s.focus_mode);
+    }
+    if (clingfy::capture::IsZoomFixedTarget(s)) {
+      map[flutter::EncodableValue("fixedTarget")] =
+          flutter::EncodableValue(flutter::EncodableMap{
+              {flutter::EncodableValue("dx"), flutter::EncodableValue(s.fixed_x)},
+              {flutter::EncodableValue("dy"), flutter::EncodableValue(s.fixed_y)},
+          });
     }
     out.push_back(flutter::EncodableValue(std::move(map)));
   }
@@ -509,6 +528,8 @@ void HandleExportVideo(
     input.directory_override = ReadString(*args, "directoryOverride");
     input.filename = ReadString(*args, "filename");
     input.format = ReadString(*args, "format");
+    // GIF size preset; the pipeline caps the GIF's long edge from it.
+    input.gif_size = ReadString(*args, "gifSize");
     // Slice 2 composition args. Absent/auto leaves the export on the copy
     // fast-path; concrete values route through the re-encode pipeline.
     input.layout = ReadString(*args, "layoutPreset");
@@ -724,6 +745,11 @@ void HandleProcessVideo(
     clingfy::preview::PreviewEngine::Instance()->SetAudioMix(
         ReadString(*args, "sessionId"), ReadDouble(*args, "audioGainDb", 0.0),
         ReadDouble(*args, "audioVolumePercent", 100.0));
+    // W13c: speaker-echo removal, heard in the preview as the export will
+    // bake it. Same arg and default the export reads.
+    clingfy::preview::PreviewEngine::Instance()->SetMicEchoCancellation(
+        ReadString(*args, "sessionId"),
+        ReadBool(*args, "micEchoCancellationEnabled", false));
   }
   reply::Null(*result);
 }
@@ -817,6 +843,31 @@ void ReplyForExportOutcome(
           std::string(error::kExportCancelled) + ": Export cancelled.");
       result.Error(error::kExportCancelled, "Export cancelled.",
                    flutter::EncodableValue(project_path));
+      return;
+    case PassthroughError::kGifTooLong: {
+      // W2: refused by design (the macOS backstop's exact code, message and
+      // details), so a Warn, not a failure. Dart shows the localized
+      // "GIFs can be at most 60 seconds long..." from the details.
+      NativeLogPublisher::Instance().Warn(
+          "Export", std::string(error::kExportGifTooLong) + ": " +
+                        std::to_string(outcome.gif_duration_ms) + " ms > " +
+                        std::to_string(outcome.gif_max_duration_ms) + " ms");
+      result.Error(
+          error::kExportGifTooLong, outcome.message,
+          flutter::EncodableValue(flutter::EncodableMap{
+              {flutter::EncodableValue("durationMs"),
+               flutter::EncodableValue(outcome.gif_duration_ms)},
+              {flutter::EncodableValue("maxDurationMs"),
+               flutter::EncodableValue(outcome.gif_max_duration_ms)},
+          }));
+      return;
+    }
+    case PassthroughError::kDestinationUnavailable:
+      // W3: the macOS `destinationProblem` reply: EXPORT_ERROR, the reason as
+      // the message (Dart shows it as is), the folder as details.
+      log_failure(error::kExportError, outcome.message);
+      result.Error(error::kExportError, outcome.message,
+                   flutter::EncodableValue(outcome.destination_folder));
       return;
     case PassthroughError::kCopyFailed:
     case PassthroughError::kRenderFailed:

@@ -73,7 +73,7 @@ there, so there is nothing to ship).
 | Live cursor highlight | Halo around the cursor while recording, with strength control. | ✅ | — |
 | Smart zoom | Click-driven automatic zoom suggestions. | ✅ | ✅ (automatic only) |
 | Follow-cursor zoom | Zoom that tracks the cursor, with hysteresis smoothing. | ✅ | 🚧 |
-| Fixed-target zoom segments | Manual segments with a draggable focus target. | ✅ | — |
+| Fixed-target zoom segments | Manual segments with a draggable focus target. | ✅ (preview only: not saved or exported yet) | ✅ (saved + exported) |
 | Zoom timeline editor | Add / move / resize segments, up to 3× magnification. | ✅ | — (zoom lane read-only) |
 
 ## Editing (new in v1.0.5)
@@ -104,7 +104,7 @@ there, so there is nothing to ship).
 
 | Feature | What it does | macOS | Windows (beta) |
 |---|---|---|---|
-| Formats | MP4, MOV, animated GIF. GIF: Small / Medium / Large size presets, at most 60 s long, rendered in one pass on macOS. | ✅ | ✅ (GIF: no size presets or length check yet) |
+| Formats | MP4, MOV, animated GIF. GIF: Small / Medium / Large size presets, at most 60 s long, rendered in one pass on macOS. | ✅ | ✅ |
 | Codecs | HEVC or H.264. | ✅ | 🚧 |
 | Resolution presets | Auto / 1080p / 1440p / 4K / 8K / custom. | ✅ | 🚧 |
 | Bitrate control | Auto / low / medium / high. | ✅ | 🚧 |

@@ -15,7 +15,6 @@ namespace clingfy::encoding {
 namespace {
 
 using Microsoft::WRL::ComPtr;
-using clingfy::capture::export_::GifDelayCentiseconds;
 using clingfy::capture::export_::kGifDefaultDelayCentiseconds;
 
 EncoderError MakeError(const char* message, HRESULT hr) {
@@ -77,6 +76,7 @@ std::optional<EncoderError> GifEncoder::Open(const EncoderConfig& config,
   has_pending_ = false;
   finalized_ = false;
   frames_written_ = 0;
+  delays_ = {};
   pending_bgra_.clear();
   staging_.Reset();
   staging_w_ = 0;
@@ -231,6 +231,9 @@ std::optional<EncoderError> GifEncoder::EncodeBufferedFrame(
   }
   const UINT w = pending_w_;
   const UINT h = pending_h_;
+  // The encoded size. The frame is composited at the canvas and may be larger.
+  const UINT out_w = config_.width;
+  const UINT out_h = config_.height;
 
   ComPtr<IWICBitmapFrameEncode> frame;
   ComPtr<IPropertyBag2> props;
@@ -243,7 +246,7 @@ std::optional<EncoderError> GifEncoder::EncodeBufferedFrame(
   if (FAILED(hr)) {
     return MakeError("GifEncoder: frame Initialize failed", hr);
   }
-  hr = frame->SetSize(w, h);
+  hr = frame->SetSize(out_w, out_h);
   if (FAILED(hr)) {
     return MakeError("GifEncoder: frame SetSize failed", hr);
   }
@@ -263,13 +266,39 @@ std::optional<EncoderError> GifEncoder::EncodeBufferedFrame(
     return MakeError("GifEncoder: CreateBitmapFromMemory failed", hr);
   }
 
+  // Downscale to the encoded size before the palette is built, so the palette
+  // describes the pixels actually written. Fant averages every source pixel
+  // under each output pixel, which keeps thin UI text legible at 480/720.
+  ComPtr<IWICBitmapSource> sized = source;
+  if (w != out_w || h != out_h) {
+    ComPtr<IWICBitmapScaler> scaler;
+    hr = factory_->CreateBitmapScaler(scaler.GetAddressOf());
+    if (FAILED(hr)) {
+      return MakeError("GifEncoder: CreateBitmapScaler failed", hr);
+    }
+    hr = scaler->Initialize(source.Get(), out_w, out_h,
+                            WICBitmapInterpolationModeFant);
+    if (FAILED(hr)) {
+      return MakeError("GifEncoder: bitmap scaler Initialize failed", hr);
+    }
+    // Materialize once: the palette pass and the quantizer both read the
+    // scaled pixels, and a lazy scaler would resample twice.
+    ComPtr<IWICBitmap> scaled;
+    hr = factory_->CreateBitmapFromSource(scaler.Get(), WICBitmapCacheOnLoad,
+                                          scaled.GetAddressOf());
+    if (FAILED(hr)) {
+      return MakeError("GifEncoder: scaled bitmap creation failed", hr);
+    }
+    sized = scaled;
+  }
+
   // Adaptive 256-color local color table for this frame.
   ComPtr<IWICPalette> palette;
   hr = factory_->CreatePalette(palette.GetAddressOf());
   if (FAILED(hr)) {
     return MakeError("GifEncoder: CreatePalette failed", hr);
   }
-  hr = palette->InitializeFromBitmap(source.Get(), 256, FALSE);
+  hr = palette->InitializeFromBitmap(sized.Get(), 256, FALSE);
   if (FAILED(hr)) {
     return MakeError("GifEncoder: palette InitializeFromBitmap failed", hr);
   }
@@ -284,7 +313,7 @@ std::optional<EncoderError> GifEncoder::EncodeBufferedFrame(
   if (FAILED(hr)) {
     return MakeError("GifEncoder: CreateFormatConverter failed", hr);
   }
-  hr = converter->Initialize(source.Get(), GUID_WICPixelFormat8bppIndexed,
+  hr = converter->Initialize(sized.Get(), GUID_WICPixelFormat8bppIndexed,
                              WICBitmapDitherTypeErrorDiffusion, palette.Get(),
                              0.0, WICBitmapPaletteTypeCustom);
   if (FAILED(hr)) {
@@ -341,7 +370,7 @@ std::optional<EncoderError> GifEncoder::WriteVideoFrame(
   // Commit the previous frame now that we know the gap to this one.
   if (has_pending_) {
     const std::uint16_t delay =
-        GifDelayCentiseconds(pending_ts_hns_, frame.timestamp_hns);
+        delays_.Next(frame.timestamp_hns - pending_ts_hns_);
     if (auto err = EncodeBufferedFrame(delay)) {
       return err;
     }

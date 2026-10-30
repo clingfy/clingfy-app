@@ -454,6 +454,13 @@ struct PreviewEngine::Impl {
   // pacer may consult it every step. nullptr = this session has no audio
   // (no track / no endpoint / renderer failed) — silent-video preview (D7).
   std::unique_ptr<PreviewAudioRenderer> audio_renderer;
+  // W13: this session plays its UNCUT timeline through the stitched path
+  // (StartConvergedPlayback). A passthrough clip list then keeps the session
+  // stitched, as a one-clip timeline, instead of handing it back to the
+  // MediaPlayer. Atomic: SetClips reads it before taking render_mutex.
+  std::atomic<bool> converged{false};
+  // The one-clip timeline's length: the source's duration, from the reader.
+  std::atomic<std::int64_t> converged_duration_ms{0};
   // One WARN per session when the renderer could not be built (D7): the
   // fallback is deliberate, but a beta log must say why a preview is silent.
   bool audio_open_failure_logged = false;
@@ -493,6 +500,12 @@ struct PreviewEngine::Impl {
   // makes them differ, which invalidates the cache and re-runs the worker.
   float voice_cleanup_wet_mix = 1.0f;
   float cleaned_wet_mix = -1.0f;
+  // W13c: speaker-echo removal requested (Dart's global setting, via
+  // processVideo), and whether the cached processed mic had it. The cache is
+  // keyed on BOTH this and the cleanup strength (WantedMic); a cache whose
+  // path is empty means "the raw mic is the result" (no bleed measured).
+  bool mic_echo_cancel_enabled = false;
+  bool cleaned_echo = false;
   // Bumped per spawned worker; the completion applies only its own generation,
   // so a superseded worker (mode toggled again mid-compute) can't touch the
   // live one's state or temp file even when the two share a strength value.
@@ -966,7 +979,12 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
   }
   impl_->audio_separated =
       !impl_->mic_audio_path.empty() || !impl_->system_audio_path.empty();
-  UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+  // VIDEO_SUPPORT lets the edited-playback reader decode on this device
+  // (#296: a GPU copy into the compositor instead of a system-memory
+  // upload). A device that refuses it is retried without: the reader then
+  // decodes on the CPU, as it always has.
+  UINT flags =
+      D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
   const D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1,
                                       D3D_FEATURE_LEVEL_11_0,
                                       D3D_FEATURE_LEVEL_10_1};
@@ -976,6 +994,14 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
       ARRAYSIZE(levels), D3D11_SDK_VERSION,
       impl_->d3d_device.ReleaseAndGetAddressOf(), nullptr,
       impl_->d3d_context.ReleaseAndGetAddressOf());
+  if (FAILED(hr)) {
+    flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    hr = ::D3D11CreateDevice(
+        nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags, levels,
+        ARRAYSIZE(levels), D3D11_SDK_VERSION,
+        impl_->d3d_device.ReleaseAndGetAddressOf(), nullptr,
+        impl_->d3d_context.ReleaseAndGetAddressOf());
+  }
   {
     char buf[64];
     std::snprintf(buf, sizeof(buf),
@@ -1325,7 +1351,12 @@ OpenResult PreviewEngine::Open(const OpenArgs& args) {
           self->HandleMediaFailed(&sender, &args);
         });
 
-    impl_->player.Play();
+    // W13: a converged preview never starts the MediaPlayer — the router
+    // calls StartConvergedPlayback next, which plays the stitched path (or,
+    // if that cannot open, this player).
+    if (!ConvergedPreviewEnabled()) {
+      impl_->player.Play();
+    }
     LogNative("MediaPlayer started + event subscriptions installed");
   } catch (winrt::hresult_error const& e) {
     result.error =
@@ -1627,9 +1658,24 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // (The export pipeline re-binds per frame for the same reason.)
   impl->d2d_context->SetTarget(impl->shared_bitmap.Get());
   impl->d2d_context->BeginDraw();
-  impl->compositor.ComposeFrame(impl->d2d_context.Get(), dest,
-                                impl->cursor, impl->zoom_segments, playback_us,
-                                NowSeconds(), impl->zoom);
+  // backgroundBehind draws the camera between the canvas background and the
+  // screen (the export does the same). Its pulse reads the zoom state from the
+  // PREVIOUS frame here, since ComposeFrame refreshes it afterwards; the
+  // full-canvas layout never scales with zoom (ResolveCameraZoomScale), so
+  // only the emphasis pulse could notice, one frame late.
+  const bool camera_behind =
+      impl->camera_renderer && impl->camera_renderer->behind_screen();
+  const auto draw_camera = [&](ID2D1DeviceContext* ctx) {
+    impl->camera_renderer->Draw(ctx, emit_pos_ms, emit_dur_ms,
+                                impl->zoom.current_zoom,
+                                impl->zoom.segment_active,
+                                impl->zoom.segment_local_ms);
+  };
+  impl->compositor.ComposeFrame(
+      impl->d2d_context.Get(), dest, impl->cursor, impl->zoom_segments,
+      playback_us, NowSeconds(), impl->zoom,
+      camera_behind ? std::function<void(ID2D1DeviceContext*)>(draw_camera)
+                    : std::function<void(ID2D1DeviceContext*)>());
   // Camera bubble draws on top of the composited screen frame, in canvas space.
   // The intro/outro clock is the EDITED position + edited duration, not
   // `playback_us` (source time, used above to advance the camera VIDEO frame).
@@ -1639,11 +1685,8 @@ void PreviewEngine::ComposeAndHandoffLocked(Impl* impl,
   // `impl->zoom` was just refreshed by ComposeFrame above, so the segment state
   // is this frame's — the same [start_ms, end_ms) membership the export reads,
   // which is what keeps the camera pulse in phase between the two surfaces.
-  if (impl->camera_renderer) {
-    impl->camera_renderer->Draw(impl->d2d_context.Get(), emit_pos_ms,
-                                emit_dur_ms, impl->zoom.current_zoom,
-                                impl->zoom.segment_active,
-                                impl->zoom.segment_local_ms);
+  if (impl->camera_renderer && !camera_behind) {
+    draw_camera(impl->d2d_context.Get());
   }
   const HRESULT end_hr = impl->d2d_context->EndDraw();
   impl->timing_render.EndFrame();
@@ -1751,6 +1794,13 @@ void PreviewEngine::HandlePlaybackStateChanged(
   bool should_emit = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    // W13: a converged session's MediaPlayer is never played; its stitched
+    // path reports playing / paused / completed itself. The player's own
+    // late "paused" (from the Pause SetClips issues) would otherwise land
+    // after "playing" and flip Dart's play button.
+    if (impl_ != nullptr && impl_->converged.load()) {
+      return;
+    }
     session_snapshot = active_session_id_;
     // Debounce: only emit when the state actually changed.
     if (state_str != last_emitted_state_) {
@@ -1771,6 +1821,9 @@ void PreviewEngine::HandleMediaEnded(
   bool should_emit = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (impl_ != nullptr && impl_->converged.load()) {
+      return;  // W13: the stitched path reports completion
+    }
     session_snapshot = active_session_id_;
     if (last_emitted_state_ != "completed") {
       last_emitted_state_ = "completed";
@@ -2490,6 +2543,10 @@ void PreviewEngine::Play(const std::string& session_id) {
               "ms; pacer armed=" + (impl->edited_playing ? "true" : "false") +
               ", audio=" +
               (impl->audio_renderer != nullptr ? "on" : "off"));
+      // The stitched path has no MediaPlayer state change to report this.
+      if (impl->edited_playing) {
+        EmitPlayerStateIfChanged("playing");
+      }
       return;
     }
   }
@@ -2528,6 +2585,7 @@ void PreviewEngine::Pause(const std::string& session_id) {
       clingfy::bridge::NativeLogPublisher::Instance().Debug(
           "Preview", "Pause (stitched) at edited " +
                          std::to_string(impl->edited_pos_ms) + "ms");
+      EmitPlayerStateIfChanged("paused");
       return;
     }
   }
@@ -2837,6 +2895,70 @@ void PreviewEngine::SetZoomSettings(const std::string& session_id,
   RepaintPausedPreview();
 }
 
+PreviewEngine::CursorSamples PreviewEngine::GetCursorSamples(
+    const std::string& session_id, std::int64_t start_ms, std::int64_t end_ms,
+    std::int64_t playhead_ms) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return {};
+    }
+    if (impl_ == nullptr) {
+      return {};
+    }
+    impl = impl_.get();
+  }
+  CursorSamples out;
+  // render_mutex ALONE, after mutex_ is released (the SetZoomSettings
+  // discipline): the frame thread reads `cursor` under it.
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  out.window = capture::SelectCursorSamples(impl->cursor.samples, start_ms,
+                                            end_ms, playhead_ms);
+  if (impl->cursor.width > 0 && impl->cursor.height > 0) {
+    out.width = impl->cursor.width;
+    out.height = impl->cursor.height;
+  } else {
+    out.width = impl->last_video_width.load();
+    out.height = impl->last_video_height.load();
+  }
+  out.ok = true;
+  return out;
+}
+
+bool PreviewEngine::GetSourceDimensions(const std::string& session_id,
+                                        int* width, int* height) {
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return false;
+    }
+    if (impl_ == nullptr) {
+      return false;
+    }
+    impl = impl_.get();
+  }
+  UINT w = impl->last_video_width.load();
+  UINT h = impl->last_video_height.load();
+  if (w == 0 || h == 0) {
+    // Before the first frame. Dart asks once, at editor init, which can beat
+    // the decoder; the cursor sidecar's header is the capture size (the
+    // encoded frame's), loaded at Open. Same lock order as GetCursorSamples.
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->cursor.width > 0 && impl->cursor.height > 0) {
+      w = static_cast<UINT>(impl->cursor.width);
+      h = static_cast<UINT>(impl->cursor.height);
+    }
+  }
+  if (w == 0 || h == 0) {
+    return false;
+  }
+  *width = static_cast<int>(w);
+  *height = static_cast<int>(h);
+  return true;
+}
+
 void PreviewEngine::SetColorGrade(
     const std::string& session_id,
     const capture::export_::color::ColorGrade& grade) {
@@ -2992,7 +3114,10 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
       clip::SourceMsForEditedMs(edited_ms, impl->clip_ranges);
 
   if (impl->edited_reader == nullptr) {
-    impl->edited_reader = PreviewSourceReader::Create(impl->video_path);
+    // Decode on the preview's own device so frames reach the compositor
+    // with a GPU copy (#296); falls back to the CPU reader on its own.
+    impl->edited_reader =
+        PreviewSourceReader::Create(impl->video_path, impl->d3d_device.Get());
     if (impl->edited_reader == nullptr) {
       // A real failure the user should see: the stitched preview can't open its
       // own reader on the recording, so an edited project would show nothing.
@@ -3002,6 +3127,11 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
           "preview will be blank (the export is unaffected)");
       return false;  // soft-fail: nothing to draw, MediaPlayer path unaffected
     }
+    clingfy::bridge::NativeLogPublisher::Instance().Debug(
+        "Preview", std::string("stitched preview decodes on the ") +
+                       (impl->edited_reader->gpu() ? "GPU" : "CPU") + " (" +
+                       std::to_string(impl->edited_reader->width()) + "x" +
+                       std::to_string(impl->edited_reader->height()) + ")");
   }
   PreviewSourceReader* reader = impl->edited_reader.get();
 
@@ -3016,17 +3146,17 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   impl->stale_streak = 0;
   impl->awaiting_chase_frame = false;
   impl->last_chase_seek = {};  // a fresh position starts at parity
-  std::vector<BYTE> bgra;
+  // Decoded frames are held, not copied: only the one shown is uploaded.
+  PreviewDecodedFrame frame;
   bool have_frame = false;
   for (int guard = 0; guard < 600; ++guard) {
-    std::vector<BYTE> next;
-    std::int64_t next_ts = 0;
-    if (!reader->ReadNextFrame(&next, &next_ts)) {
+    PreviewDecodedFrame next;
+    if (!reader->ReadNextSample(&next)) {
       break;  // EOS — keep the last frame decoded before it
     }
-    bgra = std::move(next);
+    frame = std::move(next);
     have_frame = true;
-    if (next_ts >= source_ms) {
+    if (frame.ts_ms >= source_ms) {
       break;  // reached the target frame
     }
   }
@@ -3045,11 +3175,13 @@ bool PreviewEngine::RenderEditedFrameLocked(Impl* impl,
   }
   impl->last_video_width.store(reader->width());
   impl->last_video_height.store(reader->height());
-  // Upload the decoded BGRA straight into the compositor's video texture — the
-  // same seam the headless compositor tests fill (no WinRT frame surface).
-  impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
-                                       nullptr, bgra.data(),
-                                       reader->width() * 4u, 0);
+  // Into the compositor's video texture — a GPU copy on the GPU path, the
+  // system-memory upload the headless compositor tests use otherwise.
+  if (!reader->UploadFrame(frame, impl->d3d_context.Get(),
+                           impl->compositor.video_texture())) {
+    NoteRenderFailure(impl, "edited_upload");
+    return false;
+  }
 
   impl->edited_pos_ms = edited_ms;
   // Overlays (cursor / zoom / camera) are SOURCE-keyed, so pass the frame's
@@ -3204,7 +3336,8 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
   // Shared render tail: upload the decoded frame + compose it at its edited
   // position (overlays are SOURCE-keyed, so pass the frame's source time; Dart
   // sees the EDITED position + duration). Returns false (→ kIdle) on failure.
-  const auto emit = [&](std::vector<BYTE>& bgra, std::int64_t source_ms,
+  const auto emit = [&](const PreviewDecodedFrame& frame,
+                        std::int64_t source_ms,
                         std::int64_t edited_ms) -> bool {
     if (const HRESULT ensure_hr = impl->compositor.EnsureResources(
             impl->d3d_device.Get(), impl->d2d_context.Get(), reader->width(),
@@ -3224,9 +3357,11 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     }
     impl->last_video_width.store(reader->width());
     impl->last_video_height.store(reader->height());
-    impl->d3d_context->UpdateSubresource(impl->compositor.video_texture(), 0,
-                                         nullptr, bgra.data(),
-                                         reader->width() * 4u, 0);
+    if (!reader->UploadFrame(frame, impl->d3d_context.Get(),
+                             impl->compositor.video_texture())) {
+      NoteRenderFailure(impl, "pacer_upload");
+      return false;
+    }
     // Adaptive budget: the edited-time distance between presented frames IS
     // the source's frame interval (the edited timeline is contiguous, and a
     // cut boundary still advances by one frame). Clamped so a seek jump or
@@ -3256,7 +3391,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
                : PaceStep::kRendered;
   };
 
-  // Decoding is NOT free (ReadNextFrame fully decodes each frame), so cap
+  // Decoding is NOT free (ReadNextSample fully decodes each frame), so cap
   // forward reads at kMaxSkip per call: a long cut gap / keyframe lead-in then
   // returns kSkipping so the pacer RELEASES render_mutex between chunks (keeping
   // Pause/Seek/Close responsive) and steps again. The reader position + reorder
@@ -3286,12 +3421,12 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     constexpr std::int64_t kGapSeekThresholdMs = 3000;
     for (int i = 0; i < kMaxSkip; ++i) {
       if (shutting_down_.load()) return PaceStep::kIdle;
-      std::vector<BYTE> bgra;
-      std::int64_t ts_ms = 0;
-      if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+      PreviewDecodedFrame frame;
+      if (!reader->ReadNextSample(&frame)) {
         NotifyEditedPlaybackCompleteLocked(impl);  // end of source
         return PaceStep::kIdle;
       }
+      const std::int64_t ts_ms = frame.ts_ms;
       if (ts_ms < impl->edited_min_source_ms) {
         continue;  // gap-seek keyframe lead-in — never re-emit pre-gap frames
       }
@@ -3334,7 +3469,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       }
       if (chase.action == PacerChaseAction::kDiscard) continue;
       impl->awaiting_chase_frame = false;
-      return step_for_emit(emit(bgra, ts_ms, *edited), *edited);
+      return step_for_emit(emit(frame, ts_ms, *edited), *edited);
     }
     return PaceStep::kSkipping;
   }
@@ -3352,9 +3487,8 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       NotifyEditedPlaybackCompleteLocked(impl);  // all ranges emitted
       return PaceStep::kIdle;
     }
-    std::vector<BYTE> bgra;
-    std::int64_t ts_ms = 0;
-    if (!reader->ReadNextFrame(&bgra, &ts_ms)) {
+    PreviewDecodedFrame frame;
+    if (!reader->ReadNextSample(&frame)) {
       // A range ended at source EOS — advance to the next timeline range.
       impl->edited_reorder_base_ms +=
           impl->clip_ranges[impl->edited_range_idx].DurationMs();
@@ -3370,6 +3504,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
       impl->zoom = ZoomState{};
       continue;
     }
+    const std::int64_t ts_ms = frame.ts_ms;
     const auto& r = impl->clip_ranges[impl->edited_range_idx];
     if (ts_ms >= r.source_out_ms) {
       // Past this range's window → advance + seek (backward) to the next range.
@@ -3397,7 +3532,7 @@ PreviewEngine::PaceStep PreviewEngine::PaceNextEditedFrameLocked(Impl* impl) {
     impl->stale_streak = chase.next_stale_streak;
     if (chase.action == PacerChaseAction::kDiscard) continue;
     impl->awaiting_chase_frame = false;
-    return step_for_emit(emit(bgra, ts_ms, edited), edited);
+    return step_for_emit(emit(frame, ts_ms, edited), edited);
   }
   return PaceStep::kSkipping;
 }
@@ -3418,8 +3553,9 @@ void PreviewEngine::NotifyEditedPlaybackCompleteLocked(Impl* impl) {
   clingfy::bridge::NativeLogPublisher::Instance().Debug(
       "Preview", "stitched playback complete at edited " +
                      std::to_string(impl->edited_pos_ms) + "ms");
-  clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
-      session_snapshot, "completed");
+  // Through the shared debounce so a later Play's "playing" is not swallowed
+  // as a repeat of a stale state.
+  EmitPlayerStateIfChanged("completed");
 }
 
 void PreviewEngine::PrimeReorderStateLocked(Impl* impl, std::int64_t edited_ms) {
@@ -3597,7 +3733,16 @@ void PreviewEngine::SetClips(
     impl = impl_.get();
     player_snapshot = impl_->player;
   }
-  const bool now_edited = RangesAreEdited(ranges);
+  bool now_edited = RangesAreEdited(ranges);
+  const bool converged = impl->converged.load();
+  if (converged && !now_edited) {
+    // W13: an uncut list (Dart's whole-recording seed, or every cut undone)
+    // stays on the stitched path as the one-clip timeline, built from the
+    // reader's duration so it compares equal to the one already playing.
+    ranges = {capture::export_::clip_planner::ClipKeptRange{
+        0, impl->converged_duration_ms.load()}};
+    now_edited = true;
+  }
 
   // Coordinate the render mode OUTSIDE mutex_. The compose path needs
   // render_mutex, and the lock order everywhere is render_mutex → mutex_
@@ -3615,6 +3760,14 @@ void PreviewEngine::SetClips(
   }
   std::lock_guard<std::mutex> render_lock(impl->render_mutex);
   if (shutting_down_.load()) {
+    return;
+  }
+  // W13: re-sending the timeline a converged session already plays (Dart
+  // pushes its whole-recording seed on load) must not stop playback, which
+  // the edit path below does by design.
+  if (converged && impl->edited_mode &&
+      capture::export_::clip_planner::Coalesce(ranges) ==
+          capture::export_::clip_planner::Coalesce(impl->clip_ranges)) {
     return;
   }
   // 4-6: preserve the playhead across a clip edit by anchoring it to the
@@ -3668,6 +3821,8 @@ void PreviewEngine::SetClips(
               (impl->audio_renderer != nullptr ? "on" : "off"));
     }
   } else if (impl->edited_mode) {
+    // (Never reached on a converged session: its passthrough list was turned
+    // into the one-clip timeline above.)
     // Passthrough (no real cut): leave stitched mode; the MediaPlayer path
     // resumes producing frames (audio included — its track was never touched).
     impl->edited_mode = false;
@@ -3676,6 +3831,94 @@ void PreviewEngine::SetClips(
     impl->audio_renderer.reset();
     clingfy::bridge::NativeLogPublisher::Instance().Debug(
         "Preview", "stitched preview OFF (passthrough — no real cut)");
+  }
+}
+
+bool PreviewEngine::ConvergedPreviewEnabled() {
+  char* value = nullptr;
+  size_t len = 0;
+  _dupenv_s(&value, &len, "CLINGFY_PREVIEW_MEDIAPLAYER");
+  const bool opt_out = value != nullptr && std::string(value) == "1";
+  free(value);
+  return !opt_out;
+}
+
+void PreviewEngine::StartConvergedPlayback(const std::string& session_id) {
+  if (!ConvergedPreviewEnabled()) {
+    return;
+  }
+  winrt_playback::MediaPlayer player_snapshot{nullptr};
+  Impl* impl = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!running_.load() || session_id != active_session_id_ ||
+        impl_ == nullptr) {
+      return;
+    }
+    impl = impl_.get();
+    player_snapshot = impl_->player;
+  }
+  // Open the reader up front: it proves the stitched path can read this
+  // recording and gives the one-clip timeline its length. On the platform
+  // thread, outside every lock (it decodes a probe frame).
+  auto reader =
+      PreviewSourceReader::Create(impl->video_path, impl->d3d_device.Get());
+  const std::int64_t duration_ms =
+      reader != nullptr ? reader->duration_ms() : 0;
+  if (reader == nullptr || duration_ms <= 0) {
+    // Fall back to the pre-W13 preview rather than show nothing: Open left
+    // the MediaPlayer paused for us, so start it.
+    clingfy::bridge::NativeLogPublisher::Instance().Warn(
+        "Preview",
+        "converged preview could not open the recording on the stitched "
+        "path; playing it through MediaPlayer (gain above 0 dB and voice "
+        "cleanup apply on export only for this session)");
+    if (player_snapshot != nullptr) {
+      try {
+        player_snapshot.Play();
+      } catch (winrt::hresult_error const&) {
+        // MediaFailed reports it.
+      }
+    }
+    return;
+  }
+  const bool gpu = reader->gpu();
+  const UINT width = reader->width();
+  const UINT height = reader->height();
+  {
+    std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+    if (impl->edited_reader == nullptr) {
+      impl->edited_reader = std::move(reader);
+    }
+  }
+  impl->converged_duration_ms.store(duration_ms);
+  impl->converged.store(true);
+  clingfy::bridge::NativeLogPublisher::Instance().Debug(
+      "Preview", "converged preview: one-clip timeline of " +
+                     std::to_string(duration_ms) + "ms on the stitched path, "
+                     "decoding on the " + (gpu ? "GPU" : "CPU") + " (" +
+                     std::to_string(width) + "x" + std::to_string(height) +
+                     ")");
+  // The one-clip timeline, through the same entry as a clip edit (pauses the
+  // MediaPlayer, renders the first frame, opens the audio renderer), then
+  // play, as Open always has.
+  SetClips(session_id, {});
+  Play(session_id);
+}
+
+void PreviewEngine::EmitPlayerStateIfChanged(const std::string& state) {
+  std::string session_snapshot;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (shutting_down_.load() || state == last_emitted_state_) {
+      return;
+    }
+    last_emitted_state_ = state;
+    session_snapshot = active_session_id_;
+  }
+  if (!session_snapshot.empty()) {
+    clingfy::bridge::PlayerEventPublisher::Instance().EmitPlayerState(
+        session_snapshot, state);
   }
 }
 
@@ -3735,9 +3978,23 @@ void PreviewEngine::SetAudioMix(const std::string& session_id, double gain_db,
   }
 }
 
+PreviewEngine::WantedMic PreviewEngine::WantedMicLocked(const Impl* impl) {
+  WantedMic w;
+  // Echo removal needs the system track to know what the speakers played.
+  w.echo = impl->mic_echo_cancel_enabled && !impl->system_audio_path.empty();
+  w.wet = impl->voice_cleanup_enabled ? impl->voice_cleanup_wet_mix : -1.0f;
+  return w;
+}
+
+bool PreviewEngine::ProcessedMicMatchesLocked(const Impl* impl,
+                                              const WantedMic& w) {
+  return impl->cleaned_mic_ready && impl->cleaned_wet_mix == w.wet &&
+         impl->cleaned_echo == w.echo;
+}
+
 void PreviewEngine::StartVoiceCleanupWorkerLocked(Impl* impl,
                                                   const std::string& session_id,
-                                                  float wet_mix,
+                                                  WantedMic wanted,
                                                   std::uint64_t generation) {
   // Caller guarantees no worker is in flight, so any joinable handle is a
   // FINISHED worker — join it before reassigning. Never join an in-flight one
@@ -3757,28 +4014,80 @@ void PreviewEngine::StartVoiceCleanupWorkerLocked(Impl* impl,
   impl->cleanup_cancel.store(false);
 
   const std::wstring mic = impl->mic_audio_path;
+  const std::wstring system = impl->system_audio_path;
   const std::filesystem::path out =
       PreviewCleanedMicPath(session_id, generation);
   try {
-    impl->cleanup_thread =
-        std::thread([this, impl, session_id, mic, out, wet_mix, generation]() {
-          const bool ok = capture::export_::ProduceCleanedMic(
-              mic, out.u8string(),
-              [impl] { return impl->cleanup_cancel.load(); }, wet_mix);
-          const std::wstring out_w = out.wstring();
-          clingfy::bridge::PlatformThreadDispatcher::Instance().Post(
-              [this, session_id, ok, out_w, wet_mix, generation] {
-                OnPreviewCleanedMicReady(session_id, ok, out_w, wet_mix,
-                                         generation);
-              });
-        });
+    impl->cleanup_thread = std::thread([this, impl, session_id, mic, system,
+                                        out, wanted, generation]() {
+      const MicPassOutcome outcome = capture::export_::ProducePreviewMic(
+          mic, system, wanted.echo, wanted.wet, out.u8string(),
+          [impl] { return impl->cleanup_cancel.load(); });
+      const std::wstring out_w = out.wstring();
+      clingfy::bridge::PlatformThreadDispatcher::Instance().Post(
+          [this, session_id, outcome, out_w, wanted, generation] {
+            OnPreviewCleanedMicReady(session_id, outcome, out_w, wanted,
+                                     generation);
+          });
+    });
   } catch (const std::system_error&) {
     // Thread/handle exhaustion: clear the guard so a later toggle can retry
     // instead of silently no-opping for the rest of the session.
     impl->voice_cleanup_computing = false;
     clingfy::bridge::NativeLogPublisher::Instance().Warn(
-        "Preview", "voice cleanup worker thread could not be started");
+        "Preview", "preview mic processing worker could not be started");
   }
+}
+
+void PreviewEngine::ReconcileProcessedMicLocked(Impl* impl,
+                                                const std::string& session_id) {
+  // Only a separated session with a mic sidecar has a mic to process. A
+  // premix or system-only session just keeps the flags.
+  if (!impl->audio_separated || impl->mic_audio_path.empty()) {
+    return;
+  }
+  const WantedMic wanted = WantedMicLocked(impl);
+  const bool rebuild = impl->audio_renderer != nullptr;
+  if (!wanted.any()) {
+    // Back to the raw mic immediately — no decode needed.
+    if (impl->use_cleaned_mic) {
+      impl->use_cleaned_mic = false;
+      if (rebuild) RebuildPreviewAudioRendererLocked(impl);
+    }
+    return;
+  }
+  if (ProcessedMicMatchesLocked(impl, wanted)) {
+    // Already produced for exactly these effects. An empty path means "the
+    // raw mic is the answer" (echo removal found no bleed).
+    const bool use = !impl->cleaned_mic_path.empty();
+    if (impl->use_cleaned_mic != use) {
+      impl->use_cleaned_mic = use;
+      if (rebuild) RebuildPreviewAudioRendererLocked(impl);
+    }
+    return;
+  }
+  // (Re)compute. Any processed file in use is for other effects now — drop
+  // back to the raw mic (releasing its handle) and delete it first.
+  if (impl->use_cleaned_mic) {
+    impl->use_cleaned_mic = false;
+    if (rebuild) RebuildPreviewAudioRendererLocked(impl);
+  }
+  if (impl->cleaned_mic_ready) {
+    std::error_code ec;
+    if (!impl->cleaned_mic_path.empty()) {
+      std::filesystem::remove(impl->cleaned_mic_path, ec);
+    }
+    impl->cleaned_mic_ready = false;
+    impl->cleaned_mic_path.clear();
+  }
+  // A worker already running (for stale effects) is cancelled; its
+  // completion starts the next pass. Otherwise start one now.
+  if (impl->voice_cleanup_computing) {
+    impl->cleanup_cancel.store(true);
+    return;
+  }
+  StartVoiceCleanupWorkerLocked(impl, session_id, wanted,
+                                ++impl->voice_cleanup_generation);
 }
 
 void PreviewEngine::SetVoiceCleanup(const std::string& session_id, bool enabled,
@@ -3809,124 +4118,100 @@ void PreviewEngine::SetVoiceCleanup(const std::string& session_id, bool enabled,
   }
   impl->voice_cleanup_enabled = enabled;
   impl->voice_cleanup_wet_mix = wet_mix;
+  ReconcileProcessedMicLocked(impl, active);
+}
 
-  // Only a separated session with a mic sidecar has anything to denoise. A
-  // premix or system-only session just records the flags (a mic reselected in
-  // a later session would honor them).
-  if (!impl->audio_separated || impl->mic_audio_path.empty()) {
-    return;
-  }
-
-  // Only a LIVE renderer (edited mode) needs a rebuild to swap the mic. In
-  // passthrough the audio_renderer is null (the MediaPlayer drives the premix,
-  // so a mic swap has no audible effect and would just build an idle WASAPI
-  // stream holding the temp open): record the flags and let the renderer built
-  // on the first cut pick the right mic via OpenPreviewAudioRendererLocked.
-  if (!enabled) {
-    // Back to the raw mic immediately — no decode needed.
-    impl->use_cleaned_mic = false;
-    if (impl->audio_renderer != nullptr) {
-      RebuildPreviewAudioRendererLocked(impl);
+void PreviewEngine::SetMicEchoCancellation(const std::string& session_id,
+                                           bool enabled) {
+  Impl* impl = nullptr;
+  std::string active;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!session_id.empty() && session_id != active_session_id_) {
+      return;
     }
-    return;
-  }
-
-  if (impl->cleaned_mic_ready && impl->cleaned_wet_mix == wet_mix) {
-    // Already produced at this strength: swap the cleaned mic straight in.
-    impl->use_cleaned_mic = true;
-    if (impl->audio_renderer != nullptr) {
-      RebuildPreviewAudioRendererLocked(impl);
+    if (impl_ == nullptr) {
+      return;
     }
+    impl = impl_.get();
+    active = active_session_id_;
+  }
+  std::lock_guard<std::mutex> render_lock(impl->render_mutex);
+  if (shutting_down_.load() || impl->mic_echo_cancel_enabled == enabled) {
     return;
   }
-
-  // (Re)compute for this strength. Any cleaned file in use is for a different
-  // strength now — drop back to the raw mic (releasing its handle) and delete
-  // the stale file before the new worker runs.
-  if (impl->use_cleaned_mic) {
-    impl->use_cleaned_mic = false;
-    if (impl->audio_renderer != nullptr) {
-      RebuildPreviewAudioRendererLocked(impl);
-    }
-  }
-  if (impl->cleaned_mic_ready) {
-    std::error_code ec;
-    std::filesystem::remove(impl->cleaned_mic_path, ec);
-    impl->cleaned_mic_ready = false;
-    impl->cleaned_mic_path.clear();
-  }
-  // If a worker is already running (for a now-stale strength), don't join it
-  // here — cancel it and let its completion start the next pass for the
-  // current strength. Otherwise start one now.
-  if (impl->voice_cleanup_computing) {
-    impl->cleanup_cancel.store(true);
-    return;
-  }
-  StartVoiceCleanupWorkerLocked(impl, active, wet_mix,
-                                ++impl->voice_cleanup_generation);
+  impl->mic_echo_cancel_enabled = enabled;
+  ReconcileProcessedMicLocked(impl, active);
 }
 
 void PreviewEngine::OnPreviewCleanedMicReady(const std::string& session_id,
-                                             bool ok,
+                                             MicPassOutcome outcome,
                                              const std::wstring& cleaned_path,
-                                             float wet_mix,
+                                             WantedMic wanted,
                                              std::uint64_t generation) {
   const std::filesystem::path out(cleaned_path);
+  const auto drop_temp = [&out] {
+    std::error_code ec;
+    std::filesystem::remove(out, ec);
+  };
   Impl* impl = nullptr;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (impl_ == nullptr || session_id != active_session_id_) {
       // Session closed or switched while computing: drop the orphan temp.
-      std::error_code ec;
-      std::filesystem::remove(out, ec);
+      drop_temp();
       return;
     }
     impl = impl_.get();
   }
 
   std::lock_guard<std::mutex> render_lock(impl->render_mutex);
-  const bool current = generation == impl->voice_cleanup_generation;
-  if (!current) {
-    // A superseded worker (the mode was toggled again before it finished): it
+  if (generation != impl->voice_cleanup_generation) {
+    // A superseded worker (the effects changed again before it finished): it
     // owns its own generation-tagged temp and never the live worker's state.
-    std::error_code ec;
-    std::filesystem::remove(out, ec);
+    drop_temp();
     return;
   }
   impl->voice_cleanup_computing = false;
 
-  const bool want_cleaned = !shutting_down_.load() && impl->voice_cleanup_enabled;
-  if (ok && want_cleaned && impl->voice_cleanup_wet_mix == wet_mix) {
-    impl->cleaned_mic_path = cleaned_path;
-    impl->cleaned_wet_mix = wet_mix;
+  const WantedMic now = WantedMicLocked(impl);
+  const bool still_wanted = !shutting_down_.load() && now.any() &&
+                            now.echo == wanted.echo && now.wet == wanted.wet;
+  if (still_wanted && outcome != MicPassOutcome::kFailed) {
+    // kNothingToDo caches an EMPTY path: "the raw mic is the answer", so the
+    // same request does not run the canceller again.
+    impl->cleaned_mic_path =
+        outcome == MicPassOutcome::kProduced ? cleaned_path : std::wstring();
+    impl->cleaned_wet_mix = wanted.wet;
+    impl->cleaned_echo = wanted.echo;
     impl->cleaned_mic_ready = true;
-    impl->use_cleaned_mic = true;
-    // Only rebuild a live renderer (edited mode). In passthrough the flags are
-    // enough — the renderer built on the next cut opens the cleaned mic.
-    if (impl->audio_renderer != nullptr) {
-      RebuildPreviewAudioRendererLocked(impl);
+    const bool use = outcome == MicPassOutcome::kProduced;
+    if (impl->use_cleaned_mic != use) {
+      impl->use_cleaned_mic = use;
+      // Only a live renderer needs rebuilding; one opened later picks the
+      // right mic in OpenPreviewAudioRendererLocked.
+      if (impl->audio_renderer != nullptr) {
+        RebuildPreviewAudioRendererLocked(impl);
+      }
+    }
+    if (outcome == MicPassOutcome::kNothingToDo) {
+      clingfy::bridge::NativeLogPublisher::Instance().Debug(
+          "Preview", "preview echo removal: no speaker bleed measured, "
+                     "keeping the raw mic");
     }
     return;
   }
 
-  // Not applied: failed, cancelled, disabled, or the requested strength moved
-  // on while this pass ran. Drop this worker's temp.
-  std::error_code ec;
-  std::filesystem::remove(out, ec);
-  if (!ok && want_cleaned && impl->voice_cleanup_wet_mix == wet_mix) {
+  // Not applied: failed, cancelled, or the wanted effects moved on while this
+  // pass ran. Drop this worker's temp.
+  drop_temp();
+  if (outcome == MicPassOutcome::kFailed && still_wanted) {
     clingfy::bridge::NativeLogPublisher::Instance().Warn(
-        "Preview", "preview voice cleanup failed; keeping the raw mic");
+        "Preview", "preview mic processing failed; keeping the raw mic");
+    return;  // do not spin on a pass that fails every time
   }
-  // Hand off: if cleanup is still wanted at a strength we don't have cached and
-  // nothing is now computing, start the next pass (covers the cancel-and-
-  // restart on a mode change).
-  if (want_cleaned && !impl->voice_cleanup_computing &&
-      impl->audio_separated && !impl->mic_audio_path.empty() &&
-      !(impl->cleaned_mic_ready &&
-        impl->cleaned_wet_mix == impl->voice_cleanup_wet_mix)) {
-    StartVoiceCleanupWorkerLocked(impl, session_id, impl->voice_cleanup_wet_mix,
-                                  ++impl->voice_cleanup_generation);
-  }
+  // Hand off: the effects changed mid-pass (the cancel-and-restart path).
+  ReconcileProcessedMicLocked(impl, session_id);
 }
 
 }  // namespace clingfy::preview

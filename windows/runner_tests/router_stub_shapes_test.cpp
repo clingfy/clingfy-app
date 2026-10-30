@@ -297,9 +297,8 @@ TEST(StubShapesTest, NoopSettersReturnSuccessWithNullValue) {
       // 5.5 — they route through PreviewEngine, return BAD_ARGS /
       // PREVIEW_INPUT_MISSING when inputs are wrong, and silently
       // reply null on stale-session calls. Their dedicated contract
-      // tests live in preview_router_test.cpp. previewPeekTo stays
-      // a no-op setter until a future editor revision needs it.
-      "previewPeekTo",
+      // tests live in preview_router_test.cpp, as do previewPeekTo's (it
+      // seeks for the ruler's hover frame-peek).
       "playerPlay",
       "playerPause",
       "playerSeekTo",
@@ -592,6 +591,66 @@ TEST(StubShapesTest, ReplyForExportOutcomeMapsCancelToExportCancelled) {
   EXPECT_EQ(reply.error_message, "Export cancelled.")
       << "the message still contains 'cancelled' so an older Dart "
          "message-classifier also reads it as a clean cancel";
+}
+
+// W2: a GIF over the length cap replies EXPORT_GIF_TOO_LONG with the exact
+// macOS shape (ExportEngine.swift): message "GIFs can be at most 60 seconds
+// long." and details {durationMs, maxDurationMs} as integers. Dart's
+// post-processing controller renders the localized "GIFs can be at most 60
+// seconds long..." from these details.
+TEST(StubShapesTest, ReplyForExportOutcomeGifTooLongEmitsMacShapedDetails) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error = clingfy::capture::export_::PassthroughError::kGifTooLong;
+  outcome.message = "GIFs can be at most 60 seconds long.";
+  outcome.gif_duration_ms = 61'250;
+  outcome.gif_max_duration_ms = 60'000;
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "C:\\out");
+
+  EXPECT_FALSE(reply.success_called);
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportGifTooLong);
+  EXPECT_EQ(reply.error_code, std::string("EXPORT_GIF_TOO_LONG"));
+  EXPECT_EQ(reply.error_message, "GIFs can be at most 60 seconds long.");
+  const auto* details =
+      std::get_if<flutter::EncodableMap>(&reply.error_details);
+  ASSERT_NE(details, nullptr) << "details must be a map";
+  EXPECT_EQ(details->size(), 2u);
+  const auto get_i64 = [details](const char* key) {
+    const auto it = details->find(flutter::EncodableValue(key));
+    EXPECT_NE(it, details->end()) << "missing details key: " << key;
+    return it != details->end() ? std::get<std::int64_t>(it->second)
+                                : std::int64_t{-1};
+  };
+  EXPECT_EQ(get_i64("durationMs"), 61'250);
+  EXPECT_EQ(get_i64("maxDurationMs"), 60'000);
+}
+
+// W3: an unreachable destination replies like macOS's destinationProblem:
+// EXPORT_ERROR, the reason as the message, the folder as details.
+TEST(StubShapesTest, ReplyForExportOutcomeDestinationUnavailableNamesTheFolder) {
+  clingfy::capture::export_::PassthroughResult outcome;
+  outcome.error =
+      clingfy::capture::export_::PassthroughError::kDestinationUnavailable;
+  outcome.message =
+      "The export folder is on a drive or network share that is not "
+      "connected. Reconnect it, or choose another folder.";
+  outcome.destination_folder = "E:\\Exports";
+
+  RecordedReply reply;
+  const auto recorder = MakeRecorder(reply);
+  routers::export_::ReplyForExportOutcome(
+      *recorder, outcome, "C:\\p\\x.clingfyproj", "E:\\Exports");
+
+  EXPECT_TRUE(reply.error_called);
+  EXPECT_EQ(reply.error_code, error::kExportError);
+  EXPECT_EQ(reply.error_message, outcome.message);
+  const auto* folder = std::get_if<std::string>(&reply.error_details);
+  ASSERT_NE(folder, nullptr) << "details must be the folder path";
+  EXPECT_EQ(*folder, "E:\\Exports");
 }
 
 // A preflight disk-full replies EXPORT_DISK_FULL with the macOS-shaped
@@ -991,28 +1050,10 @@ TEST(StubShapesTest, GetExcludeMicFromSystemAudioReturnsTrue) {
 }
 
 // === Null getters. =========================================================
-
-TEST(StubShapesTest, NullGettersReturnNull) {
-  MethodRouter router;
-  // Phase 10.1: getTodayLogFilePath is real now (path or
-  // LOG_FILE_NOT_FOUND/UNAVAILABLE) — pinned in
-  // storage_router_reveal_test.cpp.
-  // `pickImage` used to live here as a null stub. The canvas parity port gave
-  // it a real IFileOpenDialog, so it is now excluded for the same reason
-  // `chooseSaveFolder` always has been (see below): dispatching it would open a
-  // modal dialog, which has no place in a headless test.
-  const std::vector<std::string> kNullGetters = {
-      "previewGetSourceDimensions",
-  };
-
-  for (const auto& method : kNullGetters) {
-    const RecordedReply reply = Dispatch(router, method);
-    EXPECT_TRUE(reply.success_called)
-        << "Method '" << method << "' did not succeed.";
-    EXPECT_TRUE(reply.success_value.IsNull())
-        << "Method '" << method << "' should return null.";
-  }
-}
+//
+// None left. previewGetSourceDimensions was the last; fixed-target zoom made
+// it answer {width, height} (pinned below). getTodayLogFilePath and pickImage
+// went before it (storage_router_reveal_test.cpp; pickImage opens a dialog).
 
 // getSaveFolder / resetSaveFolder return the default save folder path so
 // the settings UI and export dialog have a real directory to show and to
@@ -1068,7 +1109,86 @@ TEST(StubShapesTest, GetRecordingCapabilitiesReportsPauseResumeOnWindows) {
   EXPECT_EQ(*strategy_str, "windows_mf_pause");
 }
 
-TEST(StubShapesTest, PreviewGetZoomCapabilitiesReportsAllFalse) {
+TEST(StubShapesTest, ManualZoomSaveAndReopenKeepThePinnedPoint) {
+  // The gap this closes: macOS drops focusMode / fixedTarget on save, so a
+  // pinned zoom comes back as follow-cursor. Windows must hand them back.
+  std::error_code ec;
+  const std::filesystem::path project =
+      std::filesystem::temp_directory_path() /
+      ("clingfy_fixed_target_" + std::to_string(::GetCurrentProcessId()));
+  std::filesystem::remove_all(project, ec);
+  std::filesystem::create_directories(project / "capture", ec);
+  ASSERT_FALSE(ec) << ec.message();
+  const std::string project_path = project.string();
+
+  MethodRouter router;
+  flutter::EncodableMap pinned{
+      {flutter::EncodableValue("id"), flutter::EncodableValue(std::string("m1"))},
+      {flutter::EncodableValue("startMs"), flutter::EncodableValue(1000)},
+      {flutter::EncodableValue("endMs"), flutter::EncodableValue(2000)},
+      {flutter::EncodableValue("source"),
+       flutter::EncodableValue(std::string("manual"))},
+      {flutter::EncodableValue("focusMode"),
+       flutter::EncodableValue(std::string("fixedTarget"))},
+      {flutter::EncodableValue("fixedTarget"),
+       flutter::EncodableValue(flutter::EncodableMap{
+           {flutter::EncodableValue("dx"), flutter::EncodableValue(0.3)},
+           {flutter::EncodableValue("dy"), flutter::EncodableValue(0.6)}})},
+  };
+  flutter::EncodableMap follow{
+      {flutter::EncodableValue("id"), flutter::EncodableValue(std::string("m2"))},
+      {flutter::EncodableValue("startMs"), flutter::EncodableValue(3000)},
+      {flutter::EncodableValue("endMs"), flutter::EncodableValue(4000)},
+      {flutter::EncodableValue("focusMode"),
+       flutter::EncodableValue(std::string("followCursor"))},
+  };
+  flutter::EncodableMap save_args{
+      {flutter::EncodableValue("projectPath"),
+       flutter::EncodableValue(project_path)},
+      {flutter::EncodableValue("segments"),
+       flutter::EncodableValue(flutter::EncodableList{
+           flutter::EncodableValue(pinned), flutter::EncodableValue(follow)})},
+  };
+  const RecordedReply saved =
+      DispatchWithArgs(router, "saveManualZoomSegments", std::move(save_args));
+  ASSERT_TRUE(saved.success_called);
+  ASSERT_EQ(std::get<bool>(saved.success_value), true);
+
+  flutter::EncodableMap get_args{
+      {flutter::EncodableValue("projectPath"),
+       flutter::EncodableValue(project_path)},
+  };
+  const RecordedReply got =
+      DispatchWithArgs(router, "getManualZoomSegments", std::move(get_args));
+  ASSERT_TRUE(got.success_called);
+  const auto* list = std::get_if<flutter::EncodableList>(&got.success_value);
+  ASSERT_NE(list, nullptr);
+  ASSERT_EQ(list->size(), 2u);
+
+  const auto& first = std::get<flutter::EncodableMap>((*list)[0]);
+  EXPECT_EQ(std::get<std::string>(
+                first.at(flutter::EncodableValue("focusMode"))),
+            "fixedTarget");
+  const auto& point = std::get<flutter::EncodableMap>(
+      first.at(flutter::EncodableValue("fixedTarget")));
+  EXPECT_DOUBLE_EQ(std::get<double>(point.at(flutter::EncodableValue("dx"))),
+                   0.3);
+  EXPECT_DOUBLE_EQ(std::get<double>(point.at(flutter::EncodableValue("dy"))),
+                   0.6);
+
+  const auto& second = std::get<flutter::EncodableMap>((*list)[1]);
+  EXPECT_EQ(std::get<std::string>(
+                second.at(flutter::EncodableValue("focusMode"))),
+            "followCursor");
+  EXPECT_EQ(second.find(flutter::EncodableValue("fixedTarget")), second.end());
+
+  std::filesystem::remove_all(project, ec);
+}
+
+TEST(StubShapesTest, PreviewGetZoomCapabilitiesReportsFixedTargetSupport) {
+  // Fixed-target zoom is backed end to end on Windows: cursor samples for the
+  // editor's heuristic, the preview pinning a segment, the export honouring
+  // zoom.manual.json. All three true, so Dart offers the draggable target.
   MethodRouter router;
   const RecordedReply reply = Dispatch(router, "previewGetZoomCapabilities");
   ASSERT_TRUE(reply.success_called);
@@ -1081,28 +1201,61 @@ TEST(StubShapesTest, PreviewGetZoomCapabilitiesReportsAllFalse) {
     ASSERT_NE(it, map->end()) << "Missing key '" << key << "'.";
     const auto* b = std::get_if<bool>(&it->second);
     ASSERT_NE(b, nullptr) << "Key '" << key << "' is not a bool.";
-    EXPECT_FALSE(*b)
-        << "Key '" << key
-        << "' should be false so Dart hides the smart fixed-target UX.";
+    EXPECT_TRUE(*b) << "Key '" << key << "' should be true.";
   }
 }
 
-TEST(StubShapesTest, PreviewGetCursorSamplesReturnsEmptyPayload) {
+TEST(StubShapesTest, PreviewGetCursorSamplesWithoutAPreviewIsEmpty) {
+  // No open preview: an empty list and zero size, never an error — Dart
+  // reads that as "no cursor data here" and pins on the centre.
   MethodRouter router;
-  const RecordedReply reply = Dispatch(router, "previewGetCursorSamples");
+  for (const bool with_args : {false, true}) {
+    flutter::EncodableMap args{
+        {flutter::EncodableValue("startMs"), flutter::EncodableValue(0)},
+        {flutter::EncodableValue("endMs"), flutter::EncodableValue(1000)},
+        {flutter::EncodableValue("playheadMs"), flutter::EncodableValue(500)},
+        {flutter::EncodableValue("sessionId"),
+         flutter::EncodableValue(std::string("no-such-session"))},
+    };
+    const RecordedReply reply =
+        with_args
+            ? DispatchWithArgs(router, "previewGetCursorSamples", std::move(args))
+            : Dispatch(router, "previewGetCursorSamples");
+    ASSERT_TRUE(reply.success_called);
+    const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
+    ASSERT_NE(map, nullptr);
+
+    const auto samples = map->find(flutter::EncodableValue("samples"));
+    ASSERT_NE(samples, map->end());
+    const auto* samples_list =
+        std::get_if<flutter::EncodableList>(&samples->second);
+    ASSERT_NE(samples_list, nullptr);
+    EXPECT_TRUE(samples_list->empty());
+
+    for (const char* key : {"width", "height"}) {
+      const auto it = map->find(flutter::EncodableValue(key));
+      ASSERT_NE(it, map->end()) << key;
+      const auto* d = std::get_if<double>(&it->second);
+      ASSERT_NE(d, nullptr) << key;
+      EXPECT_EQ(*d, 0.0) << key;
+    }
+  }
+}
+
+TEST(StubShapesTest, PreviewGetSourceDimensionsWithoutAPreviewIsZero) {
+  // Dart's previewGetSourceDimensions maps zero to null and hides the target.
+  MethodRouter router;
+  const RecordedReply reply = Dispatch(router, "previewGetSourceDimensions");
   ASSERT_TRUE(reply.success_called);
   const auto* map = std::get_if<flutter::EncodableMap>(&reply.success_value);
   ASSERT_NE(map, nullptr);
-
-  const auto samples = map->find(flutter::EncodableValue("samples"));
-  ASSERT_NE(samples, map->end());
-  const auto* samples_list =
-      std::get_if<flutter::EncodableList>(&samples->second);
-  ASSERT_NE(samples_list, nullptr);
-  EXPECT_TRUE(samples_list->empty());
-
-  EXPECT_NE(map->find(flutter::EncodableValue("width")), map->end());
-  EXPECT_NE(map->find(flutter::EncodableValue("height")), map->end());
+  for (const char* key : {"width", "height"}) {
+    const auto it = map->find(flutter::EncodableValue(key));
+    ASSERT_NE(it, map->end()) << key;
+    const auto* d = std::get_if<double>(&it->second);
+    ASSERT_NE(d, nullptr) << key;
+    EXPECT_EQ(*d, 0.0) << key;
+  }
 }
 
 TEST(StubShapesTest, GetRecordingSceneInfoBundleMissingReturnsSceneInputMissing) {

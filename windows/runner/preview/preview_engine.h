@@ -38,6 +38,7 @@
 
 #include "Capture/Export/clip_playback_planner.h"
 #include "Capture/Export/color_grade.h"
+#include "Capture/Export/mic_cleanup.h"
 #include "Core/canvas_composition.h"
 #include "Capture/Zoom/zoom_timeline_builder.h"
 #include "Preview/preview_camera_renderer.h"
@@ -495,6 +496,25 @@ class PreviewEngine {
   void SetZoomSettings(const std::string& session_id, double factor,
                        bool effect_enabled);
 
+  // Fixed-target zoom: what the editor's focus heuristic and draggable target
+  // read. `GetCursorSamples` selects from the cursor sidecar loaded at Open;
+  // `width` / `height` are the space its x / y are in (the sidecar header's
+  // capture dims, else the decoded video's). `GetSourceDimensions` is the
+  // decoded video's size, known from the first frame. Both report nothing
+  // (ok == false / false) for a stale session or before the data exists, and
+  // never block on the frame thread for longer than a copy.
+  struct CursorSamples {
+    bool ok = false;
+    capture::CursorSampleWindow window;
+    double width = 0.0;
+    double height = 0.0;
+  };
+  CursorSamples GetCursorSamples(const std::string& session_id,
+                                 std::int64_t start_ms, std::int64_t end_ms,
+                                 std::int64_t playhead_ms);
+  bool GetSourceDimensions(const std::string& session_id, int* width,
+                           int* height);
+
   // Editing port (color): update the live color grade for the inline preview.
   // Driven by Dart's previewSetColorGrade on every slider tick / auto-enhance
   // toggle. Applies to the VIDEO ONLY (the cursor halo and camera bubble stay
@@ -542,13 +562,28 @@ class PreviewEngine {
       const std::string& session_id,
       std::vector<capture::export_::clip_planner::ClipKeptRange> ranges);
 
+  // W13 (design D6.1, "converge the clocks"): play an UNCUT recording
+  // through the stitched path too, as a one-clip timeline, so every preview
+  // has one audio master clock and runs the same effect chain (mic gain
+  // above 0 dB, voice cleanup, echo removal) the edited preview does. Called
+  // by the router right after a successful Open, which in converged mode
+  // leaves the MediaPlayer paused. Opens the GPU reader first: if the stream
+  // cannot be read that way, it falls back to playing the MediaPlayer, so a
+  // preview never ends up blank. Auto-plays, as Open always has.
+  void StartConvergedPlayback(const std::string& session_id);
+
+  // Converged unless CLINGFY_PREVIEW_MEDIAPLAYER=1 (the escape hatch for a
+  // machine where the stitched path misbehaves: the uncut preview then plays
+  // through MediaPlayer exactly as before W13).
+  static bool ConvergedPreviewEnabled();
+
   // Editing port (audio, step 4-7d — design D6): the live preview audio mix.
   // `gain_db` [0,24] amplifies (clamped, export/macOS parity), then
   // `volume_percent` [0,100] attenuates. Applies to the edited-session
-  // renderer's FUTURE samples immediately (no re-decode) and to the
-  // passthrough MediaPlayer's master volume (attenuation only there —
-  // MediaPlayer.Volume is 0..1, so gain on an UNCUT preview stays
-  // export-only: the documented D6 gap). Stored on the session so a
+  // renderer's FUTURE samples immediately (no re-decode). Since W13 every
+  // preview, uncut included, plays through that renderer; the MediaPlayer's
+  // master volume (attenuation only, 0..1) is still set for the fallback
+  // session that plays through it. Stored on the session so a
   // renderer opened later (first clip edit) starts with the current mix,
   // mirroring macOS's pending-open audioMix override. A stale session_id is
   // a silent no-op; an empty one applies to the active session (macOS
@@ -571,6 +606,14 @@ class PreviewEngine {
   void SetVoiceCleanup(const std::string& session_id, bool enabled,
                        float wet_mix);
 
+  // W13c: speaker-echo removal in the preview, the same pass the export runs
+  // (Capture/Export/mic_cleanup ProduceEchoCancelledMic) on the same background
+  // worker as voice cleanup, and BEFORE it (the export's order). Needs both
+  // separated sidecars; when it measures no bleed (headphones) the raw mic is
+  // kept, as on export. macOS's preview plays the echo-cancelled mic too. The
+  // setting is global in Dart and rides every processVideo.
+  void SetMicEchoCancellation(const std::string& session_id, bool enabled);
+
   // For tests / observability.
   std::int64_t current_texture_id() const;
 
@@ -588,9 +631,19 @@ class PreviewEngine {
   // `generation` identifies the worker; only the CURRENT generation clears
   // `computing`, applies the result, or hands off to the next pass — a
   // superseded worker (mode changed) just drops its temp.
-  void OnPreviewCleanedMicReady(const std::string& session_id, bool ok,
-                                const std::wstring& cleaned_path, float wet_mix,
-                                std::uint64_t generation);
+  // What the preview's processed mic must contain. `wet` < 0 = no voice
+  // cleanup. Compared exactly against what the cached file was made with.
+  struct WantedMic {
+    bool echo = false;
+    float wet = -1.0f;
+    bool any() const { return echo || wet >= 0.0f; }
+  };
+  using MicPassOutcome = capture::export_::PreviewMicOutcome;
+
+  void OnPreviewCleanedMicReady(const std::string& session_id,
+                                MicPassOutcome outcome,
+                                const std::wstring& cleaned_path,
+                                WantedMic wanted, std::uint64_t generation);
 
   // Implementation lives in the .cpp where the winrt projection
   // headers are visible. The trampoline lambdas in Open() pass an
@@ -628,6 +681,12 @@ class PreviewEngine {
   struct Impl;
 
  private:
+  static WantedMic WantedMicLocked(const Impl* impl);
+  static bool ProcessedMicMatchesLocked(const Impl* impl, const WantedMic& w);
+  // Drive the processed mic toward WantedMicLocked: swap to the cached file,
+  // back to the raw mic, or (re)start the worker. render_mutex held.
+  void ReconcileProcessedMicLocked(Impl* impl, const std::string& session_id);
+
   // Phase 10.4: counts a per-frame render failure (EnsureResources /
   // frame-copy / EndDraw). After a run of consecutive failures it emits
   // PREVIEW_RENDER_ERROR as playerError + previewFailed exactly once per
@@ -643,7 +702,8 @@ class PreviewEngine {
   // in-flight one (joining that under the lock could deadlock the inline
   // dispatch path).
   void StartVoiceCleanupWorkerLocked(Impl* impl, const std::string& session_id,
-                                     float wet_mix, std::uint64_t generation);
+                                     WantedMic wanted,
+                                     std::uint64_t generation);
 
   // Editing port (clips, step 4-3): the shared compose + handoff tail, factored
   // out of HandleVideoFrame so BOTH the MediaPlayer frame path and the edited
@@ -729,6 +789,12 @@ class PreviewEngine {
   // the sanctioned render_mutex → mutex_ order). Decode-FAILURE paths must
   // NOT call this — they are errors, not completion.
   void NotifyEditedPlaybackCompleteLocked(Impl* impl);
+
+  // playerState for the stitched path, which has no MediaPlayer state
+  // changes to report it. Shares last_emitted_state_ with the MediaPlayer
+  // handler so the two never double-report. Takes mutex_: call with no lock
+  // held, or under render_mutex only (render_mutex -> mutex_ is the order).
+  void EmitPlayerStateIfChanged(const std::string& state);
 
   // Editing port (clips, step 4-3): are the current clip ranges a real edit
   // (cut / trim / delete-middle / reorder / overlap) — i.e. should this session

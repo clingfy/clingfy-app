@@ -201,3 +201,22 @@ Blocking issues:
 Follow-up issues after release:
 
 * None
+---
+
+# Windows beta notes (1.2.1)
+
+develop was merged into this branch on 2026-10-30 so 1.2.1 ships the Windows
+parity work on both platforms from one tree.
+
+* Parity work W1-W13 (#635-#651) is in. The owner tested the Windows build on
+  the dev box on 2026-10-30 before the merge.
+* The live cursor highlight (#647) and Reveal Area outline (#648) are built
+  but their controls stay **hidden** in this release (owner's call). Unhide
+  them later by removing the `!isWindows()` gates in
+  `recording_options_sidebar.dart` and `recording_source_section.dart`.
+* "Exclude Clingfy from capture" is not built on Windows
+  (`setExcludeRecorderApp` is a no-op).
+* The Windows build ships unsigned, as before. Signing is not planned.
+* The merge brings Windows-only native code plus shared Dart changes
+  (#650 removed the Windows post-audio export notice). Re-run the macOS
+  smoke on the merged tree before the prod build.

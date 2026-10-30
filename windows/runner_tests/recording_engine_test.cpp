@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "Bridge/Devices/display_enumerator.h"
 #include "Bridge/native_error_codes.h"
 #include "Bridge/workflow_event_publisher.h"
 #include "Capture/wgc_display_capture_backend.h"
@@ -239,13 +240,39 @@ TEST_F(RecordingEngineTest, StartRejectsAreaModeWithNoRegion) {
 }
 
 TEST_F(RecordingEngineTest, StartStillRejectsMouseFollowMode) {
-  // Mouse-follow modes remain unsupported (kBadMode) — only display, window,
-  // and area are live.
+  // followMouse (switching displays mid-recording) is not offered by the
+  // picker and stays unsupported (kBadMode). mouseAtStart is live; see below.
   WindowsSelectionState::Instance().SetTargetMode(
       DisplayTargetMode::kFollowMouse);
   auto error = RecordingEngine::Instance().Start(ValidRequest());
   ASSERT_TRUE(error.has_value());
   EXPECT_EQ(error->code, clingfy::bridge::error::kBadMode);
+}
+
+TEST_F(RecordingEngineTest, StartAcceptsScreenUnderMouseMode) {
+  // "Screen under mouse" used to be offered by the shared picker and refused
+  // here with kBadMode. It now records the display the cursor is on at Start.
+  // Real WGC + encoder pipeline, like StartAcceptsAreaModeWithValidRegion.
+  WindowsSelectionState::Instance().SetTargetMode(
+      DisplayTargetMode::kMouseAtStart);
+  auto error = RecordingEngine::Instance().Start(ValidRequest());
+  ASSERT_FALSE(error.has_value()) << error->code << ": " << error->message;
+  EXPECT_TRUE(RecordingEngine::Instance().IsRecording());
+  ASSERT_FALSE(RecordingEngine::Instance().Stop("sess-test").has_value());
+}
+
+TEST(MonitorUnderCursorTest, IsTheMonitorAtTheCursorPosition) {
+  POINT cursor{};
+  if (::GetCursorPos(&cursor) == FALSE) {
+    GTEST_SKIP() << "no readable cursor position (secure desktop?)";
+  }
+  const auto monitor = clingfy::bridge::devices::MonitorUnderCursor();
+  ASSERT_TRUE(monitor.has_value());
+  EXPECT_EQ(*monitor, ::MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST));
+  MONITORINFO info{};
+  info.cbSize = sizeof(info);
+  ASSERT_NE(::GetMonitorInfoW(*monitor, &info), 0);
+  EXPECT_GT(info.rcMonitor.right - info.rcMonitor.left, 0);
 }
 
 TEST_F(RecordingEngineTest, StartAcceptsAreaModeWithValidRegion) {

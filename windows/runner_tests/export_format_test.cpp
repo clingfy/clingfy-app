@@ -61,17 +61,45 @@ TEST(ResolveAudioBitrateBpsTest, IsCaseInsensitiveLikeTheOtherResolvers) {
   EXPECT_EQ(ResolveAudioBitrateBps("Best"), ResolveAudioBitrateBps("best"));
 }
 
-TEST(ResolveAudioBitrateBpsTest, UpperTiersClampUntilTheMftMatrixIsProbed) {
-  // Deliberate, and the reason the audio-quality control is macOS-only: the
-  // Media Foundation AAC encoder's accepted (rate, channels, bitrate) matrix
-  // has not been measured on Windows hardware, and it refuses late with an
-  // opaque HRESULT from AddStream. macOS measured its own ceiling (320 kbps
-  // accepted at 48 kHz stereo, 384 refused) and offers the full ladder.
-  //
-  // When somebody probes the MFT, raise kAudioBitrateCeilingBps and change
-  // the expectation here — that is the whole change.
-  EXPECT_EQ(ResolveAudioBitrateBps("high"), 192'000u);
-  EXPECT_EQ(ResolveAudioBitrateBps("best"), 192'000u);
+TEST(ResolveAudioBitrateBpsTest, UpperTiersAreMacOSsLadder) {
+  // Dart's AudioQuality.targetKbps: 192 / 256 / 320. The MF AAC encoder was
+  // measured producing 256 and 320 (aac_encoder_bitrate_test.cpp); where an
+  // older encoder refuses them, ClampAudioBitrateToEncoder steps down.
+  EXPECT_EQ(ResolveAudioBitrateBps("high"), 256'000u);
+  EXPECT_EQ(ResolveAudioBitrateBps("best"), 320'000u);
+}
+
+// ---- ClampAudioBitrateToEncoder ---------------------------------------------
+
+TEST(ClampAudioBitrateToEncoderTest, AnEncoderThatTakesEverythingGetsTheTier) {
+  const auto all = [](std::uint32_t) { return true; };
+  EXPECT_EQ(ClampAudioBitrateToEncoder(320'000, all), 320'000u);
+  EXPECT_EQ(ClampAudioBitrateToEncoder(256'000, all), 256'000u);
+  EXPECT_EQ(ClampAudioBitrateToEncoder(192'000, all), 192'000u);
+}
+
+TEST(ClampAudioBitrateToEncoderTest, StepsDownToTheHighestRungTheEncoderTakes) {
+  // An encoder like Microsoft's documented one: nothing above 192.
+  const auto documented = [](std::uint32_t bps) { return bps <= 192'000; };
+  EXPECT_EQ(ClampAudioBitrateToEncoder(320'000, documented), 192'000u);
+  EXPECT_EQ(ClampAudioBitrateToEncoder(256'000, documented), 192'000u);
+  // One that takes 256 but not 320.
+  const auto up_to_256 = [](std::uint32_t bps) { return bps <= 256'000; };
+  EXPECT_EQ(ClampAudioBitrateToEncoder(320'000, up_to_256), 256'000u);
+}
+
+TEST(ClampAudioBitrateToEncoderTest, NeverRaisesTheTierAndNeverAsksFor192) {
+  int asked = 0;
+  const auto counting = [&asked](std::uint32_t) {
+    ++asked;
+    return true;
+  };
+  // Standard stays standard even though the encoder would take more, and the
+  // documented 192 floor is not even asked about.
+  EXPECT_EQ(ClampAudioBitrateToEncoder(192'000, counting), 192'000u);
+  EXPECT_EQ(asked, 0);
+  // An empty predicate means "unknown": stay on the floor.
+  EXPECT_EQ(ClampAudioBitrateToEncoder(320'000, {}), 192'000u);
 }
 
 TEST(ResolveAudioBitrateBpsTest, EveryTierIsDivisibleByEight) {
