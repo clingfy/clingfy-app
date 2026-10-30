@@ -1038,7 +1038,6 @@ Tags:
 - **Windows crash salvage of the video (fragmented MP4)** — parked, deferred. The MF sink writer writes non-fragmented MP4, so a hard crash leaves an unplayable file and Windows only cleans up and shows a notice. Salvage would need MFTranscodeContainerType_FMPEG4, which is untested with hardware encoders and the preview. Decide using crash telemetry. *Source:* windows/runner/Services/recovery_sweep.h:23-25; docs/windows-port.md:174-191
 
 
-- **Windows preview speaker-echo removal** — code, not started. Windows applies the mic echo canceller only at export, while the macOS preview plays the echo-cancelled mic. With echo removal on, the Windows preview does not match its export. *Source:* windows/runner/preview/preview_engine.h; windows/runner/Bridge/Routers/export_router.cpp:563; macos/Runner/Preview/InlinePreviewView.swift:1117
 
 - **Windows true squircle (superellipse) camera mask** — parked, deferred. 'Squircle' is drawn as a rounded rect with a minimum 0.3 corner fraction (the code says 'true superellipse deferred'). macOS draws a real squircle path. *Source:* windows/runner/Capture/Camera/camera_bubble_painter.cpp:78-79, :101-115
 
@@ -1057,6 +1056,10 @@ Tags:
 ## Recently closed
 
 Loose ends checked on 2026-10-16 and found done. Kept so they are not re-raised.
+
+- **Windows preview speaker-echo removal** (2026-10-30, W13c in
+  `docs/windows-machine-work.md`). The preview plays the echo-cancelled mic
+  (then cleanup) from the same passes the export runs, cached per effect set.
 
 - **Windows uncut preview: mic gain and voice cleanup audible before the
   first cut** (2026-10-30, W13b in `docs/windows-machine-work.md`). Every
